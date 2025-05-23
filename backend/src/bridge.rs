@@ -17,7 +17,7 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
-use crate::{config::BridgeMonitoringConfig, utils::create_rpc_client};
+use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -1,15 +1,14 @@
 mod activity;
 mod bridge;
 mod config;
-mod retry_policy;
 mod utils;
+mod types;
 mod wallets;
 
 use axum::{routing::get, Json, Router};
 use dotenvy::dotenv;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
-use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::TcpListener,
@@ -20,29 +19,17 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 
 use crate::{
-    activity::{activity_monitoring_task, get_activity_stats, ActivityStats},
+    activity::{activity_monitoring_task, get_activity_stats},
     bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
     config::{ActivityMonitoringConfig, BridgeMonitoringConfig, NetworkConfig},
-    retry_policy::ExponentialBackoff,
-    utils::create_rpc_client,
+    utils::retry_policy::ExponentialBackoff,
+    utils::rpc_client::create_rpc_client,
+    types::network::{NetworkStatus, Status},
+    types::activity::ActivityStats,
     wallets::{
         fetch_balances_task, get_wallets_with_balances, init_paymaster_wallets, SharedWallets,
     },
 };
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
-enum Status {
-    Online,
-    Offline,
-}
-
-#[derive(Serialize, Clone, Debug)]
-struct NetworkStatus {
-    batch_producer: Status,
-    rpc_endpoint: Status,
-    bundler_endpoint: Status,
-}
 
 /// Shared Network State
 type SharedNetworkState = Arc<RwLock<NetworkStatus>>;
@@ -112,11 +99,11 @@ async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) 
         let rpc_endpoint = call_rpc_status(config, &rpc_client, retry_policy).await;
         let bundler_endpoint = check_bundler_health(&http_client, config).await;
 
-        let new_status = NetworkStatus {
+        let new_status = NetworkStatus::new(
             batch_producer,
             rpc_endpoint,
             bundler_endpoint,
-        };
+        );
 
         info!(?new_status, "Updated Status");
 
@@ -144,11 +131,7 @@ async fn main() {
     let cors = CorsLayer::new().allow_origin(Any);
 
     // Shared state for network status
-    let shared_state = Arc::new(RwLock::new(NetworkStatus {
-        batch_producer: Status::Offline, // Default state
-        rpc_endpoint: Status::Offline,
-        bundler_endpoint: Status::Offline,
-    }));
+    let shared_state = Arc::new(RwLock::new(NetworkStatus::default()));
 
     let paymaster_wallets: SharedWallets = init_paymaster_wallets(&config.clone());
 
@@ -170,7 +153,7 @@ async fn main() {
 
     // Activity monitoring
     let activity_monitoring_config = ActivityMonitoringConfig::new();
-    let activity_stats = ActivityStats::default(&activity_monitoring_config);
+    let activity_stats = ActivityStats::with_config(&activity_monitoring_config);
     // Shared state for activity stats
     let shared_activity_stats = Arc::new(RwLock::new(activity_stats));
     tokio::spawn({

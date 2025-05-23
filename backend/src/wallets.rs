@@ -11,7 +11,7 @@ use tokio::{
 use tracing::info;
 
 use crate::config::NetworkConfig;
-use crate::utils::create_rpc_client;
+use crate::utils::rpc_client::create_rpc_client;
 
 pub type SharedWallets = Arc<RwLock<PaymasterWallets>>;
 #[derive(Clone, Debug, Serialize)]

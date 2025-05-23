@@ -1,7 +1,7 @@
 use dotenvy::dotenv;
 use tracing::info;
 
-use crate::activity::ActivityStatsKeys;
+use crate::types::activity::ActivityStatsKeys;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
