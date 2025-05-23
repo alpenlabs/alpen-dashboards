@@ -1,12 +1,4 @@
 services:
-  mock_rpc:
-    build:
-      context: .
-      dockerfile: mock_rpc.Dockerfile
-    container_name: strata_dashboards_mock_rpc
-    ports:
-      - "8545:8545"
-      - "8546:8546"
   backend:
     build:
       context: .
