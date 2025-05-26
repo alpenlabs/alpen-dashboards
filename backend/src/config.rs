@@ -1,7 +1,7 @@
 use dotenvy::dotenv;
 use tracing::info;
 
-use crate::types::activity::ActivityStatsKeys;
+use crate::activity::types::ActivityStatsKeys;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
@@ -25,6 +25,9 @@ pub(crate) struct NetworkConfig {
 
     /// Validating paymaster wallet
     validating_wallet: String,
+
+    /// Status refetch interval in seconds
+    status_refetch_interval_s: u64,
 }
 
 impl NetworkConfig {
@@ -61,6 +64,11 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "0xC0FFEE".to_string());
 
+        let status_refetch_interval_s: u64 = std::env::var("STATUS_REFETCH_INTERVAL_S")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(30);
+
         info!(%rpc_url, bundler_url, "Loaded Config");
 
         NetworkConfig {
@@ -71,6 +79,7 @@ impl NetworkConfig {
             total_retry_time,
             deposit_wallet,
             validating_wallet,
+            status_refetch_interval_s,
         }
     }
 
@@ -104,6 +113,10 @@ impl NetworkConfig {
 
     pub fn validating_wallet(&self) -> &str {
         &self.validating_wallet
+    }
+
+    pub fn status_refetch_interval(&self) -> u64 {
+        self.status_refetch_interval_s
     }
 }
 

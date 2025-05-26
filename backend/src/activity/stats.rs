@@ -8,7 +8,7 @@ use std::{
 use tokio::{sync::RwLock, time::interval};
 use tracing::{error, info};
 
-use crate::{config::ActivityMonitoringConfig, types::activity::*};
+use crate::{config::ActivityMonitoringConfig, activity::types::*};
 
 /// Shared activity stats
 pub type SharedActivityStats = Arc<RwLock<ActivityStats>>;
@@ -296,10 +296,10 @@ pub async fn get_activity_stats(state: SharedActivityStats) -> Json<ActivityStat
 
 #[cfg(test)]
 mod tests {
-    use crate::types::activity::{
+    use crate::activity::types::{
         convert_to_u64, get_address_hash, ActivityStats, TimeWindow
     };
-    use crate::{activity::{fetch_accounts, fetch_user_ops}, config::ActivityMonitoringConfig};
+    use crate::{activity::stats::{fetch_accounts, fetch_user_ops}, config::ActivityMonitoringConfig};
     use chrono::{Datelike, TimeZone, Utc};
     use mockito::{Matcher, Server};
     use serde::Deserialize;

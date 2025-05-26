@@ -1,7 +1,6 @@
 use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
-use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::{
@@ -10,46 +9,12 @@ use tokio::{
 };
 use tracing::info;
 
-use crate::config::NetworkConfig;
-use crate::utils::rpc_client::create_rpc_client;
+use crate::{config::NetworkConfig, wallets::types::{Wallet, PaymasterWallets}, utils::rpc_client::create_rpc_client};
 
-pub type SharedWallets = Arc<RwLock<PaymasterWallets>>;
-#[derive(Clone, Debug, Serialize)]
-pub struct Wallet {
-    /// Wallet address
-    address: String,
-    /// Wallet balance in Wei
-    balance: String,
-}
-
-impl Wallet {
-    pub fn new(address: String, balance: String) -> Self {
-        Self { address, balance }
-    }
-
-    pub fn update_balance(&mut self, balance: String) {
-        self.balance = balance;
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct PaymasterWallets {
-    /// Deposit paymaster wallet
-    deposit: Wallet,
-    /// Validating paymaster wallet
-    validating: Wallet,
-}
-impl PaymasterWallets {
-    pub fn new(deposit: Wallet, validating: Wallet) -> Self {
-        Self {
-            deposit,
-            validating,
-        }
-    }
-}
+pub(crate) type SharedWallets = Arc<RwLock<PaymasterWallets>>;
 
 /// Periodically fetches wallet balances
-pub async fn fetch_balances_task(wallets: SharedWallets, config: &NetworkConfig) {
+pub(crate) async fn fetch_balances_task(wallets: SharedWallets, config: &NetworkConfig) {
     info!("Fetching balances...");
     let mut interval = interval(Duration::from_secs(10));
     let rpc_client = create_rpc_client(config.reth_url());
@@ -59,12 +24,12 @@ pub async fn fetch_balances_task(wallets: SharedWallets, config: &NetworkConfig)
 
         let mut locked_wallets = wallets.write().await;
 
-        let deposit_wallet = &mut locked_wallets.deposit;
-        let balance_dep = fetch_wallet_balance(&rpc_client, &deposit_wallet.address).await;
+        let deposit_wallet = locked_wallets.deposit_wallet_mut();
+        let balance_dep = fetch_wallet_balance(&rpc_client, deposit_wallet.address()).await;
         deposit_wallet.update_balance(balance_dep.clone().unwrap_or_else(|| "0".to_string()));
 
-        let validating_wallet = &mut locked_wallets.validating;
-        let balance_val = fetch_wallet_balance(&rpc_client, &validating_wallet.address).await;
+        let validating_wallet = locked_wallets.validating_wallet_mut();
+        let balance_val = fetch_wallet_balance(&rpc_client, validating_wallet.address()).await;
         validating_wallet.update_balance(balance_val.clone().unwrap_or_else(|| "0".to_string()));
     }
 }
