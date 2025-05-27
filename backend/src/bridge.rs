@@ -134,15 +134,15 @@ pub struct ReimbursementInfo {
 impl From<&RpcClaimInfo> for ReimbursementInfo {
     fn from(rpc_info: &RpcClaimInfo) -> Self {
         match &rpc_info.status {
-            RpcReimbursementStatus::InProgress { challenge_step } => Self {
+            RpcReimbursementStatus::InProgress => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: "N/A".to_string(),
                 payout_txid: None,
                 status: ReimbursementStatus::InProgress,
             },
-            RpcReimbursementStatus::Challenged { challenge_step } => Self {
+            RpcReimbursementStatus::Challenged => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: "N/A".to_string(),
                 payout_txid: None,
                 status: ReimbursementStatus::Challenged,
             },
@@ -152,10 +152,10 @@ impl From<&RpcClaimInfo> for ReimbursementInfo {
                 payout_txid: None,
                 status: ReimbursementStatus::Cancelled,
             },
-            RpcReimbursementStatus::Complete { payout_txid } => Self {
+            RpcReimbursementStatus::Complete => Self {
                 claim_txid: rpc_info.claim_txid,
                 challenge_step: "N/A".to_string(),
-                payout_txid: Some(*payout_txid),
+                payout_txid: None,
                 status: ReimbursementStatus::Complete,
             },
         }
@@ -412,12 +412,6 @@ async fn get_reimbursements(
 
     let mut reimbursement_infos = Vec::new();
     for txid in claim_txids.iter() {
-
-        let raw: Value = bridge_rpc
-            .request("stratabridge_claimInfo", (txid.clone(),))
-            .await?;
-
-        warn!(txid = %txid, "Raw claimInfo RPC response: {}", raw);
         let reimb_info: RpcClaimInfo = match bridge_rpc
             .request("stratabridge_claimInfo", (txid.clone(),))
             .await
