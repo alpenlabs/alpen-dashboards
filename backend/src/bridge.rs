@@ -6,7 +6,6 @@ use jsonrpsee::http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{str::FromStr, sync::Arc};
-use strata_bridge_primitives::types::PublickeyTable;
 use strata_bridge_rpc::types::{
     RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
     RpcWithdrawalInfo, RpcWithdrawalStatus,
@@ -73,6 +72,7 @@ impl From<RpcDepositInfo> for DepositInfo {
     }
 }
 
+/// Mapping between deposit outpoint and withdrawal request txid
 #[derive(Debug)]
 struct DepositToWithdrawal {
     deposit_outpoint: OutPoint,
@@ -176,7 +176,7 @@ pub type SharedBridgeState = Arc<RwLock<BridgeStatus>>;
 /// Periodically fetch bridge status and update shared bridge state
 pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMonitoringConfig) {
     let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
-    let strata_rpc = create_rpc_client(config.strata_rpc_url());
+    let strata_rpc = create_rpc_client(config.alpen_rpc_url());
     let bridge_rpc = create_rpc_client(config.bridge_rpc_url());
 
     loop {
@@ -186,15 +186,17 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         // Bridge operator status
         let operators = get_bridge_operators(&bridge_rpc).await.unwrap();
         let mut operator_statuses = Vec::new();
-        for (index, public_key) in operators.0.iter() {
+        let mut index = 0;
+        for public_key in operators.iter() {
             let operator_id = format!("Alpen Labs #{}", index);
-            let status = get_operator_status(&bridge_rpc, *index).await.unwrap();
+            let status = get_operator_status(&bridge_rpc, *public_key).await.unwrap();
 
             operator_statuses.push(OperatorStatus {
                 operator_id,
                 operator_address: *public_key,
                 status,
             });
+            index += 1;
         }
 
         locked_state.operators = operator_statuses;
@@ -205,15 +207,21 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         let mut deposits_to_withdrawals: Vec<DepositToWithdrawal> = Vec::new();
 
         for deposit_id in current_deposits {
-            let (deposit_info, deposit_to_wd) =
-                get_deposit_info(&strata_rpc, &bridge_rpc, deposit_id)
-                    .await
-                    .unwrap();
-            if let Some(deposit) = deposit_info {
-                locked_state.deposits.push(deposit);
-                deposits_to_withdrawals.push(deposit_to_wd.unwrap());
-            } else {
-                warn!(%deposit_id, "Missing deposit entry for id");
+            match get_deposit_info(&strata_rpc, &bridge_rpc, deposit_id).await {
+                Ok((Some(deposit_info), Some(deposit_to_wd))) => {
+                    locked_state.deposits.push(deposit_info);
+                    deposits_to_withdrawals.push(deposit_to_wd);
+                }
+                Ok((Some(deposit_info), None)) => {
+                    locked_state.deposits.push(deposit_info);
+                    warn!(%deposit_id, "Deposit info found, but missing deposit to withdrawal mapping.");
+                }
+                Ok((None, _)) => {
+                    warn!(%deposit_id, "Missing deposit info, skipping.");
+                }
+                Err(e) => {
+                    error!(%deposit_id, ?e, "Unexpected error fetching deposit info");
+                }
             }
         }
 
@@ -241,8 +249,8 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 }
 
 /// Fetch operator idx and public keys
-async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<PublickeyTable, ClientError> {
-    let operator_table: PublickeyTable = match rpc_client
+async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<Vec<PublicKey>, ClientError> {
+    let operator_table: Vec<PublicKey> = match rpc_client
         .request("stratabridge_bridgeOperators", ((),))
         .await
     {
@@ -259,10 +267,10 @@ async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<PublickeyTable,
 /// Fetch operator status
 async fn get_operator_status(
     bridge_client: &HttpClient,
-    operator_idx: u32,
+    operator_pk: PublicKey,
 ) -> Result<String, ClientError> {
     let status: RpcOperatorStatus = match bridge_client
-        .request("stratabridge_operatorStatus", (operator_idx,))
+        .request("stratabridge_operatorStatus", (operator_pk,))
         .await
     {
         Ok(data) => data,
@@ -340,7 +348,11 @@ async fn get_deposit_info(
         .await
     {
         Ok(data) => data,
+        Err(ClientError::Call(e)) if e.message().contains("Deposit request outpoint not found") => {
+            return Ok((None, None));
+        }
         Err(e) => {
+            // Propagate unexpected errors
             error!(error = %e, "Get deposit info failed");
             return Err(e);
         }
@@ -400,6 +412,12 @@ async fn get_reimbursements(
 
     let mut reimbursement_infos = Vec::new();
     for txid in claim_txids.iter() {
+
+        let raw: Value = bridge_rpc
+            .request("stratabridge_claimInfo", (txid.clone(),))
+            .await?;
+
+        warn!(txid = %txid, "Raw claimInfo RPC response: {}", raw);
         let reimb_info: RpcClaimInfo = match bridge_rpc
             .request("stratabridge_claimInfo", (txid.clone(),))
             .await
