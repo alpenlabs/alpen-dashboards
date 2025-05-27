@@ -186,8 +186,7 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         // Bridge operator status
         let operators = get_bridge_operators(&bridge_rpc).await.unwrap();
         let mut operator_statuses = Vec::new();
-        let mut index = 0;
-        for public_key in operators.iter() {
+        for (index, public_key) in operators.iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index);
             let status = get_operator_status(&bridge_rpc, *public_key).await.unwrap();
 
@@ -196,7 +195,6 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
                 operator_address: *public_key,
                 status,
             });
-            index += 1;
         }
 
         locked_state.operators = operator_statuses;
