@@ -194,8 +194,7 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         // Reimbursements
         let reimbursements: Vec<ReimbursementInfo> = match get_reimbursements(&bridge_rpc).await {
             Ok(data) => data,
-            Err(e) => {
-                error!(error = %e, "Bridge get reimbursement failed");
+            Err(_) => {
                 Vec::new()
             }
         };
@@ -205,14 +204,13 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         let bridge_duties: Vec<RpcBridgeDutyStatus> =
             match get_bridge_duties(&bridge_rpc).await {
                 Ok(data) => data,
-                Err(e) => {
-                    error!(error = %e, "Bridge get withdrawal failed");
+                Err(_) => {
                     Vec::new()
                 }
             };
 
         if bridge_duties.is_empty() {
-            warn!("No bridge duties found. Skipping deposit and withdrawal info fetch");
+            warn!("No bridge duties found");
             continue;
         }
 
@@ -231,34 +229,28 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 
         // Fetch deposit infos
         if deposit_requests.is_empty() {
-            warn!("No deposit duties found, skipping deposit info fetch");
+            warn!("No deposits to fetch");
         } else {
             let deposit_infos = match get_deposit_infos(&bridge_rpc, &deposit_requests).await {
                 Ok(data) => data,
-                Err(e) => {
-                    error!(error = %e, "Bridge get deposit info failed");
+                Err(_) => {
                     Vec::new()
                 }
             };
-            for deposit_info in deposit_infos.iter() {
-                locked_state.deposits.push(deposit_info.clone());
-            }
+            locked_state.deposits = deposit_infos;
         }
 
         // Fetch withdrawal infos
         if withdrawal_requests.is_empty() {
-            warn!("No withdrawal duties found, skipping withdrawal info fetch");
+            warn!("No withdrawals to fetch");
         } else {
             let withdrawal_infos = match get_withdrawal_infos(&bridge_rpc, &withdrawal_requests).await {
                 Ok(data) => data,
-                Err(e) => {
-                    error!(error = %e, "Bridge get deposit info failed");
+                Err(_) => {
                     Vec::new()
                 }
             };
-            for withdrawal_info in withdrawal_infos.iter() {
-                locked_state.withdrawals.push(withdrawal_info.clone());
-            }
+            locked_state.withdrawals = withdrawal_infos;
         }
     }
 }
@@ -271,7 +263,7 @@ async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<Vec<PublicKey>,
     {
         Ok(data) => data,
         Err(e) => {
-            error!(error = %e, "Bridge operators query failed");
+            error!(error = %e, "Failed to fetch bridge operators");
             return Err(e);
         }
     };
@@ -290,29 +282,13 @@ async fn get_operator_status(
     {
         Ok(data) => data,
         Err(e) => {
-            error!(error = %e, "Bridge operator status query");
+            error!(error = %e, "Failed to fetch bridge operator status");
             return Err(e);
         }
     };
 
     Ok(format!("{:?}", status))
 }
-
-// /// Fetch current deposits
-// async fn get_current_deposits(strata_client: &HttpClient) -> Result<Vec<u32>, ClientError> {
-//     let deposit_ids: Vec<u32> = match strata_client
-//         .request("strata_getCurrentDeposits", ((),))
-//         .await
-//     {
-//         Ok(data) => data,
-//         Err(e) => {
-//             error!(error = %e, "Current deposits query failed");
-//             return Err(e);
-//         }
-//     };
-
-//     Ok(deposit_ids)
-// }
 
 /// Fetch bridge duties
 async fn get_bridge_duties(
@@ -321,7 +297,7 @@ async fn get_bridge_duties(
     let duties: Vec<RpcBridgeDutyStatus> = match bridge_client.request("stratabridge_bridgeDuties", ((),)).await {
         Ok(data) => data,
         Err(e) => {
-            error!(error = %e, "Bridge duties query failed");
+            error!(error = %e, "Failed to fetch bridge duties");
             return Err(e);
         }
     };
@@ -343,7 +319,7 @@ async fn get_deposit_infos(bridge_client: &HttpClient, deposit_requests: &[Txid]
         {
             Ok(data) => data,
             Err(e) => {
-                error!(error = %e, "Get deposit info failed");
+                error!(error = %e, "Failed to fetch deposit info");
                 return Err(e);
             }
         };
@@ -368,7 +344,7 @@ async fn get_withdrawal_infos(bridge_client: &HttpClient, withdrawal_requests: &
         {
             Ok(data) => data,
             Err(e) => {
-                error!(error = %e, "Get deposit info failed");
+                error!(error = %e, "Failed to fetch withdrawal info");
                 return Err(e);
             }
         };
@@ -386,7 +362,7 @@ async fn get_reimbursements(
     let claim_txids: Vec<String> = match bridge_rpc.request("stratabridge_claims", ((),)).await {
         Ok(data) => data,
         Err(e) => {
-            error!(error = %e, "Get claims failed");
+            error!(error = %e, "Failed to fetch claims");
             return Err(e);
         }
     };
@@ -399,7 +375,7 @@ async fn get_reimbursements(
         {
             Ok(data) => data,
             Err(e) => {
-                error!(error = %e, "Get claim info failed");
+                error!(error = %e, "Failed to fetch claim info");
                 return Err(e);
             }
         };
