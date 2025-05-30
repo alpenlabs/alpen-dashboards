@@ -186,8 +186,6 @@ const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120_000;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
-    /// Alpen RPC url
-    alpen_rpc_url: String,
     /// Alpen bridge RPC url
     bridge_rpc_url: String,
     /// Bridge status refetch interval in seconds
@@ -198,10 +196,6 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let alpen_rpc_url = std::env::var("ALPEN_RPC_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
-
         let bridge_rpc_url = std::env::var("ALPEN_BRIDGE_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8546".to_string());
@@ -211,18 +205,12 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S);
 
-        info!(%alpen_rpc_url, %bridge_rpc_url, "Bridge monitoring configuration");
+        info!(%bridge_rpc_url, "Bridge monitoring configuration");
 
         BridgeMonitoringConfig {
-            alpen_rpc_url,
             bridge_rpc_url,
             status_refetch_interval_s: refresh_interval_s,
         }
-    }
-
-    /// Getter for `alpen_rpc_url`
-    pub fn alpen_rpc_url(&self) -> &str {
-        &self.alpen_rpc_url
     }
 
     /// Getter for `bridge_rpc_url`
