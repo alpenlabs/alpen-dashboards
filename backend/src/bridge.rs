@@ -23,7 +23,17 @@ use crate::{config::BridgeMonitoringConfig, utils::create_rpc_client};
 pub struct OperatorStatus {
     operator_id: String,
     operator_address: PublicKey,
-    status: String,
+    status: RpcOperatorStatus,
+}
+
+impl OperatorStatus {
+    pub fn new(operator_id: String, operator_address: PublicKey, status: RpcOperatorStatus) -> Self {
+        Self {
+            operator_id,
+            operator_address,
+            status,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -182,11 +192,11 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
             let operator_id = format!("Alpen Labs #{}", index);
             let status = get_operator_status(&bridge_rpc, *public_key).await.unwrap();
 
-            operator_statuses.push(OperatorStatus {
+            operator_statuses.push(OperatorStatus::new(
                 operator_id,
-                operator_address: *public_key,
-                status,
-            });
+                *public_key,
+                status)
+            );
         }
 
         locked_state.operators = operator_statuses;
@@ -265,7 +275,7 @@ async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<Vec<PublicKey>,
 async fn get_operator_status(
     bridge_client: &HttpClient,
     operator_pk: PublicKey,
-) -> Result<String, ClientError> {
+) -> Result<RpcOperatorStatus, ClientError> {
     let status: RpcOperatorStatus = match bridge_client
         .request("stratabridge_operatorStatus", (operator_pk,))
         .await
@@ -277,7 +287,7 @@ async fn get_operator_status(
         }
     };
 
-    Ok(format!("{:?}", status))
+    Ok(status)
 }
 
 /// Fetch bridge duties
