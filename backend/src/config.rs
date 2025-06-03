@@ -40,15 +40,15 @@ impl NetworkConfig {
 
         let rpc_url = std::env::var("RPC_URL")
             .ok()
-            .unwrap_or_else(|| "http://localhost:8432".to_string());
+            .unwrap_or_else(|| "http://localhost:8433".to_string());
 
         let bundler_url = std::env::var("BUNDLER_URL")
             .ok()
-            .unwrap_or_else(|| "http://localhost:8433".to_string());
+            .unwrap_or_else(|| "http://localhost:8434".to_string());
 
         let reth_url = std::env::var("RETH_URL")
             .ok()
-            .unwrap_or_else(|| "http://localhost:8434".to_string());
+            .unwrap_or_else(|| "http://localhost:8435".to_string());
 
         let max_retries: u64 = std::env::var("MAX_STATUS_RETRIES")
             .ok()
