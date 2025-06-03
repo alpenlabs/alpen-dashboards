@@ -5,6 +5,9 @@ use crate::activity::ActivityStatsKeys;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
+    /// JSON-RPC Endpoint for Alpen batch producer
+    batch_producer_url: String,
+
     /// JSON-RPC Endpoint for Alpen client
     rpc_url: String,
 
@@ -30,6 +33,10 @@ pub(crate) struct NetworkConfig {
 impl NetworkConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
+
+        let batch_producer_url = std::env::var("BATCH_PRODUCER_URL")
+            .ok()
+            .unwrap_or_else(|| "http://localhost:8432".to_string());
 
         let rpc_url = std::env::var("RPC_URL")
             .ok()
@@ -64,6 +71,7 @@ impl NetworkConfig {
         info!(%rpc_url, bundler_url, "Loaded Config");
 
         NetworkConfig {
+            batch_producer_url,
             rpc_url,
             bundler_url,
             reth_url,
@@ -72,6 +80,11 @@ impl NetworkConfig {
             deposit_wallet,
             validating_wallet,
         }
+    }
+
+    /// Getter for `batch_producer_url`
+    pub fn batch_producer_url(&self) -> &str {
+        &self.batch_producer_url
     }
 
     /// Getter for `rpc_url`
