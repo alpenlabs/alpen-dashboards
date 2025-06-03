@@ -92,7 +92,7 @@ export default function Bridge() {
                                     <span className="bridge-title">
                                         BRIDGE DEPOSIT STATUS
                                     </span>
-                                    {data && data.deposits ? (
+                                    {data && data.deposits.length > 0 ? (
                                         <div className="table-wrapper">
                                             <table className="transactions-table">
                                                 <thead>
@@ -145,7 +145,7 @@ export default function Bridge() {
                                     <span className="bridge-title">
                                         BRIDGE WITHDRAWAL STATUS
                                     </span>
-                                    {data && data.withdrawals ? (
+                                    {data && data.withdrawals.length > 0 ? (
                                         <div className="table-wrapper">
                                             <table className="transactions-table">
                                                 <thead>
@@ -201,7 +201,7 @@ export default function Bridge() {
                                     <span className="bridge-title">
                                         BRIDGE REIMBURSEMENT STATUS
                                     </span>
-                                    {data && data.reimbursements ? (
+                                    {data && data.reimbursements.length > 0 ? (
                                         <div className="table-wrapper">
                                             <table className="transactions-table">
                                                 <thead>
