@@ -27,7 +27,11 @@ pub struct OperatorStatus {
 }
 
 impl OperatorStatus {
-    pub fn new(operator_id: String, operator_address: PublicKey, status: RpcOperatorStatus) -> Self {
+    pub fn new(
+        operator_id: String,
+        operator_address: PublicKey,
+        status: RpcOperatorStatus,
+    ) -> Self {
         Self {
             operator_id,
             operator_address,
@@ -192,11 +196,7 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
             let operator_id = format!("Alpen Labs #{}", index);
             let status = get_operator_status(&bridge_rpc, *public_key).await.unwrap();
 
-            operator_statuses.push(OperatorStatus::new(
-                operator_id,
-                *public_key,
-                status)
-            );
+            operator_statuses.push(OperatorStatus::new(operator_id, *public_key, status));
         }
 
         locked_state.operators = operator_statuses;
