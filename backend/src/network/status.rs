@@ -1,3 +1,4 @@
+//! Monitors status of Alpen network services (batch producer, RPC, bundler).
 use std::{sync::Arc, time::Duration};
 
 use axum::Json;
@@ -16,7 +17,7 @@ use crate::{
 pub(crate) type SharedNetworkState = Arc<RwLock<NetworkStatus>>;
 
 /// Check the status of batch producer and rpc endpoint.
-async fn fetch_rpc_status(
+async fn fetch_status(
     config: &NetworkConfig,
     client: &HttpClient,
     retry_policy: ExponentialBackoff,
@@ -65,6 +66,7 @@ async fn fetch_bundler_endpoint_status(http: &reqwest::Client, config: &NetworkC
 
 /// Background task that periodically updates shared network status.
 pub(crate) async fn monitor_network_task(state: SharedNetworkState, config: &NetworkConfig) {
+    let batch_producer_client = create_rpc_client(config.batch_producer_url());
     let rpc_client = create_rpc_client(config.rpc_url());
     let http_client = reqwest::Client::new();
     let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
@@ -73,12 +75,12 @@ pub(crate) async fn monitor_network_task(state: SharedNetworkState, config: &Net
         interval.tick().await;
         let retry_policy =
             ExponentialBackoff::new(config.max_retries(), config.total_retry_time(), 1.5);
-        let rpc_status = fetch_rpc_status(config, &rpc_client, retry_policy).await;
-        let batch_producer_status = rpc_status;
+        let batch_producer_status =
+            fetch_status(config, &batch_producer_client, retry_policy).await;
+        let rpc_status = fetch_status(config, &rpc_client, retry_policy).await;
         let bundler_status = fetch_bundler_endpoint_status(&http_client, config).await;
 
-        let current_status =
-            NetworkStatus::new(batch_producer_status, rpc_status, bundler_status);
+        let current_status = NetworkStatus::new(batch_producer_status, rpc_status, bundler_status);
 
         info!(?current_status, "Updated node service status");
 

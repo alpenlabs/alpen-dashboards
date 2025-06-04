@@ -8,18 +8,21 @@ mod wallets;
 use axum::{routing::get, Router};
 use dotenvy::dotenv;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::{
-    net::TcpListener,
-    sync::RwLock,
-};
+use tokio::{net::TcpListener, sync::RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 use crate::{
-    activity::{stats::{activity_monitoring_task, get_activity_stats}, types::ActivityStats},
-    bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
+    activity::{
+        stats::{activity_monitoring_task, get_activity_stats},
+        types::ActivityStats,
+    },
+    bridge::status::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
     config::{ActivityMonitoringConfig, BridgeMonitoringConfig},
-    network::{types::NetworkStatus, status::{SharedNetworkState, monitor_network_task, get_network_status}},
+    network::{
+        status::{get_network_status, monitor_network_task, SharedNetworkState},
+        types::NetworkStatus,
+    },
     wallets::balance::{
         fetch_balances_task, get_wallets_with_balances, init_paymaster_wallets, SharedWallets,
     },

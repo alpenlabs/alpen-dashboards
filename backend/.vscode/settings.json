@@ -1,5 +1,7 @@
 {
     "editor.formatOnSave": true,
+    "rust-analyzer.formatting.provider": "rustfmt",
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "rust-analyzer.checkOnSave": true,
     "rust-analyzer.check.overrideCommand": [
         "cargo",

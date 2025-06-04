@@ -5,11 +5,11 @@ use crate::activity::types::ActivityStatsKeys;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
+    /// JSON-RPC Endpoint for Alpen batch producer
+    batch_producer_url: String,
+
     /// JSON-RPC Endpoint for Alpen client
     rpc_url: String,
-
-    /// JSON-RPC Endpoint for Alpen evm for wallet balance
-    reth_url: String,
 
     /// Bundler health check URL (overrides `.env`)
     bundler_url: String,
@@ -34,15 +34,15 @@ impl NetworkConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let rpc_url = std::env::var("RPC_URL")
+        let batch_producer_url = std::env::var("ALPEN_BATCH_PRODUCER_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8432".to_string());
 
-        let bundler_url = std::env::var("BUNDLER_URL")
+        let rpc_url = std::env::var("ALPEN_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8433".to_string());
 
-        let reth_url = std::env::var("RETH_URL")
+        let bundler_url = std::env::var("BUNDLER_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8434".to_string());
 
@@ -72,15 +72,20 @@ impl NetworkConfig {
         info!(%rpc_url, bundler_url, "Loaded Config");
 
         NetworkConfig {
+            batch_producer_url,
             rpc_url,
             bundler_url,
-            reth_url,
             max_retries,
             total_retry_time,
             deposit_wallet,
             validating_wallet,
             status_refetch_interval_s,
         }
+    }
+
+    /// Getter for `batch_producer_url`
+    pub fn batch_producer_url(&self) -> &str {
+        &self.batch_producer_url
     }
 
     /// Getter for `rpc_url`
@@ -91,10 +96,6 @@ impl NetworkConfig {
     /// Getter for `bundler_url`
     pub fn bundler_url(&self) -> &str {
         &self.bundler_url
-    }
-
-    pub fn reth_url(&self) -> &str {
-        &self.reth_url
     }
 
     /// Getter for `max_retries`

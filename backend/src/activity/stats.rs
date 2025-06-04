@@ -1,3 +1,4 @@
+//! Computes stats about ERC4337 accounts and user operations.
 use anyhow::{Context, Result};
 use axum::Json;
 use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
@@ -8,7 +9,7 @@ use std::{
 use tokio::{sync::RwLock, time::interval};
 use tracing::{error, info};
 
-use crate::{config::ActivityMonitoringConfig, activity::types::*};
+use crate::{activity::types::*, config::ActivityMonitoringConfig};
 
 /// Shared activity stats
 pub type SharedActivityStats = Arc<RwLock<ActivityStats>>;
@@ -80,13 +81,20 @@ pub async fn activity_monitoring_task(
                         let op_time = entry.timestamp;
                         for (period, duration) in &time_windows {
                             if now - *duration <= op_time {
-                                if let Some(stat_map) = locked_stats.stats.get_mut(&ActivityStatName::UserOps) {
+                                if let Some(stat_map) =
+                                    locked_stats.stats.get_mut(&ActivityStatName::UserOps)
+                                {
                                     *stat_map.entry(*period).or_insert(0) += 1;
                                 }
-                                if let Some(stat_map) = locked_stats.stats.get_mut(&ActivityStatName::GasUsed) {
+                                if let Some(stat_map) =
+                                    locked_stats.stats.get_mut(&ActivityStatName::GasUsed)
+                                {
                                     *stat_map.entry(*period).or_insert(0) += entry.gas_used;
                                 }
-                                unique_accounts.get_mut(period).unwrap().insert(entry.sender.clone());
+                                unique_accounts
+                                    .get_mut(period)
+                                    .unwrap()
+                                    .insert(entry.sender.clone());
                             }
                         }
 
@@ -137,10 +145,9 @@ pub async fn activity_monitoring_task(
                     sorted_accounts.sort_by(|a, b| b.creation_timestamp.cmp(&a.creation_timestamp));
 
                     let recent_accounts = sorted_accounts.into_iter().take(5).collect::<Vec<_>>();
-                    locked_stats.selected_accounts.insert(
-                        SelectAccountsBy::Recent,
-                        recent_accounts,
-                    );
+                    locked_stats
+                        .selected_accounts
+                        .insert(SelectAccountsBy::Recent, recent_accounts);
 
                     page_token = response.next_page_token;
                     more_items = page_token.is_some();
@@ -164,10 +171,9 @@ pub async fn activity_monitoring_task(
         top_gas_consumers.sort_by_key(|acc| std::cmp::Reverse(acc.gas_used));
         top_gas_consumers.truncate(5);
 
-        locked_stats.selected_accounts.insert(
-            SelectAccountsBy::TopGasConsumers24h,
-            top_gas_consumers,
-        );
+        locked_stats
+            .selected_accounts
+            .insert(SelectAccountsBy::TopGasConsumers24h, top_gas_consumers);
     }
 }
 
@@ -296,10 +302,11 @@ pub async fn get_activity_stats(state: SharedActivityStats) -> Json<ActivityStat
 
 #[cfg(test)]
 mod tests {
-    use crate::activity::types::{
-        convert_to_u64, get_address_hash, ActivityStats, TimeWindow
+    use crate::activity::types::{convert_to_u64, ActivityStats, AddressHash, TimeWindow};
+    use crate::{
+        activity::stats::{fetch_accounts, fetch_user_ops},
+        config::ActivityMonitoringConfig,
     };
-    use crate::{activity::stats::{fetch_accounts, fetch_user_ops}, config::ActivityMonitoringConfig};
     use chrono::{Datelike, TimeZone, Utc};
     use mockito::{Matcher, Server};
     use serde::Deserialize;
@@ -375,15 +382,14 @@ mod tests {
 
     #[derive(Deserialize)]
     struct TestAddress {
-        #[serde(deserialize_with = "get_address_hash")]
-        address: String,
+        address: AddressHash,
     }
 
     #[test]
     fn test_get_address_hash() {
         let json_data = json!({ "address": { "hash": "0x123456" } });
         let obj: TestAddress = serde_json::from_value(json_data).unwrap();
-        assert_eq!(obj.address, "0x123456");
+        assert_eq!(obj.address, AddressHash("0x123456".to_string()));
 
         let json_data = json!({ "address": {} });
         let result: Result<TestAddress, _> = serde_json::from_value(json_data);
@@ -428,7 +434,7 @@ mod tests {
         mock_endpoint.assert();
         let ops = result.user_ops;
         assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].sender, "0x123456789abcdef");
+        assert_eq!(ops[0].sender, AddressHash("0x123456789abcdef".to_string()));
         assert_eq!(ops[0].gas_used, 100);
         assert!(result.next_page_token.is_none());
     }
@@ -466,7 +472,10 @@ mod tests {
         mock_endpoint.assert();
         let accounts = result.accounts;
         assert_eq!(accounts.len(), 1);
-        assert_eq!(accounts[0].address, "0xabcdef123456");
+        assert_eq!(
+            accounts[0].address,
+            AddressHash("0xabcdef123456".to_string())
+        );
         assert!(result.next_page_token.is_none());
     }
 }

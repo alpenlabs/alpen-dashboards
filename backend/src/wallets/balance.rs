@@ -1,3 +1,4 @@
+//! Monitors the balances of paymaster wallets.
 use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
@@ -9,7 +10,11 @@ use tokio::{
 };
 use tracing::info;
 
-use crate::{config::NetworkConfig, wallets::types::{Wallet, PaymasterWallets}, utils::rpc_client::create_rpc_client};
+use crate::{
+    config::NetworkConfig,
+    utils::rpc_client::create_rpc_client,
+    wallets::types::{PaymasterWallets, Wallet},
+};
 
 pub(crate) type SharedWallets = Arc<RwLock<PaymasterWallets>>;
 
@@ -17,7 +22,7 @@ pub(crate) type SharedWallets = Arc<RwLock<PaymasterWallets>>;
 pub(crate) async fn fetch_balances_task(wallets: SharedWallets, config: &NetworkConfig) {
     info!("Fetching balances...");
     let mut interval = interval(Duration::from_secs(10));
-    let rpc_client = create_rpc_client(config.reth_url());
+    let rpc_client = create_rpc_client(config.rpc_url());
 
     loop {
         interval.tick().await;

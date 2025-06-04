@@ -26,7 +26,11 @@ pub(crate) struct NetworkStatus {
 }
 
 impl NetworkStatus {
-    pub(crate) fn new(batch_producer: Status, rpc_endpoint: Status, bundler_endpoint: Status) -> Self {
+    pub(crate) fn new(
+        batch_producer: Status,
+        rpc_endpoint: Status,
+        bundler_endpoint: Status,
+    ) -> Self {
         Self {
             batch_producer,
             rpc_endpoint,

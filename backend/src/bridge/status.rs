@@ -1,174 +1,27 @@
 use axum::Json;
-use bitcoin::{secp256k1::PublicKey, OutPoint, Txid};
+use bitcoin::{OutPoint, Txid};
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::ClientError;
 use jsonrpsee::http_client::HttpClient;
-use serde::{Deserialize, Serialize};
+use std::{sync::Arc, str::FromStr};
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc};
 use strata_bridge_primitives::types::PublickeyTable;
-use strata_bridge_rpc::types::{
-    RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
-    RpcWithdrawalInfo, RpcWithdrawalStatus,
-};
 use tokio::{
     sync::RwLock,
     time::{interval, Duration},
 };
 use tracing::{error, info, warn};
 
-use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
+use strata_bridge_rpc::types::{
+    RpcClaimInfo, RpcDepositInfo, RpcOperatorStatus,
+    RpcWithdrawalInfo,
+};
 
-/// Bridge operator status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct OperatorStatus {
-    operator_id: String,
-    operator_address: PublicKey,
-    status: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum DepositStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Failed,
-    Complete,
-}
-
-/// Deposit information passed to dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DepositInfo {
-    pub deposit_request_txid: Txid,
-    pub deposit_txid: Option<Txid>,
-    pub status: DepositStatus,
-}
-
-impl From<RpcDepositInfo> for DepositInfo {
-    fn from(rpc_info: RpcDepositInfo) -> Self {
-        match rpc_info.status {
-            RpcDepositStatus::InProgress {
-                deposit_request_txid,
-            } => DepositInfo {
-                deposit_request_txid,
-                deposit_txid: None,
-                status: DepositStatus::InProgress,
-            },
-            RpcDepositStatus::Failed {
-                deposit_request_txid,
-                failure_reason: _,
-            } => DepositInfo {
-                deposit_request_txid,
-                deposit_txid: None,
-                status: DepositStatus::Failed,
-            },
-            RpcDepositStatus::Complete {
-                deposit_request_txid,
-                deposit_txid,
-            } => DepositInfo {
-                deposit_request_txid,
-                deposit_txid: Some(deposit_txid),
-                status: DepositStatus::Complete,
-            },
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DepositToWithdrawal {
-    deposit_outpoint: OutPoint,
-    withdrawal_request_txid: Option<Txid>,
-}
-
-/// Withdrawal status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum WithdrawalStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Complete,
-}
-
-/// Withdrawal information passed to dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WithdrawalInfo {
-    pub withdrawal_request_txid: Txid,
-    pub fulfillment_txid: Option<Txid>,
-    pub status: WithdrawalStatus,
-}
-
-impl WithdrawalInfo {
-    pub fn from_rpc(rpc_info: &RpcWithdrawalInfo, withdrawal_request_txid: Txid) -> Self {
-        match &rpc_info.status {
-            RpcWithdrawalStatus::InProgress => Self {
-                withdrawal_request_txid,
-                fulfillment_txid: None,
-                status: WithdrawalStatus::InProgress,
-            },
-            RpcWithdrawalStatus::Complete { fulfillment_txid } => Self {
-                withdrawal_request_txid,
-                fulfillment_txid: Some(*fulfillment_txid),
-                status: WithdrawalStatus::Complete,
-            },
-        }
-    }
-}
-
-/// Reimbursement status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ReimbursementStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Challenged,
-    Cancelled,
-    Complete,
-}
-
-/// Claim and reimbursement information passed to dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ReimbursementInfo {
-    pub claim_txid: Txid,
-    pub challenge_step: String,
-    pub payout_txid: Option<Txid>,
-    pub status: ReimbursementStatus,
-}
-
-impl From<&RpcClaimInfo> for ReimbursementInfo {
-    fn from(rpc_info: &RpcClaimInfo) -> Self {
-        match &rpc_info.status {
-            RpcReimbursementStatus::InProgress { challenge_step } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
-                payout_txid: None,
-                status: ReimbursementStatus::InProgress,
-            },
-            RpcReimbursementStatus::Challenged { challenge_step } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
-                payout_txid: None,
-                status: ReimbursementStatus::Challenged,
-            },
-            RpcReimbursementStatus::Cancelled => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
-                payout_txid: None,
-                status: ReimbursementStatus::Cancelled,
-            },
-            RpcReimbursementStatus::Complete { payout_txid } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
-                payout_txid: Some(*payout_txid),
-                status: ReimbursementStatus::Complete,
-            },
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct BridgeStatus {
-    operators: Vec<OperatorStatus>,
-    deposits: Vec<DepositInfo>,
-    withdrawals: Vec<WithdrawalInfo>,
-    reimbursements: Vec<ReimbursementInfo>,
-}
+use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client,
+    bridge::types::{
+        BridgeStatus, DepositInfo, DepositToWithdrawal, OperatorStatus, ReimbursementInfo,
+        WithdrawalInfo,
+    }};
 
 /// Shared bridge state
 pub type SharedBridgeState = Arc<RwLock<BridgeStatus>>;
@@ -190,11 +43,11 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
             let operator_id = format!("Alpen Labs #{}", index);
             let status = get_operator_status(&bridge_rpc, *index).await.unwrap();
 
-            operator_statuses.push(OperatorStatus {
+            operator_statuses.push(OperatorStatus::new(
                 operator_id,
-                operator_address: *public_key,
+                *public_key,
                 status,
-            });
+            ));
         }
 
         locked_state.operators = operator_statuses;
@@ -260,7 +113,7 @@ async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<PublickeyTable,
 async fn get_operator_status(
     bridge_client: &HttpClient,
     operator_idx: u32,
-) -> Result<String, ClientError> {
+) -> Result<RpcOperatorStatus, ClientError> {
     let status: RpcOperatorStatus = match bridge_client
         .request("stratabridge_operatorStatus", (operator_idx,))
         .await
@@ -272,7 +125,7 @@ async fn get_operator_status(
         }
     };
 
-    Ok(format!("{:?}", status))
+    Ok(status)
 }
 
 /// Fetch current deposits
@@ -330,10 +183,10 @@ async fn get_deposit_info(
         return Ok((None, None));
     }
 
-    let deposit_to_withdrawal = DepositToWithdrawal {
-        deposit_outpoint: deposit_outpoint.unwrap(),
+    let deposit_to_withdrawal = DepositToWithdrawal::new (
+        deposit_outpoint.unwrap(),
         withdrawal_request_txid,
-    };
+    );
 
     let deposit_info: RpcDepositInfo = match bridge_rpc
         .request("stratabridge_depositInfo", (deposit_outpoint,))
@@ -359,14 +212,14 @@ async fn get_withdrawals(
 ) -> Result<Vec<WithdrawalInfo>, ClientError> {
     let mut withdrawal_infos = Vec::new();
     for deposit_to_wd in deposit_to_withdrawals.iter() {
-        if deposit_to_wd.withdrawal_request_txid.is_none() {
+        if deposit_to_wd.withdrawal_request_txid().is_none() {
             continue;
         }
 
         let wd_info: RpcWithdrawalInfo = match bridge_rpc
             .request(
                 "stratabridge_withdrawalInfo",
-                (deposit_to_wd.deposit_outpoint,),
+                (deposit_to_wd.deposit_outpoint(),),
             )
             .await
         {
@@ -379,7 +232,7 @@ async fn get_withdrawals(
 
         withdrawal_infos.push(WithdrawalInfo::from_rpc(
             &wd_info,
-            deposit_to_wd.withdrawal_request_txid.unwrap(),
+            deposit_to_wd.withdrawal_request_txid().unwrap(),
         ));
     }
 

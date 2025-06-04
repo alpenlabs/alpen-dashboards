@@ -1,67 +1,80 @@
-use sqlx::{SqlitePool, Result};
-use crate::types::DepositRecord;
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::time::Duration;
 
-/// Insert or update a deposit entry in the indexer DB
-pub async fn upsert_deposit(db: &SqlitePool, record: &DepositRecord) -> Result<()> {
+#[derive(Debug, sqlx::FromRow)]
+pub struct WithdrawalRequest {
+    pub txid: String,
+    pub amount: i64, // in sats
+    pub destination: String,
+    pub block_number: i64,
+    pub timestamp: String, // optional, or use chrono::DateTime<Utc>
+}
+
+/// Initialize the SQLite connection pool.
+pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
+    SqlitePoolOptions::new()
+        .connect_timeout(Duration::from_secs(5))
+        .connect(database_url)
+        .await
+}
+
+/// Insert withdrawal request into the database.
+pub async fn insert_withdrawal_request(
+    pool: &SqlitePool,
+    txid: &str,
+    amount: i64,
+    destination: &str,
+    block_number: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
-        INSERT INTO deposits (
-            deposit_outpoint,
-            deposit_request_txid,
-            deposit_txid,
-            deposit_block_height,
-            current_block_height,
-            confirmation_depth,
-            status,
-            last_checked,
-            alpen_address
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(deposit_outpoint) DO UPDATE SET
-            deposit_request_txid = excluded.deposit_request_txid,
-            deposit_txid = excluded.deposit_txid,
-            deposit_block_height = excluded.deposit_block_height,
-            current_block_height = excluded.current_block_height,
-            confirmation_depth = excluded.confirmation_depth,
-            status = excluded.status,
-            last_checked = excluded.last_checked,
-            alpen_address = excluded.alpen_address
+        INSERT OR IGNORE INTO withdrawal_requests (txid, amount, destination, block_number)
+        VALUES (?, ?, ?, ?)
         "#,
-        record.deposit_outpoint,
-        record.deposit_request_txid,
-        record.deposit_txid.as_deref(),
-        record.deposit_block_height,
-        record.current_block_height,
-        record.confirmation_depth,
-        record.status,
-        record.last_checked,
-        record.alpen_address.as_deref()
+        txid,
+        amount,
+        destination,
+        block_number,
     )
-    .execute(db)
+    .execute(pool)
     .await?;
-
     Ok(())
 }
 
-/// Retrieve all current deposit entries
-pub async fn get_all_deposits(db: &SqlitePool) -> Result<Vec<DepositRecord>> {
-    let rows = sqlx::query_as!(
-        DepositRecord,
+/// Get the last scanned block for a specific indexer task id.
+pub async fn get_last_scanned_block(pool: &SqlitePool, indexer_id: &str) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query_scalar!(
         r#"
-        SELECT
-            deposit_outpoint,
-            deposit_request_txid,
-            deposit_txid,
-            deposit_block_height,
-            current_block_height,
-            confirmation_depth,
-            status,
-            last_checked,
-            alpen_address
-        FROM deposits
-        "#
+        SELECT last_scanned_block
+        FROM indexer_state
+        WHERE id = ?
+        "#,
+        indexer_id
     )
-    .fetch_all(db)
+    .fetch_optional(pool)
     .await?;
 
-    Ok(rows)
+    // default to block 0 if not found
+    Ok(row.unwrap_or(0))
+}
+
+/// Update the last scanned block for a specific indexer task id.
+pub async fn update_last_scanned_block(
+    pool: &SqlitePool,
+    id: &str,
+    block: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        UPDATE indexer_state
+        SET last_scanned_block = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+        block,
+        id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
