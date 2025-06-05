@@ -3,8 +3,8 @@ use bitcoin::{OutPoint, Txid};
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::ClientError;
 use jsonrpsee::http_client::HttpClient;
-use std::{sync::Arc, str::FromStr};
 use serde_json::Value;
+use std::{str::FromStr, sync::Arc};
 use strata_bridge_primitives::types::PublickeyTable;
 use tokio::{
     sync::RwLock,
@@ -13,15 +13,17 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use strata_bridge_rpc::types::{
-    RpcClaimInfo, RpcDepositInfo, RpcOperatorStatus,
-    RpcWithdrawalInfo,
+    RpcClaimInfo, RpcDepositInfo, RpcOperatorStatus, RpcWithdrawalInfo,
 };
 
-use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client,
+use crate::{
     bridge::types::{
         BridgeStatus, DepositInfo, DepositToWithdrawal, OperatorStatus, ReimbursementInfo,
         WithdrawalInfo,
-    }};
+    },
+    config::BridgeMonitoringConfig,
+    utils::rpc_client::create_rpc_client,
+};
 
 /// Shared bridge state
 pub type SharedBridgeState = Arc<RwLock<BridgeStatus>>;
@@ -43,11 +45,7 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
             let operator_id = format!("Alpen Labs #{}", index);
             let status = get_operator_status(&bridge_rpc, *index).await.unwrap();
 
-            operator_statuses.push(OperatorStatus::new(
-                operator_id,
-                *public_key,
-                status,
-            ));
+            operator_statuses.push(OperatorStatus::new(operator_id, *public_key, status));
         }
 
         locked_state.operators = operator_statuses;
@@ -183,10 +181,8 @@ async fn get_deposit_info(
         return Ok((None, None));
     }
 
-    let deposit_to_withdrawal = DepositToWithdrawal::new (
-        deposit_outpoint.unwrap(),
-        withdrawal_request_txid,
-    );
+    let deposit_to_withdrawal =
+        DepositToWithdrawal::new(deposit_outpoint.unwrap(), withdrawal_request_txid);
 
     let deposit_info: RpcDepositInfo = match bridge_rpc
         .request("stratabridge_depositInfo", (deposit_outpoint,))

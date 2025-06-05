@@ -6,7 +6,6 @@ use strata_bridge_rpc::types::{
     RpcWithdrawalInfo, RpcWithdrawalStatus,
 };
 
-
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct OperatorStatus {
@@ -16,7 +15,11 @@ pub struct OperatorStatus {
 }
 
 impl OperatorStatus {
-    pub fn new  (operator_id: String, operator_address: PublicKey, status: RpcOperatorStatus) -> Self {
+    pub fn new(
+        operator_id: String,
+        operator_address: PublicKey,
+        status: RpcOperatorStatus,
+    ) -> Self {
         Self {
             operator_id,
             operator_address,
@@ -151,15 +154,15 @@ pub struct ReimbursementInfo {
 impl From<&RpcClaimInfo> for ReimbursementInfo {
     fn from(rpc_info: &RpcClaimInfo) -> Self {
         match &rpc_info.status {
-            RpcReimbursementStatus::InProgress { challenge_step } => Self {
+            RpcReimbursementStatus::InProgress => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: "N/A".to_string(),
                 payout_txid: None,
                 status: ReimbursementStatus::InProgress,
             },
-            RpcReimbursementStatus::Challenged { challenge_step } => Self {
+            RpcReimbursementStatus::Challenged => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: "N/A".to_string(),
                 payout_txid: None,
                 status: ReimbursementStatus::Challenged,
             },
@@ -169,10 +172,10 @@ impl From<&RpcClaimInfo> for ReimbursementInfo {
                 payout_txid: None,
                 status: ReimbursementStatus::Cancelled,
             },
-            RpcReimbursementStatus::Complete { payout_txid } => Self {
+            RpcReimbursementStatus::Complete => Self {
                 claim_txid: rpc_info.claim_txid,
                 challenge_step: "N/A".to_string(),
-                payout_txid: Some(*payout_txid),
+                payout_txid: None,
                 status: ReimbursementStatus::Complete,
             },
         }

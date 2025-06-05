@@ -69,7 +69,7 @@ impl NetworkConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(30);
 
-        info!(%rpc_url, bundler_url, "Loaded Config");
+        info!(%batch_producer_url, %rpc_url, %bundler_url, "Network configuration initialized");
 
         NetworkConfig {
             batch_producer_url,
@@ -200,8 +200,14 @@ const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120_000;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
+    /// Indexer database URL
+    indexer_db_url: String,
+
     /// Strata RPC url
     strata_rpc_url: String,
+    /// Number of blocks to query in a single batch for ethereum logs
+    eth_logs_batch_size: u64,
+
     /// Strata bridge RPC url
     bridge_rpc_url: String,
     /// Bridge status refetch interval in seconds
@@ -212,11 +218,20 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let strata_rpc_url = std::env::var("STRATA_RPC_URL")
+        let indexer_db_url = std::env::var("DATABASE_URL")
+            .ok()
+            .unwrap_or_else(|| "sqlite://indexer.db".to_string());
+
+        let strata_rpc_url = std::env::var("ALPEN_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8545".to_string());
 
-        let bridge_rpc_url = std::env::var("STRATA_BRIDGE_RPC_URL")
+        let eth_logs_batch_size: u64 = std::env::var("ETH_LOGS_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(5);
+
+        let bridge_rpc_url = std::env::var("ALPEN_BRIDGE_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8546".to_string());
 
@@ -228,15 +243,27 @@ impl BridgeMonitoringConfig {
         info!(%strata_rpc_url, %bridge_rpc_url, "Bridge monitoring configuration");
 
         BridgeMonitoringConfig {
+            indexer_db_url,
             strata_rpc_url,
+            eth_logs_batch_size,
             bridge_rpc_url,
             status_refetch_interval_s: refresh_interval_s,
         }
     }
 
+    /// Getter for `indexer_db_url`
+    pub fn indexer_db_url(&self) -> &str {
+        &self.indexer_db_url
+    }
+
     /// Getter for `strata_rpc_url`
     pub fn strata_rpc_url(&self) -> &str {
         &self.strata_rpc_url
+    }
+
+    /// Getter for `eth_logs_batch_size`
+    pub fn eth_logs_batch_size(&self) -> u64 {
+        self.eth_logs_batch_size
     }
 
     /// Getter for `bridge_rpc_url`

@@ -1,80 +1,104 @@
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
 
-#[derive(Debug, sqlx::FromRow)]
-pub struct WithdrawalRequest {
-    pub txid: String,
-    pub amount: i64, // in sats
-    pub destination: String,
-    pub block_number: i64,
-    pub timestamp: String, // optional, or use chrono::DateTime<Utc>
-}
+use crate::indexer::models::{WithdrawalRequest, IndexerState};
+use crate::indexer::types::{DbTxid, DbAmount, DbDescriptor,
+    DbBlockNumber, DbTaskId, DbTimestamp};
 
 /// Initialize the SQLite connection pool.
 pub async fn init_pool(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
     SqlitePoolOptions::new()
-        .connect_timeout(Duration::from_secs(5))
+        .acquire_timeout(Duration::from_secs(5))
         .connect(database_url)
         .await
+}
+
+/// Runs all necessary migrations for the indexer.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::migrate!("./migrations").run(pool).await?;
+    Ok(())
 }
 
 /// Insert withdrawal request into the database.
 pub async fn insert_withdrawal_request(
     pool: &SqlitePool,
-    txid: &str,
-    amount: i64,
-    destination: &str,
-    block_number: i64,
+    record: &WithdrawalRequest,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
-        INSERT OR IGNORE INTO withdrawal_requests (txid, amount, destination, block_number)
-        VALUES (?, ?, ?, ?)
+        INSERT OR IGNORE INTO withdrawal_requests (txid, amount, destination, block_number, timestamp)
+        VALUES (?1, ?2, ?3, ?4, ?5)
         "#,
-        txid,
-        amount,
-        destination,
-        block_number,
+        record.txid,
+        record.amount,
+        record.destination,
+        record.block_number,
+        record.timestamp,
     )
     .execute(pool)
     .await?;
+
     Ok(())
 }
 
-/// Get the last scanned block for a specific indexer task id.
-pub async fn get_last_scanned_block(pool: &SqlitePool, indexer_id: &str) -> Result<i64, sqlx::Error> {
-    let row = sqlx::query_scalar!(
+/// Fetch a withdrawal request by its transaction ID.
+pub async fn get_withdrawal_request_by_txid(
+    pool: &SqlitePool,
+    txid: &DbTxid,
+) -> Result<Option<WithdrawalRequest>, sqlx::Error> {
+    let record = sqlx::query_as!(
+        WithdrawalRequest,
         r#"
-        SELECT last_scanned_block
-        FROM indexer_state
-        WHERE id = ?
+        SELECT
+            txid as "txid: DbTxid",
+            amount as "amount: DbAmount",
+            destination as "destination: DbDescriptor",
+            block_number as "block_number: DbBlockNumber",
+            timestamp as "timestamp: DbTimestamp"
+        FROM withdrawal_requests
+        WHERE txid = ?1
         "#,
-        indexer_id
+        txid
     )
     .fetch_optional(pool)
     .await?;
 
-    // default to block 0 if not found
-    Ok(row.unwrap_or(0))
+    Ok(record)
+}
+
+/// Get the last scanned block for a specific indexer task id.
+pub async fn get_indexer_state(
+    pool: &SqlitePool,
+    task_id: &DbTaskId,
+) -> Result<IndexerState, sqlx::Error> {
+    sqlx::query_as!(
+        IndexerState,
+        r#"
+        SELECT task_id as "task_id!: DbTaskId", last_scanned_block, updated_at
+        FROM indexer_state
+        WHERE task_id = ?
+        "#,
+        task_id
+)
+    .fetch_one(pool)
+    .await
 }
 
 /// Update the last scanned block for a specific indexer task id.
-pub async fn update_last_scanned_block(
+pub async fn update_indexer_state(
     pool: &SqlitePool,
-    id: &str,
-    block: i64,
+    state: &IndexerState,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
         UPDATE indexer_state
         SET last_scanned_block = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE task_id = ?
         "#,
-        block,
-        id
+        state.last_scanned_block,
+        state.task_id
     )
     .execute(pool)
     .await?;
-
     Ok(())
 }

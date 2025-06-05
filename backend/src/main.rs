@@ -1,6 +1,7 @@
 mod activity;
 mod bridge;
 mod config;
+mod indexer;
 mod network;
 mod utils;
 mod wallets;
@@ -19,6 +20,10 @@ use crate::{
     },
     bridge::status::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
     config::{ActivityMonitoringConfig, BridgeMonitoringConfig},
+    indexer::{
+        db::{init_pool, run_migrations},
+        withdrawal_requests::run_withdrawal_requests_task,
+    },
     network::{
         status::{get_network_status, monitor_network_task, SharedNetworkState},
         types::NetworkStatus,
@@ -73,6 +78,13 @@ async fn main() {
 
     // bridge monitoring
     let bridge_monitoring_config = BridgeMonitoringConfig::new();
+    let indexer_db_pool = init_pool(bridge_monitoring_config.indexer_db_url()).await.unwrap();
+    if let Err(e) = run_migrations(&indexer_db_pool).await{
+        eprintln!("Failed to run migrations: {}", e);
+        return;
+    };
+    run_withdrawal_requests_task(&indexer_db_pool, &bridge_monitoring_config).await;
+
     // Shared state for bridge status
     let bridge_state = SharedBridgeState::default();
     tokio::spawn({

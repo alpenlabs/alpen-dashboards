@@ -18,6 +18,10 @@ Thumbs.db
 # Ignore Rust backup files
 *.rs.bk
 
+# Ignore sqlx and sqlite database files
+*.sqlite.*
+/.sqlx/
+
 # Ignore the build output from `cargo run` (debug and release directories)
 /debug/
 **/debug/
