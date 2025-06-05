@@ -19,8 +19,8 @@ Thumbs.db
 *.rs.bk
 
 # Ignore sqlx and sqlite database files
-*.sqlite.*
 /.sqlx/
+*sqlite*
 
 # Ignore the build output from `cargo run` (debug and release directories)
 /debug/
