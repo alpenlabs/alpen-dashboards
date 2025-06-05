@@ -20,7 +20,17 @@ Thumbs.db
 
 # Ignore sqlx and sqlite database files
 /.sqlx/
-*sqlite*
+# Ignore SQLite database files
+*.sqlite
+*.sqlite3
+*.db
+*.db3
+
+# Ignore SQLite write-ahead log and shared memory files
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
 
 # Ignore the build output from `cargo run` (debug and release directories)
 /debug/
