@@ -203,22 +203,25 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         let current_deposits = get_current_deposits(&strata_rpc).await.unwrap();
         // Deposits with withdrawal requests
         let mut deposits_to_withdrawals: Vec<DepositToWithdrawal> = Vec::new();
-
+        let mut deposit_infos: Vec<DepositInfo> = Vec::new();
         for deposit_id in current_deposits {
             let (deposit_info, deposit_to_wd) =
                 get_deposit_info(&strata_rpc, &bridge_rpc, deposit_id)
                     .await
                     .unwrap();
             if let Some(deposit) = deposit_info {
-                locked_state.deposits.push(deposit);
-                deposits_to_withdrawals.push(deposit_to_wd.unwrap());
+                deposit_infos.push(deposit);
+                if let Some(dep_to_wd) = deposit_to_wd {
+                    deposits_to_withdrawals.push(dep_to_wd);
+                }
             } else {
                 warn!(%deposit_id, "Missing deposit entry for id");
             }
         }
+        locked_state.deposits = deposit_infos;
 
-        // Withdrawal fulfillment
-        let mut withdrawal_infos: Vec<WithdrawalInfo> =
+        // Withdrawal fulfillments
+        let withdrawal_infos: Vec<WithdrawalInfo> =
             match get_withdrawals(&bridge_rpc, deposits_to_withdrawals).await {
                 Ok(data) => data,
                 Err(e) => {
@@ -226,7 +229,7 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
                     Vec::new()
                 }
             };
-        locked_state.withdrawals.append(&mut withdrawal_infos);
+        locked_state.withdrawals = withdrawal_infos;
 
         // Reimbursements
         let reimbursements: Vec<ReimbursementInfo> = match get_reimbursements(&bridge_rpc).await {

@@ -100,6 +100,7 @@ async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) 
 async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(10));
+    let batch_producer_client = create_rpc_client(config.batch_producer_url());
     let rpc_client = create_rpc_client(config.rpc_url());
     let http_client = reqwest::Client::new();
     let retry_policy =
@@ -108,7 +109,7 @@ async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) 
     loop {
         interval.tick().await;
 
-        let batch_producer = call_rpc_status(config, &rpc_client, retry_policy).await;
+        let batch_producer = call_rpc_status(config, &batch_producer_client, retry_policy).await;
         let rpc_endpoint = call_rpc_status(config, &rpc_client, retry_policy).await;
         let bundler_endpoint = check_bundler_health(&http_client, config).await;
 
