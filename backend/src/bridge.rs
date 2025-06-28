@@ -201,57 +201,47 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 
         locked_state.operators = operator_statuses;
 
-        // Reimbursements
-        let reimbursements: Vec<ReimbursementInfo> =
-            (get_reimbursements(&bridge_rpc).await).unwrap_or_default();
-        locked_state.reimbursements = reimbursements;
-
-        // Bridge duties to fetch deposits and withdrawals
-        let bridge_duties: Vec<RpcBridgeDutyStatus> =
-            (get_bridge_duties(&bridge_rpc).await).unwrap_or_default();
-
-        if bridge_duties.is_empty() {
-            warn!("No bridge duties found");
-            continue;
-        }
-
-        // Separate deposit and withdrawal requests
-        let mut deposit_requests = Vec::new();
-        let mut withdrawal_requests = Vec::new();
-        for duty in bridge_duties.iter() {
-            if let RpcBridgeDutyStatus::Deposit {
-                deposit_request_txid,
-            } = duty
-            {
-                info!(%deposit_request_txid, "Found deposit request duty");
-                deposit_requests.push(*deposit_request_txid);
-            } else if let RpcBridgeDutyStatus::Withdrawal {
-                withdrawal_request_txid,
-                assigned_operator_idx,
-            } = duty
-            {
-                info!(%withdrawal_request_txid, "Found withdrawal request duty for operator {}", assigned_operator_idx);
-                withdrawal_requests.push(*withdrawal_request_txid);
+        // Current deposits
+        let current_deposits = get_current_deposits(&strata_rpc).await.unwrap();
+        // Deposits with withdrawal requests
+        let mut deposits_to_withdrawals: Vec<DepositToWithdrawal> = Vec::new();
+        let mut deposit_infos: Vec<DepositInfo> = Vec::new();
+        for deposit_id in current_deposits {
+            let (deposit_info, deposit_to_wd) =
+                get_deposit_info(&strata_rpc, &bridge_rpc, deposit_id)
+                    .await
+                    .unwrap();
+            if let Some(deposit) = deposit_info {
+                deposit_infos.push(deposit);
+                if let Some(dep_to_wd) = deposit_to_wd {
+                    deposits_to_withdrawals.push(dep_to_wd);
+                }
+            } else {
+                warn!(%deposit_id, "Missing deposit entry for id");
             }
         }
+        locked_state.deposits = deposit_infos;
 
-        // Fetch deposit infos
-        if deposit_requests.is_empty() {
-            warn!("No deposits to fetch");
-        } else {
-            let deposit_infos =
-                (get_deposit_infos(&bridge_rpc, &deposit_requests).await).unwrap_or_default();
-            locked_state.deposits = deposit_infos;
-        }
+        // Withdrawal fulfillments
+        let withdrawal_infos: Vec<WithdrawalInfo> =
+            match get_withdrawals(&bridge_rpc, deposits_to_withdrawals).await {
+                Ok(data) => data,
+                Err(e) => {
+                    error!(error = %e, "Bridge get withdrawal failed");
+                    Vec::new()
+                }
+            };
+        locked_state.withdrawals = withdrawal_infos;
 
-        // Fetch withdrawal infos
-        if withdrawal_requests.is_empty() {
-            warn!("No withdrawals to fetch");
-        } else {
-            let withdrawal_infos =
-                (get_withdrawal_infos(&bridge_rpc, &withdrawal_requests).await).unwrap_or_default();
-            locked_state.withdrawals = withdrawal_infos;
-        }
+        // Reimbursements
+        let reimbursements: Vec<ReimbursementInfo> = match get_reimbursements(&bridge_rpc).await {
+            Ok(data) => data,
+            Err(e) => {
+                error!(error = %e, "Bridge get reimbursement failed");
+                Vec::new()
+            }
+        };
+        locked_state.reimbursements = reimbursements;
     }
 }
 
