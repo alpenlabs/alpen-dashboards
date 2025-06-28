@@ -1,20 +1,21 @@
 use axum::Json;
-use bitcoin::{secp256k1::PublicKey, OutPoint, Txid};
+use bitcoin::{secp256k1::PublicKey, Txid};
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::ClientError;
 use jsonrpsee::http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strata_bridge_rpc::types::{
-    RpcBridgeDutyStatus, RpcClaimInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
+    RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
     RpcWithdrawalInfo, RpcWithdrawalStatus,
 };
+use strata_primitives::buf::Buf32;
 
 use tokio::{
     sync::RwLock,
     time::{interval, Duration},
 };
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::{config::BridgeMonitoringConfig, utils::create_rpc_client};
 
@@ -56,29 +57,23 @@ pub struct DepositInfo {
     pub status: DepositStatus,
 }
 
-impl From<RpcDepositStatus> for DepositInfo {
-    fn from(status: RpcDepositStatus) -> Self {
-        match status {
-            RpcDepositStatus::InProgress {
-                deposit_request_txid,
-            } => DepositInfo {
-                deposit_request_txid,
+impl From<&RpcDepositInfo> for DepositInfo {
+    fn from(rpc_info: &RpcDepositInfo) -> Self {
+        match rpc_info.status {
+            RpcDepositStatus::InProgress { .. } => Self {
+                rpc_info.deposit_request_txid,
                 deposit_txid: None,
                 status: DepositStatus::InProgress,
             },
-            RpcDepositStatus::Failed {
-                deposit_request_txid,
-                failure_reason: _,
-            } => DepositInfo {
-                deposit_request_txid,
+            RpcDepositStatus::Failed { .. } => DepositInfo {
+                rpc_info.deposit_request_txid,
                 deposit_txid: None,
                 status: DepositStatus::Failed,
             },
             RpcDepositStatus::Complete {
-                deposit_request_txid,
                 deposit_txid,
             } => DepositInfo {
-                deposit_request_txid,
+                rpc_info.deposit_request_txid,
                 deposit_txid: Some(deposit_txid),
                 status: DepositStatus::Complete,
             },
@@ -97,21 +92,21 @@ pub enum WithdrawalStatus {
 /// Withdrawal information passed to dashboard
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WithdrawalInfo {
-    pub withdrawal_request_txid: Txid,
+    pub withdrawal_request_txid: Buf32,
     pub fulfillment_txid: Option<Txid>,
     pub status: WithdrawalStatus,
 }
 
-impl WithdrawalInfo {
-    pub fn from_rpc(rpc_info: &RpcWithdrawalInfo, withdrawal_request_txid: Txid) -> Self {
+impl From<&RpcWithdrawalInfo> for WithdrawalInfo {
+    pub fn from(rpc_info: &RpcWithdrawalInfo) -> Self {
         match &rpc_info.status {
             RpcWithdrawalStatus::InProgress => Self {
-                withdrawal_request_txid,
+                rpc_info.withdrawal_request_txid,
                 fulfillment_txid: None,
                 status: WithdrawalStatus::InProgress,
             },
             RpcWithdrawalStatus::Complete { fulfillment_txid } => Self {
-                withdrawal_request_txid,
+                rpc_info.withdrawal_request_txid,
                 fulfillment_txid: Some(*fulfillment_txid),
                 status: WithdrawalStatus::Complete,
             },
@@ -201,46 +196,16 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 
         locked_state.operators = operator_statuses;
 
-        // Current deposits
-        let current_deposits = get_current_deposits(&strata_rpc).await.unwrap();
-        // Deposits with withdrawal requests
-        let mut deposits_to_withdrawals: Vec<DepositToWithdrawal> = Vec::new();
-        let mut deposit_infos: Vec<DepositInfo> = Vec::new();
-        for deposit_id in current_deposits {
-            let (deposit_info, deposit_to_wd) =
-                get_deposit_info(&strata_rpc, &bridge_rpc, deposit_id)
-                    .await
-                    .unwrap();
-            if let Some(deposit) = deposit_info {
-                deposit_infos.push(deposit);
-                if let Some(dep_to_wd) = deposit_to_wd {
-                    deposits_to_withdrawals.push(dep_to_wd);
-                }
-            } else {
-                warn!(%deposit_id, "Missing deposit entry for id");
-            }
-        }
+        // Deposits
+        let deposit_infos: Vec<DepositInfo> = get_deposits(&bridge_rpc).await.unwrap_or_default();
         locked_state.deposits = deposit_infos;
 
-        // Withdrawal fulfillments
-        let withdrawal_infos: Vec<WithdrawalInfo> =
-            match get_withdrawals(&bridge_rpc, deposits_to_withdrawals).await {
-                Ok(data) => data,
-                Err(e) => {
-                    error!(error = %e, "Bridge get withdrawal failed");
-                    Vec::new()
-                }
-            };
+        // Withdrawals and fulfillments
+        let withdrawal_infos: Vec<WithdrawalInfo> = get_withdrawals(&bridge_rpc).await.unwrap_or_default();
         locked_state.withdrawals = withdrawal_infos;
 
-        // Reimbursements
-        let reimbursements: Vec<ReimbursementInfo> = match get_reimbursements(&bridge_rpc).await {
-            Ok(data) => data,
-            Err(e) => {
-                error!(error = %e, "Bridge get reimbursement failed");
-                Vec::new()
-            }
-        };
+        // Claims and reimbursements
+        let reimbursements: Vec<ReimbursementInfo> = get_reimbursements(&bridge_rpc).await.unwrap_or_default();
         locked_state.reimbursements = reimbursements;
     }
 }
@@ -280,12 +245,12 @@ async fn get_operator_status(
     Ok(status)
 }
 
-/// Fetch bridge duties
-async fn get_bridge_duties(
+/// Fetch deposit requests
+async fn get_deposit_requests(
     bridge_client: &HttpClient,
-) -> Result<Vec<RpcBridgeDutyStatus>, ClientError> {
-    let duties: Vec<RpcBridgeDutyStatus> = match bridge_client
-        .request("stratabridge_bridgeDuties", ((),))
+) -> Result<Vec<Txid>, ClientError> {
+    let deposit_request_txids: Vec<Txid> = match bridge_client
+        .request("stratabridge_depositRequests", ((),))
         .await
     {
         Ok(data) => data,
@@ -295,22 +260,25 @@ async fn get_bridge_duties(
         }
     };
 
-    Ok(duties)
+    Ok(deposit_request_txids)
 }
 
 /// Fetch deposit details
-async fn get_deposit_infos(
+async fn get_deposits(
     bridge_client: &HttpClient,
-    deposit_requests: &[Txid],
 ) -> Result<Vec<DepositInfo>, ClientError> {
+    let deposit_requests = match get_deposit_requests(bridge_client).await {
+        Ok(data) => data,
+        Err(e) => {
+            error!(error = %e, "Failed to fetch deposit requests");
+            return Err(e);
+        }
+    };
+
     let mut deposit_infos = Vec::new();
     for deposit_request_txid in deposit_requests.iter() {
-        let deposit_request_outpoint = OutPoint {
-            txid: *deposit_request_txid,
-            vout: 0, // Assuming vout is always 0 for deposit requests
-        };
         let rpc_info: RpcDepositStatus = match bridge_client
-            .request("stratabridge_depositInfo", (deposit_request_outpoint,))
+            .request("stratabridge_depositInfo", (deposit_request_txid,))
             .await
         {
             Ok(data) => data,
@@ -324,26 +292,47 @@ async fn get_deposit_infos(
             ?rpc_info,
             "Fetched deposit info for {}", deposit_request_txid
         );
-        deposit_infos.push(DepositInfo::from(rpc_info));
+        deposit_infos.push(DepositInfo::from(&rpc_info));
     }
     Ok(deposit_infos)
 }
 
-/// Fetch withdrawal/fullfillment details
-async fn get_withdrawal_infos(
+/// Fetch withdrawal request txids
+async fn get_withdrawal_requests(
     bridge_client: &HttpClient,
-    withdrawal_requests: &[Txid],
+) -> Result<Vec<Buf32>, ClientError> {
+    let withdrawal_requests: Vec<Buf32> = match bridge_client
+        .request("stratabridge_withdrawals", ((),))
+        .await
+    {
+        Ok(data) => data,
+        Err(e) => {
+            error!(error = %e, "Failed to fetch withdrawal requests");
+            return Err(e);
+        }
+    };
+
+    Ok(withdrawal_requests)
+}
+
+/// Fetch withdrawal/fullfillment details
+async fn get_withdrawals(
+    bridge_client: &HttpClient,
 ) -> Result<Vec<WithdrawalInfo>, ClientError> {
+    let withdrawal_requests = match get_withdrawal_requests(bridge_client).await {
+        Ok(data) => data,
+        Err(e) => {
+            error!(error = %e, "Failed to fetch withdrawal requests");
+            return Err(e);
+        }
+    };
+
     let mut withdrawal_infos = Vec::new();
     for withdrawal_request_txid in withdrawal_requests.iter() {
-        let withdrawal_request_outpoint = OutPoint {
-            txid: *withdrawal_request_txid,
-            vout: 0, // Assuming vout is always 0 for deposit requests
-        };
         let rpc_info: RpcWithdrawalInfo = match bridge_client
             .request(
                 "stratabridge_withdrawalInfo",
-                (withdrawal_request_outpoint,),
+                (withdrawal_request_txid,),
             )
             .await
         {
@@ -354,10 +343,7 @@ async fn get_withdrawal_infos(
             }
         };
 
-        withdrawal_infos.push(WithdrawalInfo::from_rpc(
-            &rpc_info,
-            *withdrawal_request_txid,
-        ));
+        withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
     }
 
     Ok(withdrawal_infos)
