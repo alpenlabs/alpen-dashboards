@@ -38,7 +38,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "http://localhost:8432".to_string());
 
-        let rpc_url = std::env::var("RPC_URL")
+        let rpc_url = std::env::var("ALPEN_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8433".to_string());
 
@@ -68,7 +68,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "0xC0FFEE".to_string());
 
-        info!(%rpc_url, bundler_url, "Loaded Config");
+        info!(%rpc_url, bundler_url, "Loaded Network monitoring config:");
 
         NetworkConfig {
             batch_producer_url,
@@ -152,6 +152,8 @@ impl ActivityMonitoringConfig {
 
         let activity_stats_keys = ActivityMonitoringConfig::load_activity_keys();
 
+        info!(%user_ops_query_url, %accounts_query_url, "Loaded Activity monitoring config:");
+
         ActivityMonitoringConfig {
             user_ops_query_url,
             accounts_query_url,
@@ -218,7 +220,7 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S);
 
-        info!(%bridge_rpc_url, "Bridge monitoring configuration");
+        info!(%bridge_rpc_url, "Loaded Bridge monitoring config:");
 
         BridgeMonitoringConfig {
             bridge_rpc_url,
