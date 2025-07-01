@@ -60,7 +60,7 @@ pub(crate) struct DepositInfo {
 impl From<&RpcDepositInfo> for DepositInfo {
     fn from(rpc_info: &RpcDepositInfo) -> Self {
         match &rpc_info.status {
-            RpcDepositStatus::InProgress { .. } => DepositInfo {
+            RpcDepositStatus::InProgress => DepositInfo {
                 deposit_request_txid: rpc_info.deposit_request_txid,
                 deposit_txid: None,
                 status: DepositStatus::InProgress,
@@ -142,13 +142,13 @@ impl From<&RpcClaimInfo> for ReimbursementInfo {
             },
             RpcReimbursementStatus::InProgress { challenge_step, .. } => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: format!("{challenge_step:?}"),
                 payout_txid: None,
                 status: ReimbursementStatus::InProgress,
             },
             RpcReimbursementStatus::Challenged { challenge_step, .. } => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{:?}", challenge_step),
+                challenge_step: format!("{challenge_step:?}"),
                 payout_txid: None,
                 status: ReimbursementStatus::Challenged,
             },
