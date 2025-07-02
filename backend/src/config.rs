@@ -38,7 +38,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "http://localhost:8432".to_string());
 
-        let rpc_url = std::env::var("RPC_URL")
+        let rpc_url = std::env::var("ALPEN_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8433".to_string());
 
@@ -68,7 +68,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "0xC0FFEE".to_string());
 
-        info!(%rpc_url, bundler_url, "Loaded Config");
+        info!(%rpc_url, bundler_url, "Loaded Network monitoring config:");
 
         NetworkConfig {
             batch_producer_url,
@@ -152,6 +152,8 @@ impl ActivityMonitoringConfig {
 
         let activity_stats_keys = ActivityMonitoringConfig::load_activity_keys();
 
+        info!(%user_ops_query_url, %accounts_query_url, "Loaded Activity monitoring config:");
+
         ActivityMonitoringConfig {
             user_ops_query_url,
             accounts_query_url,
@@ -199,9 +201,7 @@ const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120_000;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
-    /// Strata RPC url
-    strata_rpc_url: String,
-    /// Strata bridge RPC url
+    /// Alpen bridge RPC url
     bridge_rpc_url: String,
     /// Bridge status refetch interval in seconds
     status_refetch_interval_s: u64,
@@ -211,11 +211,7 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let strata_rpc_url = std::env::var("STRATA_RPC_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
-
-        let bridge_rpc_url = std::env::var("STRATA_BRIDGE_RPC_URL")
+        let bridge_rpc_url = std::env::var("ALPEN_BRIDGE_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8546".to_string());
 
@@ -224,18 +220,12 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S);
 
-        info!(%strata_rpc_url, %bridge_rpc_url, "Bridge monitoring configuration");
+        info!(%bridge_rpc_url, "Loaded Bridge monitoring config:");
 
         BridgeMonitoringConfig {
-            strata_rpc_url,
             bridge_rpc_url,
             status_refetch_interval_s: refresh_interval_s,
         }
-    }
-
-    /// Getter for `strata_rpc_url`
-    pub fn strata_rpc_url(&self) -> &str {
-        &self.strata_rpc_url
     }
 
     /// Getter for `bridge_rpc_url`

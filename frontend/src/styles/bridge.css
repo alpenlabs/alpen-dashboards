@@ -89,6 +89,11 @@
     text-align: center;
 }
 
+.txidLink {
+    color: black;
+    text-decoration: underline;
+}
+
 .no-items {
     font-style: italic;
     color: gray;

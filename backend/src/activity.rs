@@ -555,9 +555,7 @@ mod tests {
                 assert_eq!(
                     inner.get(time_window),
                     Some(&0),
-                    "Expected stat value 0 for {} in {}",
-                    stat_name,
-                    time_window
+                    "Expected stat value 0 for {stat_name} in {time_window}"
                 );
             }
         }
@@ -569,8 +567,7 @@ mod tests {
                 .expect("Missing selected_accounts key");
             assert!(
                 accounts.is_empty(),
-                "Expected empty accounts list for {}",
-                select_by
+                "Expected empty accounts list for {select_by}"
             );
         }
     }

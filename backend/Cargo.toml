@@ -24,6 +24,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = ["client"]}
 strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git" }
+strata-primitives = { git = "https://github.com/alpenlabs/alpen.git" }
 
 [dev-dependencies]
 mockito = "1.6.1"

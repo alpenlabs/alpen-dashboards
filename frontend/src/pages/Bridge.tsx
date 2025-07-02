@@ -7,6 +7,7 @@ import {
     WithdrawalInfo,
     ReimbursementInfo,
 } from "../hooks/useBridgeStatus";
+import { useConfig } from "../hooks/useConfig";
 import "../styles/bridge.css";
 
 const truncateHex = (hex: string, startLength = 4, endLength = 4) => {
@@ -18,6 +19,7 @@ const truncateHex = (hex: string, startLength = 4, endLength = 4) => {
 export default function Bridge() {
     const { pathname } = useLocation(); // Get current URL path
     const { data, isLoading, error } = useBridgeStatus();
+    const { bitcoinExplorerUrl, alpenExplorerUrl } = useConfig();
 
     return (
         <div className="bridge-content">
@@ -115,14 +117,28 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        deposit.deposit_request_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${bitcoinExplorerUrl}/tx/${deposit.deposit_request_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            deposit.deposit_request_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        deposit.deposit_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${bitcoinExplorerUrl}/tx/${deposit.deposit_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            deposit.deposit_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -171,14 +187,28 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        withdrawal.withdrawal_request_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${alpenExplorerUrl}/tx/0x${withdrawal.withdrawal_request_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            withdrawal.withdrawal_request_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        withdrawal.fulfillment_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${bitcoinExplorerUrl}/tx/${withdrawal.fulfillment_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            withdrawal.fulfillment_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -223,9 +253,16 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        reimbursement.claim_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${bitcoinExplorerUrl}/tx/${reimbursement.claim_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            reimbursement.claim_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -233,9 +270,16 @@ export default function Bridge() {
                                                                     }
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {truncateHex(
-                                                                        reimbursement.payout_txid,
-                                                                    )}
+                                                                    <a
+                                                                        href={`${bitcoinExplorerUrl}/tx/${reimbursement.payout_txid}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="txidLink"
+                                                                    >
+                                                                        {truncateHex(
+                                                                            reimbursement.payout_txid,
+                                                                        )}
+                                                                    </a>
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {

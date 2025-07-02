@@ -3,6 +3,8 @@ import type { PropsWithChildren } from "react";
 
 export interface AppConfig {
     apiBaseUrl: string;
+    bitcoinExplorerUrl: string;
+    alpenExplorerUrl: string;
     bridgeStatusRefetchIntervalS: number;
     networkStatusRefetchIntervalS: number;
     activityStatsRefetchIntervalS: number;
