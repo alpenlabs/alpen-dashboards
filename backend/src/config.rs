@@ -120,6 +120,10 @@ impl NetworkConfig {
     }
 }
 
+/// Default bridge status refetch interval in seconds
+const DEFAULT_ACTIVITY_STATS_REFETCH_INTERVAL_S: u64 = 60;
+
+/// Activity monitoring configuration
 pub(crate) struct ActivityMonitoringConfig {
     user_ops_query_url: String,
     accounts_query_url: String,
@@ -141,9 +145,9 @@ impl ActivityMonitoringConfig {
         });
 
         let stats_refetch_interval_s: u64 = std::env::var("ACTIVITY_STATS_REFETCH_INTERVAL_S")
-            .unwrap_or("120".to_string())
-            .parse()
-            .expect("to parse ACTIVITY_STATS_REFETCH_INTERVAL_S as u64");
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_ACTIVITY_STATS_REFETCH_INTERVAL_S);
 
         let query_page_size: u64 = std::env::var("ACTIVITY_QUERY_PAGE_SIZE")
             .unwrap_or("100".to_string())
@@ -197,7 +201,7 @@ impl ActivityMonitoringConfig {
 }
 
 /// Default bridge status refetch interval in seconds
-const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120_000;
+const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
