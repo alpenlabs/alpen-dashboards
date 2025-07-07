@@ -16,18 +16,18 @@ const truncateHex = (hex: string, startLength = 4, endLength = 4) => {
     return `${hex.slice(0, startLength)}...${hex.slice(-endLength)}`;
 };
 
-export const formatTxid = (explorer_url: string, txid: string | null) => {
-  if (!txid) return "-";
-  return (
-    <a
-      href={`${explorer_url}/tx/${txid}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="txidLink"
-    >
-      {truncateHex(txid)}
-    </a>
-  );
+const formatTxid = (explorer_url: string, txid: string | null) => {
+    if (!txid) return "-";
+    return (
+        <a
+            href={`${explorer_url}/tx/${txid}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="txidLink"
+        >
+            {truncateHex(txid)}
+        </a>
+    );
 };
 
 export default function Bridge() {
@@ -131,10 +131,16 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(bitcoinExplorerUrl, deposit.deposit_request_txid)}
+                                                                    {formatTxid(
+                                                                        bitcoinExplorerUrl,
+                                                                        deposit.deposit_request_txid,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(bitcoinExplorerUrl, deposit.deposit_txid)}
+                                                                    {formatTxid(
+                                                                        bitcoinExplorerUrl,
+                                                                        deposit.deposit_txid,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -183,10 +189,16 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(alpenExplorerUrl, `0x${withdrawal.withdrawal_request_txid}`)}
+                                                                    {formatTxid(
+                                                                        alpenExplorerUrl,
+                                                                        `0x${withdrawal.withdrawal_request_txid}`,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(bitcoinExplorerUrl, withdrawal.fulfillment_txid)}
+                                                                    {formatTxid(
+                                                                        bitcoinExplorerUrl,
+                                                                        withdrawal.fulfillment_txid,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -231,7 +243,10 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(bitcoinExplorerUrl, reimbursement.claim_txid)}
+                                                                    {formatTxid(
+                                                                        bitcoinExplorerUrl,
+                                                                        reimbursement.claim_txid,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -239,7 +254,10 @@ export default function Bridge() {
                                                                     }
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(bitcoinExplorerUrl, reimbursement.payout_txid)}
+                                                                    {formatTxid(
+                                                                        bitcoinExplorerUrl,
+                                                                        reimbursement.payout_txid,
+                                                                    )}
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
