@@ -272,7 +272,7 @@ export default function Bridge() {
                                         </div>
                                     ) : (
                                         <p className="no-items">
-                                            No bridge withdrawals found.
+                                            No bridge reimbursements found.
                                         </p>
                                     )}
                                 </div>

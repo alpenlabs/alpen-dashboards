@@ -39,7 +39,7 @@ enum Status {
 
 #[derive(Serialize, Clone, Debug)]
 struct NetworkStatus {
-    batch_producer: Status,
+    sequencer: Status,
     rpc_endpoint: Status,
     bundler_endpoint: Status,
 }
@@ -100,7 +100,7 @@ async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) 
 async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(10));
-    let batch_producer_client = create_rpc_client(config.batch_producer_url());
+    let sequencer_client = create_rpc_client(config.sequencer_url());
     let rpc_client = create_rpc_client(config.rpc_url());
     let http_client = reqwest::Client::new();
     let retry_policy =
@@ -109,12 +109,12 @@ async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) 
     loop {
         interval.tick().await;
 
-        let batch_producer = call_rpc_status(config, &batch_producer_client, retry_policy).await;
+        let sequencer = call_rpc_status(config, &sequencer_client, retry_policy).await;
         let rpc_endpoint = call_rpc_status(config, &rpc_client, retry_policy).await;
         let bundler_endpoint = check_bundler_health(&http_client, config).await;
 
         let new_status = NetworkStatus {
-            batch_producer,
+            sequencer,
             rpc_endpoint,
             bundler_endpoint,
         };
@@ -146,7 +146,7 @@ async fn main() {
 
     // Shared state for network status
     let shared_state = Arc::new(RwLock::new(NetworkStatus {
-        batch_producer: Status::Offline, // Default state
+        sequencer: Status::Offline, // Default state
         rpc_endpoint: Status::Offline,
         bundler_endpoint: Status::Offline,
     }));

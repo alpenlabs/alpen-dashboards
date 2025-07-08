@@ -5,8 +5,11 @@ services:
       dockerfile: backend.Dockerfile
     container_name: alpen_dashboards_backend
     environment:
-      ALPEN_RPC_URL: https://rpc.testnet.alpenlabs.io
+      STRATA_SEQUENCER_URL: https://strataseq.testnet.alpenlabs.io
+      STRATA_RPC_URL: https://rpc.testnet.alpenlabs.io
       ALPEN_BRIDGE_RPC_URL: https://bridge.testnet.alpenlabs.io/1
+      ESPLORA_URL: https://esplora.testnet.alpenlabs.io
+      BRIDGE_TX_MAX_CONFIRMATIONS: 6
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health
       USER_OPS_QUERY_URL: https://explorer.testnet.alpenlabs.io/api/v2/proxy/account-abstraction/operations
       ACCOUNTS_QUERY_URL: https://explorer.testnet.alpenlabs.io/api/v2/proxy/account-abstraction/accounts

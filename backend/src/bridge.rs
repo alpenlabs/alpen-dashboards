@@ -41,6 +41,12 @@ impl OperatorStatus {
     }
 }
 
+#[derive(Deserialize)]
+struct TxStatus {
+    confirmed: bool,
+    block_height: Option<u64>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) enum DepositStatus {
     #[serde(rename = "In progress")]
@@ -202,18 +208,33 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 
         locked_state.operators = operator_statuses;
 
+        let chain_tip_height = match get_bitcoin_chain_tip_height(config.esplora_url()).await {
+            Ok(height) => height,
+            Err(e) => {
+                error!(error = %e, "Failed to get Bitcoin chain tip");
+                continue;
+            }
+        };
+        info!(%chain_tip_height, "bitcoin chain tip");
+
         // Deposits
-        let deposit_infos: Vec<DepositInfo> = get_deposits(&bridge_rpc).await.unwrap_or_default();
+        let deposit_infos: Vec<DepositInfo> = get_deposits(&bridge_rpc, chain_tip_height, config)
+            .await
+            .unwrap_or_default();
         locked_state.deposits = deposit_infos;
 
         // Withdrawals and fulfillments
         let withdrawal_infos: Vec<WithdrawalInfo> =
-            get_withdrawals(&bridge_rpc).await.unwrap_or_default();
+            get_withdrawals(&bridge_rpc, chain_tip_height, config)
+                .await
+                .unwrap_or_default();
         locked_state.withdrawals = withdrawal_infos;
 
         // Claims and reimbursements
         let reimbursements: Vec<ReimbursementInfo> =
-            get_reimbursements(&bridge_rpc).await.unwrap_or_default();
+            get_reimbursements(&bridge_rpc, chain_tip_height, config)
+                .await
+                .unwrap_or_default();
         locked_state.reimbursements = reimbursements;
     }
 }
@@ -253,6 +274,56 @@ async fn get_operator_status(
     Ok(status)
 }
 
+/// Fetch bitcoin chain tip height
+async fn get_bitcoin_chain_tip_height(esplora_url: &str) -> Result<u64, reqwest::Error> {
+    let endpoint = format!("{}/blocks/tip/height", esplora_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&endpoint)
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    let height = resp.trim().parse::<u64>().expect("valid height");
+    Ok(height)
+}
+
+/// Check whether to keep entry with txid based on number of confirmations
+///
+/// Keep if < `max_confirmations`
+async fn keep_entry(
+    esplora_url: &str,
+    txid: Txid,
+    chain_tip_height: u64,
+    max_confirmations: u64,
+) -> bool {
+    let url = format!("{}/tx/{}/status", esplora_url.trim_end_matches('/'), txid);
+
+    let status_resp = reqwest::get(&url).await;
+
+    let status: TxStatus = match status_resp {
+        Ok(resp) => match resp.json().await {
+            Ok(status) => status,
+            Err(e) => {
+                error!(%txid, %e, "Failed to parse tx status JSON from esplora");
+                return false;
+            }
+        },
+        Err(e) => {
+            error!(%txid, %e, "Failed to fetch tx status from esplora");
+            return false;
+        }
+    };
+
+    let confirmations = status
+        .block_height
+        .filter(|_| status.confirmed)
+        .map(|h| chain_tip_height.saturating_sub(h) + 1)
+        .unwrap_or(0);
+
+    confirmations < max_confirmations
+}
+
 /// Fetch deposit requests
 async fn get_deposit_requests(bridge_client: &HttpClient) -> Result<Vec<Txid>, ClientError> {
     let deposit_request_txids: Vec<Txid> = match bridge_client
@@ -270,7 +341,11 @@ async fn get_deposit_requests(bridge_client: &HttpClient) -> Result<Vec<Txid>, C
 }
 
 /// Fetch deposit details
-async fn get_deposits(bridge_client: &HttpClient) -> Result<Vec<DepositInfo>, ClientError> {
+async fn get_deposits(
+    bridge_client: &HttpClient,
+    chain_tip_height: u64,
+    config: &BridgeMonitoringConfig,
+) -> Result<Vec<DepositInfo>, ClientError> {
     let deposit_requests = match get_deposit_requests(bridge_client).await {
         Ok(data) => data,
         Err(e) => {
@@ -296,7 +371,32 @@ async fn get_deposits(bridge_client: &HttpClient) -> Result<Vec<DepositInfo>, Cl
             ?rpc_info,
             "Fetched deposit info for {}", deposit_request_txid
         );
-        deposit_infos.push(DepositInfo::from(&rpc_info));
+
+        // Filter based on number of confirmations
+        match &rpc_info.status {
+            RpcDepositStatus::InProgress => {
+                // Always include in-progress deposits
+                deposit_infos.push(DepositInfo::from(&rpc_info));
+            }
+            RpcDepositStatus::Failed { .. } | RpcDepositStatus::Complete { .. } => {
+                let txid = match &rpc_info.status {
+                    RpcDepositStatus::Failed { .. } => rpc_info.deposit_request_txid,
+                    RpcDepositStatus::Complete { deposit_txid } => *deposit_txid,
+                    _ => unreachable!(), // Already matched
+                };
+
+                if keep_entry(
+                    config.esplora_url(),
+                    txid,
+                    chain_tip_height,
+                    config.max_tx_confirmations(),
+                )
+                .await
+                {
+                    deposit_infos.push(DepositInfo::from(&rpc_info));
+                }
+            }
+        }
     }
     Ok(deposit_infos)
 }
@@ -318,7 +418,11 @@ async fn get_withdrawal_requests(bridge_client: &HttpClient) -> Result<Vec<Buf32
 }
 
 /// Fetch withdrawal/fullfillment details
-async fn get_withdrawals(bridge_client: &HttpClient) -> Result<Vec<WithdrawalInfo>, ClientError> {
+async fn get_withdrawals(
+    bridge_client: &HttpClient,
+    chain_tip_height: u64,
+    config: &BridgeMonitoringConfig,
+) -> Result<Vec<WithdrawalInfo>, ClientError> {
     let withdrawal_requests = match get_withdrawal_requests(bridge_client).await {
         Ok(data) => data,
         Err(e) => {
@@ -340,7 +444,25 @@ async fn get_withdrawals(bridge_client: &HttpClient) -> Result<Vec<WithdrawalInf
             }
         };
 
-        withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
+        // Filter based on number of confirmations
+        match &rpc_info.status {
+            RpcWithdrawalStatus::InProgress => {
+                // Always include in-progress withdrawals
+                withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
+            }
+            RpcWithdrawalStatus::Complete { fulfillment_txid } => {
+                if keep_entry(
+                    config.esplora_url(),
+                    *fulfillment_txid,
+                    chain_tip_height,
+                    config.max_tx_confirmations(),
+                )
+                .await
+                {
+                    withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
+                }
+            }
+        }
     }
 
     Ok(withdrawal_infos)
@@ -349,6 +471,8 @@ async fn get_withdrawals(bridge_client: &HttpClient) -> Result<Vec<WithdrawalInf
 /// Fetch claim/reimbursement details
 async fn get_reimbursements(
     bridge_rpc: &HttpClient,
+    chain_tip_height: u64,
+    config: &BridgeMonitoringConfig,
 ) -> Result<Vec<ReimbursementInfo>, ClientError> {
     let claim_txids: Vec<String> = match bridge_rpc.request("stratabridge_claims", ((),)).await {
         Ok(data) => data,
@@ -360,7 +484,7 @@ async fn get_reimbursements(
 
     let mut reimbursement_infos = Vec::new();
     for txid in claim_txids.iter() {
-        let reimb_info: RpcClaimInfo = match bridge_rpc
+        let rpc_info: RpcClaimInfo = match bridge_rpc
             .request("stratabridge_claimInfo", (txid.clone(),))
             .await
         {
@@ -371,7 +495,35 @@ async fn get_reimbursements(
             }
         };
 
-        reimbursement_infos.push(ReimbursementInfo::from(&reimb_info));
+        // Filter based on number of confirmations
+        match &rpc_info.status {
+            // Skip if not started
+            RpcReimbursementStatus::NotStarted => {
+                continue;
+            }
+            RpcReimbursementStatus::InProgress { .. }
+            | RpcReimbursementStatus::Challenged { .. } => {
+                // Always include in-progress or challenged claims
+                reimbursement_infos.push(ReimbursementInfo::from(&rpc_info));
+            }
+            RpcReimbursementStatus::Cancelled | RpcReimbursementStatus::Complete { .. } => {
+                let txid = match &rpc_info.status {
+                    RpcReimbursementStatus::Cancelled => rpc_info.claim_txid,
+                    RpcReimbursementStatus::Complete { payout_txid } => *payout_txid,
+                    _ => unreachable!(), // Already matched
+                };
+                if keep_entry(
+                    config.esplora_url(),
+                    txid,
+                    chain_tip_height,
+                    config.max_tx_confirmations(),
+                )
+                .await
+                {
+                    reimbursement_infos.push(ReimbursementInfo::from(&rpc_info));
+                }
+            }
+        }
     }
 
     Ok(reimbursement_infos)
