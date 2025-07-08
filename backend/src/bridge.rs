@@ -290,7 +290,7 @@ async fn get_bitcoin_chain_tip_height(esplora_url: &str) -> Result<u64, reqwest:
 
 /// Check whether to keep entry with txid based on number of confirmations
 ///
-/// Keep if < `max_confirmations`
+/// Keep if `txid` is found and number of confirmations < `max_confirmations`
 async fn keep_entry(
     esplora_url: &str,
     txid: Txid,
