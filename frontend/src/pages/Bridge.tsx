@@ -7,28 +7,10 @@ import {
     WithdrawalInfo,
     ReimbursementInfo,
 } from "../hooks/useBridgeStatus";
+import { TxidDisplay } from "../components/TransactionId";
 import { useConfig } from "../hooks/useConfig";
+import { truncateHex } from "../utils";
 import "../styles/bridge.css";
-
-const truncateHex = (hex: string, startLength = 4, endLength = 4) => {
-    if (!hex) return "-"; // If no TXID, show "-"
-    if (hex.length <= startLength + endLength) return hex; // If short, return as is
-    return `${hex.slice(0, startLength)}...${hex.slice(-endLength)}`;
-};
-
-const formatTxid = (explorer_url: string, txid: string | null) => {
-    if (!txid) return "-";
-    return (
-        <a
-            href={`${explorer_url}/tx/${txid}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="txidLink"
-        >
-            {truncateHex(txid)}
-        </a>
-    );
-};
 
 export default function Bridge() {
     const { pathname } = useLocation(); // Get current URL path
@@ -131,16 +113,10 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        bitcoinExplorerUrl,
-                                                                        deposit.deposit_request_txid,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={deposit.deposit_request_txid} />
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        bitcoinExplorerUrl,
-                                                                        deposit.deposit_txid,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={deposit.deposit_txid} />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -189,16 +165,10 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        alpenExplorerUrl,
-                                                                        `0x${withdrawal.withdrawal_request_txid}`,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={alpenExplorerUrl} txid={`0x${withdrawal.withdrawal_request_txid}`} />
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        bitcoinExplorerUrl,
-                                                                        withdrawal.fulfillment_txid,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={withdrawal.fulfillment_txid} />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -243,10 +213,7 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        bitcoinExplorerUrl,
-                                                                        reimbursement.claim_txid,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={reimbursement.claim_txid} />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -254,10 +221,7 @@ export default function Bridge() {
                                                                     }
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    {formatTxid(
-                                                                        bitcoinExplorerUrl,
-                                                                        reimbursement.payout_txid,
-                                                                    )}
+                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={reimbursement.payout_txid} />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {

@@ -1,4 +1,5 @@
 use dotenvy::dotenv;
+use std::collections::HashMap;
 use tracing::info;
 
 use crate::activity::ActivityStatsKeys;
@@ -202,17 +203,24 @@ impl ActivityMonitoringConfig {
 
 /// Default bridge status refetch interval in seconds
 const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120;
+
 /// Default maximum number of confirmations for transactions tracked
 const DEFAULT_MAX_TX_CONFIRMATIONS: u64 = 6;
 
+/// Default number of bridge operators
+const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
+
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
-    /// Alpen bridge RPC url
-    bridge_rpc_url: String,
+    /// Alpen bridge RPC urls
+    bridge_rpc_urls: HashMap<String, String>,
+
     /// Esplora URL
     esplora_url: String,
+
     /// Maximum confirmations
     max_tx_confirmations: u64,
+
     /// Bridge status refetch interval in seconds
     status_refetch_interval_s: u64,
 }
@@ -221,13 +229,24 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let bridge_rpc_url = std::env::var("ALPEN_BRIDGE_RPC_URL")
+        let bridge_operators_count = std::env::var("ALPEN_BRIDGE_OPERATORS_COUNT")
             .ok()
-            .unwrap_or_else(|| "http://localhost:8546".to_string());
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
+
+        let mut bridge_rpc_urls = HashMap::new();
+        for i in 1..=bridge_operators_count {
+            let operator_pk =
+                std::env::var(format!("ALPEN_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
+            let rpc_url = std::env::var(format!("ALPEN_BRIDGE_{i}_RPC_URL"))
+                .ok()
+                .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
+            bridge_rpc_urls.insert(operator_pk, rpc_url);
+        }
 
         let esplora_url = std::env::var("ESPLORA_URL")
             .ok()
-            .unwrap_or_else(|| "http://localhost:8547".to_string());
+            .unwrap_or_else(|| "http://localhost:8545".to_string());
 
         let max_tx_confirmations: u64 = std::env::var("BRIDGE_TX_MAX_CONFIRMATIONS")
             .ok()
@@ -239,19 +258,19 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S);
 
-        info!(%bridge_rpc_url, %esplora_url, "Loaded Bridge monitoring config:");
+        info!(?bridge_rpc_urls, %esplora_url, "Loaded Bridge monitoring config:");
 
         BridgeMonitoringConfig {
-            bridge_rpc_url,
+            bridge_rpc_urls,
             esplora_url,
             max_tx_confirmations,
             status_refetch_interval_s: refresh_interval_s,
         }
     }
 
-    /// Getter for `bridge_rpc_url`
-    pub fn bridge_rpc_url(&self) -> &str {
-        &self.bridge_rpc_url
+    /// Getter for `bridge_rpc_urls`
+    pub fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
+        &self.bridge_rpc_urls
     }
 
     /// Getter for `esplora_url`

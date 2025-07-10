@@ -485,6 +485,7 @@ dependencies = [
  "chrono",
  "clap",
  "dotenvy",
+ "hex",
  "jsonrpsee",
  "mockito",
  "reqwest",

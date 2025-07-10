@@ -7,7 +7,10 @@ services:
     environment:
       STRATA_SEQUENCER_URL: https://strataseq.testnet.alpenlabs.io
       STRATA_RPC_URL: https://rpc.testnet.alpenlabs.io
-      ALPEN_BRIDGE_RPC_URL: https://bridge.testnet.alpenlabs.io/1
+      ALPEN_BRIDGE_1_RPC_URL: https://bridge.testnet.alpenlabs.io/1
+      ALPEN_BRIDGE_2_RPC_URL: https://bridge.testnet.alpenlabs.io/2
+      ALPEN_BRIDGE_3_RPC_URL: https://bridge.testnet.alpenlabs.io/3
+      ALPEN_BRIDGE_OPERATORS_COUNT: 3
       ESPLORA_URL: https://esplora.testnet.alpenlabs.io
       BRIDGE_TX_MAX_CONFIRMATIONS: 6
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health

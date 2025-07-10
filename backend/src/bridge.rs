@@ -1,8 +1,6 @@
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
 use jsonrpsee::core::client::ClientT;
-use jsonrpsee::core::ClientError;
-use jsonrpsee::http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strata_bridge_rpc::types::{
@@ -15,7 +13,7 @@ use tokio::{
     sync::RwLock,
     time::{interval, Duration},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{config::BridgeMonitoringConfig, utils::create_rpc_client};
 
@@ -188,22 +186,24 @@ pub type SharedBridgeState = Arc<RwLock<BridgeStatus>>;
 /// Periodically fetch bridge status and update shared bridge state
 pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMonitoringConfig) {
     let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
-    let bridge_rpc = create_rpc_client(config.bridge_rpc_url());
 
     loop {
         interval.tick().await;
         let mut locked_state = state.write().await;
 
         // Bridge operator status
-        let operators = get_bridge_operators(&bridge_rpc).await.unwrap_or_default();
         let mut operator_statuses = Vec::new();
-        for (index, public_key) in operators.iter().enumerate() {
+        for (index, public_key_string) in config.bridge_rpc_urls().keys().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
-            let status = get_operator_status(&bridge_rpc, *public_key)
-                .await
-                .unwrap_or(RpcOperatorStatus::Offline);
+            let pk_bytes = hex::decode(public_key_string).expect("decode to succeed");
+            let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
+            let rpc_url = config
+                .bridge_rpc_urls()
+                .get(public_key_string)
+                .expect("valid rpc url");
+            let status = get_operator_status(rpc_url).await;
 
-            operator_statuses.push(OperatorStatus::new(operator_id, *public_key, status));
+            operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
         locked_state.operators = operator_statuses;
@@ -218,60 +218,33 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
         info!(%chain_tip_height, "bitcoin chain tip");
 
         // Deposits
-        let deposit_infos: Vec<DepositInfo> = get_deposits(&bridge_rpc, chain_tip_height, config)
-            .await
-            .unwrap_or_default();
+        let deposit_infos: Vec<DepositInfo> = get_deposits(config, chain_tip_height).await;
         locked_state.deposits = deposit_infos;
 
         // Withdrawals and fulfillments
-        let withdrawal_infos: Vec<WithdrawalInfo> =
-            get_withdrawals(&bridge_rpc, chain_tip_height, config)
-                .await
-                .unwrap_or_default();
+        let withdrawal_infos: Vec<WithdrawalInfo> = get_withdrawals(config, chain_tip_height).await;
         locked_state.withdrawals = withdrawal_infos;
 
         // Claims and reimbursements
         let reimbursements: Vec<ReimbursementInfo> =
-            get_reimbursements(&bridge_rpc, chain_tip_height, config)
-                .await
-                .unwrap_or_default();
+            get_reimbursements(config, chain_tip_height).await;
         locked_state.reimbursements = reimbursements;
     }
 }
 
-/// Fetch operator idx and public keys
-async fn get_bridge_operators(rpc_client: &HttpClient) -> Result<Vec<PublicKey>, ClientError> {
-    let operator_table: Vec<PublicKey> = match rpc_client
-        .request("stratabridge_bridgeOperators", ((),))
-        .await
-    {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch bridge operators");
-            return Err(e);
-        }
-    };
-
-    Ok(operator_table)
-}
-
 /// Fetch operator status
-async fn get_operator_status(
-    bridge_client: &HttpClient,
-    operator_pk: PublicKey,
-) -> Result<RpcOperatorStatus, ClientError> {
-    let status: RpcOperatorStatus = match bridge_client
-        .request("stratabridge_operatorStatus", (operator_pk,))
+async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
+    let rpc_client = create_rpc_client(rpc_url);
+
+    if let Ok(_) = rpc_client
+        .request::<u64, _>("stratabridge_uptime", ((),))
         .await
     {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch bridge operator status");
-            return Err(e);
-        }
-    };
+        return RpcOperatorStatus::Online;
+    }
 
-    Ok(status)
+    warn!("Failed to fetch bridge operator uptime");
+    RpcOperatorStatus::Offline
 }
 
 /// Fetch bitcoin chain tip height
@@ -288,10 +261,10 @@ async fn get_bitcoin_chain_tip_height(esplora_url: &str) -> Result<u64, reqwest:
     Ok(height)
 }
 
-/// Check whether to keep entry with txid based on number of confirmations
+/// Check whether txid has acceptable number of confirmations
 ///
-/// Keep if `txid` is found and number of confirmations < `max_confirmations`
-async fn keep_entry(
+/// Number of confirmations < `max_confirmations`
+async fn has_acceptable_confirmations(
     esplora_url: &str,
     txid: Txid,
     chain_tip_height: u64,
@@ -325,67 +298,61 @@ async fn keep_entry(
 }
 
 /// Fetch deposit requests
-async fn get_deposit_requests(bridge_client: &HttpClient) -> Result<Vec<Txid>, ClientError> {
-    let deposit_request_txids: Vec<Txid> = match bridge_client
-        .request("stratabridge_depositRequests", ((),))
-        .await
-    {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch deposit requests");
-            return Err(e);
-        }
-    };
+async fn get_deposit_requests(config: &BridgeMonitoringConfig) -> Vec<Txid> {
+    for rpc_url in config.bridge_rpc_urls().values() {
+        let rpc_client = create_rpc_client(rpc_url);
 
-    Ok(deposit_request_txids)
+        match rpc_client
+            .request::<Vec<Txid>, _>("stratabridge_depositRequests", ((),))
+            .await
+        {
+            Ok(txids) if !txids.is_empty() => return txids,
+            Ok(_) | Err(_) => {} // Try next operator
+        }
+    }
+
+    warn!("No deposit requests found");
+    Vec::new()
 }
 
 /// Fetch deposit details
-async fn get_deposits(
-    bridge_client: &HttpClient,
-    chain_tip_height: u64,
-    config: &BridgeMonitoringConfig,
-) -> Result<Vec<DepositInfo>, ClientError> {
-    let deposit_requests = match get_deposit_requests(bridge_client).await {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch deposit requests");
-            return Err(e);
-        }
-    };
+async fn get_deposits(config: &BridgeMonitoringConfig, chain_tip_height: u64) -> Vec<DepositInfo> {
+    let deposit_requests = get_deposit_requests(config).await;
+    info!("Found deposit requests {}", deposit_requests.len());
 
-    let mut deposit_infos = Vec::new();
+    let mut deposit_infos: Vec<DepositInfo> = Vec::new();
     for deposit_request_txid in deposit_requests.iter() {
-        let rpc_info: RpcDepositInfo = match bridge_client
-            .request("stratabridge_depositInfo", (deposit_request_txid,))
-            .await
-        {
-            Ok(data) => data,
-            Err(e) => {
-                error!(error = %e, "Failed to fetch deposit info");
-                return Err(e);
+        let mut rpc_info = None;
+        for rpc_url in config.bridge_rpc_urls().values() {
+            let rpc_client = create_rpc_client(rpc_url);
+            if let Ok(info) = rpc_client
+                .request::<RpcDepositInfo, _>("stratabridge_depositInfo", (deposit_request_txid,))
+                .await
+            {
+                rpc_info = Some(info);
+                break;
             }
+        }
+
+        let Some(dep_info) = rpc_info else {
+            error!(%deposit_request_txid, "Failed to fetch deposit info");
+            continue;
         };
 
-        info!(
-            ?rpc_info,
-            "Fetched deposit info for {}", deposit_request_txid
-        );
-
         // Filter based on number of confirmations
-        match &rpc_info.status {
+        match &dep_info.status {
             RpcDepositStatus::InProgress => {
                 // Always include in-progress deposits
-                deposit_infos.push(DepositInfo::from(&rpc_info));
+                deposit_infos.push(DepositInfo::from(&dep_info));
             }
             RpcDepositStatus::Failed { .. } | RpcDepositStatus::Complete { .. } => {
-                let txid = match &rpc_info.status {
-                    RpcDepositStatus::Failed { .. } => rpc_info.deposit_request_txid,
+                let txid = match &dep_info.status {
+                    RpcDepositStatus::Failed { .. } => dep_info.deposit_request_txid,
                     RpcDepositStatus::Complete { deposit_txid } => *deposit_txid,
-                    _ => unreachable!(), // Already matched
+                    RpcDepositStatus::InProgress => unreachable!(), // Already matched
                 };
 
-                if keep_entry(
+                if has_acceptable_confirmations(
                     config.esplora_url(),
                     txid,
                     chain_tip_height,
@@ -393,65 +360,73 @@ async fn get_deposits(
                 )
                 .await
                 {
-                    deposit_infos.push(DepositInfo::from(&rpc_info));
+                    deposit_infos.push(DepositInfo::from(&dep_info));
                 }
             }
         }
     }
-    Ok(deposit_infos)
+
+    if deposit_infos.is_empty() {
+        warn!("No deposit infos found");
+    }
+    deposit_infos
 }
 
-/// Fetch withdrawal request txids
-async fn get_withdrawal_requests(bridge_client: &HttpClient) -> Result<Vec<Buf32>, ClientError> {
-    let withdrawal_requests: Vec<Buf32> = match bridge_client
-        .request("stratabridge_withdrawals", ((),))
-        .await
-    {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch withdrawal requests");
-            return Err(e);
-        }
-    };
+/// Fetch withdrawal requests
+async fn get_withdrawal_requests(config: &BridgeMonitoringConfig) -> Vec<Buf32> {
+    for rpc_url in config.bridge_rpc_urls().values() {
+        let rpc_client = create_rpc_client(rpc_url);
 
-    Ok(withdrawal_requests)
+        match rpc_client
+            .request::<Vec<Buf32>, _>("stratabridge_withdrawals", ((),))
+            .await
+        {
+            Ok(txids) if !txids.is_empty() => return txids,
+            Ok(_) | Err(_) => {} // Try next operator
+        }
+    }
+
+    warn!("No withdrawal requests found");
+    Vec::new()
 }
 
 /// Fetch withdrawal/fullfillment details
 async fn get_withdrawals(
-    bridge_client: &HttpClient,
-    chain_tip_height: u64,
     config: &BridgeMonitoringConfig,
-) -> Result<Vec<WithdrawalInfo>, ClientError> {
-    let withdrawal_requests = match get_withdrawal_requests(bridge_client).await {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch withdrawal requests");
-            return Err(e);
-        }
-    };
+    chain_tip_height: u64,
+) -> Vec<WithdrawalInfo> {
+    let withdrawal_requests = get_withdrawal_requests(config).await;
 
-    let mut withdrawal_infos = Vec::new();
+    let mut withdrawal_infos: Vec<WithdrawalInfo> = Vec::new();
     for withdrawal_request_txid in withdrawal_requests.iter() {
-        let rpc_info: RpcWithdrawalInfo = match bridge_client
-            .request("stratabridge_withdrawalInfo", (withdrawal_request_txid,))
-            .await
-        {
-            Ok(data) => data,
-            Err(e) => {
-                error!(error = %e, "Failed to fetch withdrawal info");
-                return Err(e);
+        let mut rpc_info = None;
+        for rpc_url in config.bridge_rpc_urls().values() {
+            let rpc_client = create_rpc_client(rpc_url);
+            if let Ok(info) = rpc_client
+                .request::<RpcWithdrawalInfo, _>(
+                    "stratabridge_withdrawalInfo",
+                    (withdrawal_request_txid,),
+                )
+                .await
+            {
+                rpc_info = Some(info);
+                break;
             }
+        }
+
+        let Some(wd_info) = rpc_info else {
+            error!(%withdrawal_request_txid, "Failed to fetch withdrawal info");
+            continue;
         };
 
         // Filter based on number of confirmations
-        match &rpc_info.status {
+        match &wd_info.status {
             RpcWithdrawalStatus::InProgress => {
                 // Always include in-progress withdrawals
-                withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
+                withdrawal_infos.push(WithdrawalInfo::from(&wd_info));
             }
             RpcWithdrawalStatus::Complete { fulfillment_txid } => {
-                if keep_entry(
+                if has_acceptable_confirmations(
                     config.esplora_url(),
                     *fulfillment_txid,
                     chain_tip_height,
@@ -459,44 +434,64 @@ async fn get_withdrawals(
                 )
                 .await
                 {
-                    withdrawal_infos.push(WithdrawalInfo::from(&rpc_info));
+                    withdrawal_infos.push(WithdrawalInfo::from(&wd_info));
                 }
             }
         }
     }
 
-    Ok(withdrawal_infos)
+    if withdrawal_infos.is_empty() {
+        warn!("No withdrawal infos found");
+    }
+    withdrawal_infos
+}
+
+/// Fetch claims
+async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
+    for rpc_url in config.bridge_rpc_urls().values() {
+        let rpc_client = create_rpc_client(rpc_url);
+
+        match rpc_client
+            .request::<Vec<Txid>, _>("stratabridge_claim", ((),))
+            .await
+        {
+            Ok(txids) if !txids.is_empty() => return txids,
+            Ok(_) | Err(_) => {} // Try next operator
+        }
+    }
+
+    warn!("No claims found");
+    Vec::new()
 }
 
 /// Fetch claim/reimbursement details
 async fn get_reimbursements(
-    bridge_rpc: &HttpClient,
-    chain_tip_height: u64,
     config: &BridgeMonitoringConfig,
-) -> Result<Vec<ReimbursementInfo>, ClientError> {
-    let claim_txids: Vec<String> = match bridge_rpc.request("stratabridge_claims", ((),)).await {
-        Ok(data) => data,
-        Err(e) => {
-            error!(error = %e, "Failed to fetch claims");
-            return Err(e);
-        }
-    };
+    chain_tip_height: u64,
+) -> Vec<ReimbursementInfo> {
+    let claims = get_claims(config).await;
 
     let mut reimbursement_infos = Vec::new();
-    for txid in claim_txids.iter() {
-        let rpc_info: RpcClaimInfo = match bridge_rpc
-            .request("stratabridge_claimInfo", (txid.clone(),))
-            .await
-        {
-            Ok(data) => data,
-            Err(e) => {
-                error!(error = %e, "Failed to fetch claim info");
-                return Err(e);
+    for claim_txid in claims.iter() {
+        let mut rpc_info = None;
+        for rpc_url in config.bridge_rpc_urls().values() {
+            let rpc_client = create_rpc_client(rpc_url);
+            if let Ok(info) = rpc_client
+                .request::<RpcClaimInfo, _>("stratabridge_claimInfo", (claim_txid,))
+                .await
+            {
+                rpc_info = Some(info);
+                break;
             }
+        }
+
+        let Some(claim_info) = rpc_info else {
+            error!(%claim_txid, "Failed to fetch deposit info");
+            continue;
         };
 
         // Filter based on number of confirmations
-        match &rpc_info.status {
+        match &claim_info.status {
             // Skip if not started
             RpcReimbursementStatus::NotStarted => {
                 continue;
@@ -504,15 +499,17 @@ async fn get_reimbursements(
             RpcReimbursementStatus::InProgress { .. }
             | RpcReimbursementStatus::Challenged { .. } => {
                 // Always include in-progress or challenged claims
-                reimbursement_infos.push(ReimbursementInfo::from(&rpc_info));
+                reimbursement_infos.push(ReimbursementInfo::from(&claim_info));
             }
             RpcReimbursementStatus::Cancelled | RpcReimbursementStatus::Complete { .. } => {
-                let txid = match &rpc_info.status {
-                    RpcReimbursementStatus::Cancelled => rpc_info.claim_txid,
+                let txid = match &claim_info.status {
+                    RpcReimbursementStatus::Cancelled => claim_info.claim_txid,
                     RpcReimbursementStatus::Complete { payout_txid } => *payout_txid,
-                    _ => unreachable!(), // Already matched
+                    RpcReimbursementStatus::NotStarted
+                    | RpcReimbursementStatus::InProgress { .. }
+                    | RpcReimbursementStatus::Challenged { .. } => unreachable!(), // Already matched
                 };
-                if keep_entry(
+                if has_acceptable_confirmations(
                     config.esplora_url(),
                     txid,
                     chain_tip_height,
@@ -520,13 +517,16 @@ async fn get_reimbursements(
                 )
                 .await
                 {
-                    reimbursement_infos.push(ReimbursementInfo::from(&rpc_info));
+                    reimbursement_infos.push(ReimbursementInfo::from(&claim_info));
                 }
             }
         }
     }
 
-    Ok(reimbursement_infos)
+    if reimbursement_infos.is_empty() {
+        warn!("No reimbursement infos found");
+    }
+    reimbursement_infos
 }
 
 /// Return latest bridge status
