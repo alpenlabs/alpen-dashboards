@@ -9,7 +9,7 @@ services:
       STRATA_RPC_URL: https://rpc.testnet.alpenlabs.io
       ALPEN_BRIDGE_OPERATORS_COUNT: 4
       ALPEN_BRIDGE_1_RPC_URL: https://bridge.testnet.alpenlabs.io/1
-      # need to have the 02 in front
+      # public keys need to have the 02 in front
       ALPEN_BRIDGE_1_PUBLIC_KEY: 0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0
       ALPEN_BRIDGE_2_RPC_URL: https://bridge.testnet.alpenlabs.io/2
       ALPEN_BRIDGE_2_PUBLIC_KEY: 026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f
