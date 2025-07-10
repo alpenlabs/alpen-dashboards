@@ -1,10 +1,10 @@
 import React from "react";
 import { truncateHex } from "../utils";
 
-export const TxidDisplay: React.FC<{ explorerUrl: string; txid: string | null }> = ({
-    explorerUrl,
-    txid,
-}) => {
+export const TxidDisplay: React.FC<{
+    explorerUrl: string;
+    txid: string | null;
+}> = ({ explorerUrl, txid }) => {
     if (!txid) return <>-</>;
 
     return (

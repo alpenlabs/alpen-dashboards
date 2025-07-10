@@ -113,10 +113,24 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={deposit.deposit_request_txid} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            bitcoinExplorerUrl
+                                                                        }
+                                                                        txid={
+                                                                            deposit.deposit_request_txid
+                                                                        }
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={deposit.deposit_txid} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            bitcoinExplorerUrl
+                                                                        }
+                                                                        txid={
+                                                                            deposit.deposit_txid
+                                                                        }
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -165,10 +179,22 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={alpenExplorerUrl} txid={`0x${withdrawal.withdrawal_request_txid}`} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            alpenExplorerUrl
+                                                                        }
+                                                                        txid={`0x${withdrawal.withdrawal_request_txid}`}
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={withdrawal.fulfillment_txid} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            bitcoinExplorerUrl
+                                                                        }
+                                                                        txid={
+                                                                            withdrawal.fulfillment_txid
+                                                                        }
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -213,7 +239,14 @@ export default function Bridge() {
                                                                 className="transactions-row"
                                                             >
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={reimbursement.claim_txid} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            bitcoinExplorerUrl
+                                                                        }
+                                                                        txid={
+                                                                            reimbursement.claim_txid
+                                                                        }
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
@@ -221,7 +254,14 @@ export default function Bridge() {
                                                                     }
                                                                 </td>
                                                                 <td className="table-cell">
-                                                                    <TxidDisplay explorerUrl={bitcoinExplorerUrl} txid={reimbursement.payout_txid} />
+                                                                    <TxidDisplay
+                                                                        explorerUrl={
+                                                                            bitcoinExplorerUrl
+                                                                        }
+                                                                        txid={
+                                                                            reimbursement.payout_txid
+                                                                        }
+                                                                    />
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {
