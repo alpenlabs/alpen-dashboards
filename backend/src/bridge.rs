@@ -236,15 +236,14 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
     let rpc_client = create_rpc_client(rpc_url);
 
-    if let Ok(_) = rpc_client
+    if (rpc_client
         .request::<u64, _>("stratabridge_uptime", ((),))
-        .await
-    {
-        return RpcOperatorStatus::Online;
+        .await).is_ok() {
+        RpcOperatorStatus::Online
+    } else {
+        warn!("Failed to fetch bridge operator uptime");
+        RpcOperatorStatus::Offline
     }
-
-    warn!("Failed to fetch bridge operator uptime");
-    RpcOperatorStatus::Offline
 }
 
 /// Fetch bitcoin chain tip height
