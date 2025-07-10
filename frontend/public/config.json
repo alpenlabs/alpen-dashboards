@@ -1,7 +1,7 @@
 {
     "apiBaseUrl": "http://localhost:3000",
-    "bitcoinExplorerUrl": "https://bitcoin.testnet-staging.stratabtc.org",
-    "alpenExplorerUrl": "https://explorer.testnet-staging.stratabtc.org",
+    "bitcoinExplorerUrl": "https://bitcoin.testnet.alpenlabs.io",
+    "alpenExplorerUrl": "https://explorer.testnet.alpenlabs.io",
     "networkStatusRefetchIntervalS": 60,
     "bridgeStatusRefetchIntervalS": 120,
     "activityStatsRefetchIntervalS": 60,
