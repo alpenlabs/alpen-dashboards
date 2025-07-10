@@ -238,7 +238,9 @@ async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
 
     if (rpc_client
         .request::<u64, _>("stratabridge_uptime", ((),))
-        .await).is_ok() {
+        .await)
+        .is_ok()
+    {
         RpcOperatorStatus::Online
     } else {
         warn!("Failed to fetch bridge operator uptime");
