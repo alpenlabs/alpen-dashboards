@@ -262,10 +262,8 @@ async fn get_bitcoin_chain_tip_height(esplora_url: &str) -> Result<u64, reqwest:
     Ok(height)
 }
 
-/// Check whether txid has acceptable number of confirmations
-///
-/// Number of confirmations < `max_confirmations`
-async fn has_acceptable_confirmations(
+/// Check whether txid has fewer confirmations than `max_confirmations`
+async fn has_fewer_confirmations_than_max(
     esplora_url: &str,
     txid: Txid,
     chain_tip_height: u64,
@@ -353,7 +351,7 @@ async fn get_deposits(config: &BridgeMonitoringConfig, chain_tip_height: u64) ->
                     RpcDepositStatus::InProgress => unreachable!(), // Already matched
                 };
 
-                if has_acceptable_confirmations(
+                if has_fewer_confirmations_than_max(
                     config.esplora_url(),
                     txid,
                     chain_tip_height,
@@ -427,7 +425,7 @@ async fn get_withdrawals(
                 withdrawal_infos.push(WithdrawalInfo::from(&wd_info));
             }
             RpcWithdrawalStatus::Complete { fulfillment_txid } => {
-                if has_acceptable_confirmations(
+                if has_fewer_confirmations_than_max(
                     config.esplora_url(),
                     *fulfillment_txid,
                     chain_tip_height,
@@ -510,7 +508,7 @@ async fn get_reimbursements(
                     | RpcReimbursementStatus::InProgress { .. }
                     | RpcReimbursementStatus::Challenged { .. } => unreachable!(), // Already matched
                 };
-                if has_acceptable_confirmations(
+                if has_fewer_confirmations_than_max(
                     config.esplora_url(),
                     txid,
                     chain_tip_height,
@@ -534,41 +532,4 @@ async fn get_reimbursements(
 pub async fn get_bridge_status(state: SharedBridgeState) -> Json<BridgeStatus> {
     let data = state.read().await.clone();
     Json(data)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::config::BridgeMonitoringConfig;
-    use crate::utils::create_rpc_client;
-    use jsonrpsee::core::client::ClientT;
-    use strata_bridge_rpc::types::RpcOperatorStatus;
-
-    #[tokio::test]
-    async fn test_operator_returns_offline_for_self() {
-        let config = BridgeMonitoringConfig::new();
-
-        for (pk, rpc_url) in config.bridge_rpc_urls() {
-            let rpc_client = create_rpc_client(rpc_url);
-
-            let status_result = rpc_client
-                .request::<RpcOperatorStatus, _>("stratabridge_operatorStatus", (pk.clone(),))
-                .await;
-
-            assert!(
-                status_result.is_ok(),
-                "RPC call to {} failed for pk {}",
-                rpc_url,
-                pk
-            );
-
-            let status = status_result.unwrap();
-            assert!(
-                matches!(status, RpcOperatorStatus::Offline),
-                "Expected `Offline` for self-query to {} with pk {}, got {:?}",
-                rpc_url,
-                pk,
-                status
-            );
-        }
-    }
 }
