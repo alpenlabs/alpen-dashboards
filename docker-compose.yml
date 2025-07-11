@@ -7,7 +7,17 @@ services:
     environment:
       STRATA_SEQUENCER_URL: https://strataseq.testnet.alpenlabs.io
       RPC_URL: https://rpc.testnet.alpenlabs.io
-      STRATA_BRIDGE_RPC_URL: https://bridge.testnet.alpenlabs.io/1
+      STRATA_BRIDGE_OPERATORS_COUNT: 4
+      STRATA_BRIDGE_1_RPC_URL: https://bridge.testnet.alpenlabs.io/1
+      STRATA_BRIDGE_1_PUBLIC_KEY: 0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0
+      STRATA_BRIDGE_2_RPC_URL: https://bridge.testnet.alpenlabs.io/2
+      STRATA_BRIDGE_2_PUBLIC_KEY: 026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f
+      STRATA_BRIDGE_3_RPC_URL: https://bridge.testnet.alpenlabs.io/3
+      STRATA_BRIDGE_3_PUBLIC_KEY: 022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6
+      STRATA_BRIDGE_4_RPC_URL: https://bridge.testnet.alpenlabs.io/4
+      STRATA_BRIDGE_4_PUBLIC_KEY: 02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3
+      ESPLORA_URL: https://esplora.testnet.alpenlabs.io
+      BRIDGE_TX_MAX_CONFIRMATIONS: 6
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health
       NETWORK_STATUS_REFETCH_INTERVAL_S: 120
       BRIDGE_STATUS_REFETCH_INTERVAL_S: 120
