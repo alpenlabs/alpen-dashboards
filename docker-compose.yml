@@ -8,12 +8,8 @@ services:
       ALPEN_RPC_URL: https://rpc.testnet.alpenlabs.io
       ALPEN_BRIDGE_RPC_URL: https://bridge.testnet.alpenlabs.io/1
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health
-      USER_OPS_QUERY_URL: https://explorer.testnet.alpenlabs.io/api/v2/proxy/account-abstraction/operations
-      ACCOUNTS_QUERY_URL: https://explorer.testnet.alpenlabs.io/api/v2/proxy/account-abstraction/accounts
       NETWORK_STATUS_REFETCH_INTERVAL_S: 120
       BRIDGE_STATUS_REFETCH_INTERVAL_S: 120
-      ACTIVITY_STATS_REFETCH_INTERVAL_S: 120
-      ACTIVITY_QUERY_PAGE_SIZE: 5
     ports:
       - "3000:3000"
 

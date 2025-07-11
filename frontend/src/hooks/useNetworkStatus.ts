@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useConfig } from "./useConfig";
 
 export type NetworkStatus = {
-    batch_producer: string;
+    sequencer: string;
     rpc_endpoint: string;
     bundler_endpoint: string;
 };

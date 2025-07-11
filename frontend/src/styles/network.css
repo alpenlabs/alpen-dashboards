@@ -31,22 +31,6 @@
     text-align: center;
 }
 
-.status-indicator {
-    width: 0.7rem;
-    height: 0.7rem;
-    border-radius: 50%;
-    margin: 0 5px;
-    display: inline-block;
-}
-
-.status-indicator.online {
-    background-color: green;
-}
-
-.status-indicator.offline {
-    background-color: red;
-}
-
 .balance-cards {
     display: flex;
     flex-direction: row;

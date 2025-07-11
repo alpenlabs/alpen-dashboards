@@ -1,9 +1,7 @@
-mod activity;
 mod bridge;
 mod config;
 mod retry_policy;
 mod utils;
-mod wallets;
 
 use axum::{routing::get, Json, Router};
 use dotenvy::dotenv;
@@ -20,14 +18,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 
 use crate::{
-    activity::{activity_monitoring_task, get_activity_stats, ActivityStats},
     bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
-    config::{ActivityMonitoringConfig, BridgeMonitoringConfig, NetworkConfig},
+    config::{BridgeMonitoringConfig, NetworkConfig},
     retry_policy::ExponentialBackoff,
     utils::create_rpc_client,
-    wallets::{
-        fetch_balances_task, get_wallets_with_balances, init_paymaster_wallets, SharedWallets,
-    },
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -39,7 +33,7 @@ enum Status {
 
 #[derive(Serialize, Clone, Debug)]
 struct NetworkStatus {
-    batch_producer: Status,
+    sequencer: Status,
     rpc_endpoint: Status,
     bundler_endpoint: Status,
 }
@@ -100,7 +94,7 @@ async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) 
 async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(10));
-    let batch_producer_client = create_rpc_client(config.batch_producer_url());
+    let sequencer_client = create_rpc_client(config.sequencer_url());
     let rpc_client = create_rpc_client(config.rpc_url());
     let http_client = reqwest::Client::new();
     let retry_policy =
@@ -109,12 +103,12 @@ async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) 
     loop {
         interval.tick().await;
 
-        let batch_producer = call_rpc_status(config, &batch_producer_client, retry_policy).await;
+        let sequencer = call_rpc_status(config, &sequencer_client, retry_policy).await;
         let rpc_endpoint = call_rpc_status(config, &rpc_client, retry_policy).await;
         let bundler_endpoint = check_bundler_health(&http_client, config).await;
 
         let new_status = NetworkStatus {
-            batch_producer,
+            sequencer,
             rpc_endpoint,
             bundler_endpoint,
         };
@@ -146,38 +140,17 @@ async fn main() {
 
     // Shared state for network status
     let shared_state = Arc::new(RwLock::new(NetworkStatus {
-        batch_producer: Status::Offline, // Default state
+        sequencer: Status::Offline, // Default state
         rpc_endpoint: Status::Offline,
         bundler_endpoint: Status::Offline,
     }));
 
-    let paymaster_wallets: SharedWallets = init_paymaster_wallets(&config.clone());
-
     // Spawn a background task to fetch real statuses
     let state_clone = Arc::clone(&shared_state);
-    let paymaster_wallets_clone = Arc::clone(&paymaster_wallets);
     tokio::spawn({
         let config = Arc::clone(&config);
         async move {
             fetch_statuses_task(state_clone, &config).await;
-        }
-    });
-    tokio::spawn({
-        let config = Arc::clone(&config.clone());
-        async move {
-            fetch_balances_task(paymaster_wallets_clone, &config).await;
-        }
-    });
-
-    // Activity monitoring
-    let activity_monitoring_config = ActivityMonitoringConfig::new();
-    let activity_stats = ActivityStats::default(&activity_monitoring_config);
-    // Shared state for activity stats
-    let shared_activity_stats = Arc::new(RwLock::new(activity_stats));
-    tokio::spawn({
-        let activity_stats_clone = Arc::clone(&shared_activity_stats);
-        async move {
-            activity_monitoring_task(activity_stats_clone, &activity_monitoring_config).await;
         }
     });
 
@@ -198,16 +171,8 @@ async fn main() {
             get(move || get_network_status(Arc::clone(&shared_state))),
         )
         .route(
-            "/api/balances",
-            get(move || get_wallets_with_balances(paymaster_wallets)),
-        )
-        .route(
             "/api/bridge_status",
             get(move || get_bridge_status(Arc::clone(&bridge_state))),
-        )
-        .route(
-            "/api/activity_stats",
-            get(move || get_activity_stats(Arc::clone(&shared_activity_stats))),
         )
         .layer(cors);
 
