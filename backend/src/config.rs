@@ -212,7 +212,7 @@ const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
-    /// Alpen bridge RPC urls
+    /// Strata bridge RPC urls
     bridge_rpc_urls: HashMap<String, String>,
 
     /// Esplora URL
