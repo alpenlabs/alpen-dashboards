@@ -8,13 +8,8 @@ import {
     ReimbursementInfo,
 } from "../hooks/useBridgeStatus";
 import { useConfig } from "../hooks/useConfig";
+import { truncateHex } from "../utils";
 import "../styles/bridge.css";
-
-const truncateHex = (hex: string, startLength = 4, endLength = 4) => {
-    if (!hex) return "-"; // If no TXID, show "-"
-    if (hex.length <= startLength + endLength) return hex; // If short, return as is
-    return `${hex.slice(0, startLength)}...${hex.slice(-endLength)}`;
-};
 
 const formatTxid = (explorer_url: string, txid: string | null) => {
     if (!txid) return "-";
