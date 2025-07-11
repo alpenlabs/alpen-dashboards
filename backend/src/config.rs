@@ -6,10 +6,10 @@ use crate::activity::ActivityStatsKeys;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
-    /// JSON-RPC Endpoint for strata sequencer
+    /// JSON-RPC Endpoint for Strata sequencer
     sequencer_url: String,
 
-    /// JSON-RPC Endpoint for strata client
+    /// JSON-RPC Endpoint for Strata client and reth
     rpc_url: String,
 
     /// JSON-RPC Endpoint for Alpen evm for wallet balance
@@ -39,7 +39,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "http://localhost:8432".to_string());
 
-        let rpc_url = std::env::var("STRATA_RPC_URL")
+        let rpc_url = std::env::var("RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8433".to_string());
 
@@ -229,7 +229,7 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let bridge_operators_count = std::env::var("ALPEN_BRIDGE_OPERATORS_COUNT")
+        let bridge_operators_count = std::env::var("STRATA_BRIDGE_OPERATORS_COUNT")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
@@ -237,8 +237,8 @@ impl BridgeMonitoringConfig {
         let mut bridge_rpc_urls = HashMap::new();
         for i in 1..=bridge_operators_count {
             let operator_pk =
-                std::env::var(format!("ALPEN_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
-            let rpc_url = std::env::var(format!("ALPEN_BRIDGE_{i}_RPC_URL"))
+                std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
+            let rpc_url = std::env::var(format!("STRATA_BRIDGE_{i}_RPC_URL"))
                 .ok()
                 .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
             bridge_rpc_urls.insert(operator_pk, rpc_url);
