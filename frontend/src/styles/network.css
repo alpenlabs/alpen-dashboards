@@ -31,51 +31,23 @@
     text-align: center;
 }
 
-.balance-cards {
-    display: flex;
-    flex-direction: row;
-    text-align: center;
-    gap: 8px;
+.status-text.online {
+    color: green;
 }
 
-.balance-section {
-    margin: 0 20px;
-    padding: 50px 10px;
-    width: 50%;
-}
-
-.balance-item {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 0;
-}
-
-.balance-title {
-    color: black;
-    font-weight: bold;
-}
-
-.balance-value {
-    margin-top: 1rem;
-    font-size: 14px;
-    color: black;
+.status-text.offline {
+    color: red;
 }
 
 @media screen and (max-width: 768px) {
-    .status-cards,
-    .balance-cards {
+    .status-cards {
         flex-wrap: wrap;
         justify-content: center;
     }
 
-    .status-section,
-    .balance-section {
+    .status-section {
         flex: 1 1 100%;
         width: 100%;
         box-sizing: border-box;
-    }
-
-    .balance-section {
-        padding: 20px 10px;
     }
 }
