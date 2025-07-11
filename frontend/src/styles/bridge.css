@@ -35,6 +35,10 @@
     border-collapse: collapse;
 }
 
+.operator-status {
+    font-weight: bold;
+}
+
 .operator-status.online {
     color: green;
 }

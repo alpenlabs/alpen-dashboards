@@ -37,7 +37,7 @@ export default function Bridge() {
                                     <span className="bridge-title">
                                         BRIDGE OPERATOR STATUS
                                     </span>
-                                    {data && data.operators ? (
+                                    {data && data.operators.length > 0 ? (
                                         <div className="table-wrapper">
                                             <table className="operators-table">
                                                 <thead>
@@ -64,15 +64,13 @@ export default function Bridge() {
                                                                 </td>
                                                                 <td className="table-cell">
                                                                     {truncateHex(
-                                                                        operator.operator_address,
+                                                                        operator.operator_pk,
                                                                     )}
                                                                 </td>
                                                                 <td
                                                                     className={`operator-status ${operator.status.toLowerCase()}`}
                                                                 >
-                                                                    {
-                                                                        operator.status
-                                                                    }
+                                                                    {operator.status.toUpperCase()}
                                                                 </td>
                                                             </tr>
                                                         ),

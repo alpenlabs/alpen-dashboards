@@ -21,19 +21,19 @@ use crate::{config::BridgeMonitoringConfig, utils::create_rpc_client};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct OperatorStatus {
     operator_id: String,
-    operator_address: PublicKey,
+    operator_pk: PublicKey,
     status: RpcOperatorStatus,
 }
 
 impl OperatorStatus {
     pub(crate) fn new(
         operator_id: String,
-        operator_address: PublicKey,
+        operator_pk: PublicKey,
         status: RpcOperatorStatus,
     ) -> Self {
         Self {
             operator_id,
-            operator_address,
+            operator_pk,
             status,
         }
     }

@@ -3,7 +3,7 @@ import { useConfig } from "./useConfig";
 
 export type OperatorStatus = {
     operator_id: string;
-    operator_address: string;
+    operator_pk: string;
     status: string;
 };
 
