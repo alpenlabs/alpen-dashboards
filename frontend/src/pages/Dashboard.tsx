@@ -94,9 +94,9 @@ export default function Dashboard() {
                             ) : (
                                 <div className="status-cards">
                                     <StatusCard
-                                        title="Batch producer status"
+                                        title="Sequencer status"
                                         status={
-                                            data?.batch_producer.toUpperCase() ??
+                                            data?.sequencer.toUpperCase() ??
                                             "Unknown"
                                         }
                                     />

@@ -35,6 +35,10 @@
     border-collapse: collapse;
 }
 
+.operator-status {
+    font-weight: bold;
+}
+
 .operator-status.online {
     color: green;
 }
@@ -87,6 +91,13 @@
 
 .table-cell {
     text-align: center;
+}
+
+.txidWrapper {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
 }
 
 .txidLink {
