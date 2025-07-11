@@ -3,10 +3,10 @@ use tracing::info;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
-    /// JSON-RPC Endpoint for Alpen sequencer
+    /// JSON-RPC Endpoint for Strata sequencer
     sequencer_url: String,
 
-    /// JSON-RPC Endpoint for Alpen client
+    /// JSON-RPC Endpoint for Strata client and reth
     rpc_url: String,
 
     /// Bundler health check URL (overrides `.env`)
@@ -27,7 +27,7 @@ impl NetworkConfig {
             .ok()
             .unwrap_or_else(|| "http://localhost:8432".to_string());
 
-        let rpc_url = std::env::var("STRATA_RPC_URL")
+        let rpc_url = std::env::var("RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8433".to_string());
 
@@ -97,7 +97,7 @@ impl BridgeMonitoringConfig {
     pub fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
-        let bridge_rpc_url = std::env::var("ALPEN_BRIDGE_RPC_URL")
+        let bridge_rpc_url = std::env::var("STRATA_BRIDGE_RPC_URL")
             .ok()
             .unwrap_or_else(|| "http://localhost:8546".to_string());
 

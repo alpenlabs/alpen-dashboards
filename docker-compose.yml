@@ -5,6 +5,7 @@ services:
       dockerfile: backend.Dockerfile
     container_name: alpen_dashboards_backend
     environment:
+      STRATA_SEQUENCER_URL: https://strataseq.testnet.alpenlabs.io
       RPC_URL: https://rpc.testnet.alpenlabs.io
       STRATA_BRIDGE_RPC_URL: https://bridge.testnet.alpenlabs.io/1
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health
