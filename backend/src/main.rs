@@ -1,9 +1,7 @@
-mod activity;
 mod bridge;
 mod config;
 mod retry_policy;
 mod utils;
-mod wallets;
 
 use axum::{routing::get, Json, Router};
 use dotenvy::dotenv;
@@ -20,14 +18,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 
 use crate::{
-    activity::{activity_monitoring_task, get_activity_stats, ActivityStats},
     bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
-    config::{ActivityMonitoringConfig, BridgeMonitoringConfig, NetworkConfig},
+    config::{BridgeMonitoringConfig, NetworkConfig},
     retry_policy::ExponentialBackoff,
     utils::create_rpc_client,
-    wallets::{
-        fetch_balances_task, get_wallets_with_balances, init_paymaster_wallets, SharedWallets,
-    },
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -151,33 +145,12 @@ async fn main() {
         bundler_endpoint: Status::Offline,
     }));
 
-    let paymaster_wallets: SharedWallets = init_paymaster_wallets(&config.clone());
-
     // Spawn a background task to fetch real statuses
     let state_clone = Arc::clone(&shared_state);
-    let paymaster_wallets_clone = Arc::clone(&paymaster_wallets);
     tokio::spawn({
         let config = Arc::clone(&config);
         async move {
             fetch_statuses_task(state_clone, &config).await;
-        }
-    });
-    tokio::spawn({
-        let config = Arc::clone(&config.clone());
-        async move {
-            fetch_balances_task(paymaster_wallets_clone, &config).await;
-        }
-    });
-
-    // Activity monitoring
-    let activity_monitoring_config = ActivityMonitoringConfig::new();
-    let activity_stats = ActivityStats::default(&activity_monitoring_config);
-    // Shared state for activity stats
-    let shared_activity_stats = Arc::new(RwLock::new(activity_stats));
-    tokio::spawn({
-        let activity_stats_clone = Arc::clone(&shared_activity_stats);
-        async move {
-            activity_monitoring_task(activity_stats_clone, &activity_monitoring_config).await;
         }
     });
 
@@ -198,16 +171,8 @@ async fn main() {
             get(move || get_network_status(Arc::clone(&shared_state))),
         )
         .route(
-            "/api/balances",
-            get(move || get_wallets_with_balances(paymaster_wallets)),
-        )
-        .route(
             "/api/bridge_status",
             get(move || get_bridge_status(Arc::clone(&bridge_state))),
-        )
-        .route(
-            "/api/activity_stats",
-            get(move || get_activity_stats(Arc::clone(&shared_activity_stats))),
         )
         .layer(cors);
 

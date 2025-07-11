@@ -12,10 +12,8 @@ RUN npm install
 # Copy the rest of the project files
 COPY frontend .
 
-COPY backend/activity_keys.json public/activity_keys.json
-
 # Build for production
-RUN npm run docker-build
+RUN npm run build
 
 # Install static server
 RUN npm install -g serve

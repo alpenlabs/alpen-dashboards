@@ -6,8 +6,7 @@
     "scripts": {
         "dev": "vite",
         "start": "npm run build && vite",
-        "build": "cp ../backend/activity_keys.json ./public/activity_keys.json && tsc -b && vite build",
-        "docker-build": "tsc -b && vite build",
+        "build": "tsc -b && vite build",
         "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
         "format": "prettier --write .",
         "format:check": "prettier --check .",

@@ -8,8 +8,9 @@ const StatusCard = ({ title, status }: StatusCardProps) => {
         <div className="status-section">
             <div className="status-title">{title.toUpperCase()}</div>
             <div className="status-value">
-                <span className="status-text">{status.toUpperCase()}</span>
-                <span className={`status-indicator ${status.toLowerCase()}`} />
+                <span className={`status-text ${status.toLowerCase()}`}>
+                    {status.toUpperCase()}
+                </span>
             </div>
         </div>
     );

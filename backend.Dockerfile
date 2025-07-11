@@ -23,7 +23,6 @@ WORKDIR /usr/src/app/backend
 
 # Copy the compiled binary from the builder stage
 COPY --from=builder /usr/src/app/backend/target/debug/backend .
-COPY backend/activity_keys.json .
 
 # Expose the backend service port (should match docker-compose.yml)
 EXPOSE 3000
