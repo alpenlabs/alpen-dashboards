@@ -112,10 +112,10 @@ jobs:
 
 
           echo "Updating frontend tag in $VALUES_FILE"
-          yq eval -i ".strataDashboard.frontend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
+          yq eval -i ".strataStatus.frontend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
 
           echo "Updating backend tag in $VALUES_FILE"
-          yq eval -i ".strataDashboard.backend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
+          yq eval -i ".strataStatus.backend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
 
 
       - name: Commit and push changes

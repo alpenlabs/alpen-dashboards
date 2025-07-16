@@ -8,9 +8,9 @@ export default defineConfig({
     },
     server: {
         allowedHosts: [
-            "dashboard.testnet.alpenlabs.io",
-            "dashboard.testnet-staging.stratabtc.org",
-            "dashboard.development.stratabtc.org",
+            "status.testnet.alpenlabs.io",
+            "status.testnet-staging.stratabtc.org",
+            "status.development.stratabtc.org",
         ],
     },
 });

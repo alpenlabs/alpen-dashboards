@@ -53,7 +53,7 @@ pub(crate) enum DepositStatus {
     Complete,
 }
 
-/// Deposit information passed to dashboard
+/// Deposit information passed to status dashboard
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct DepositInfo {
     pub deposit_request_txid: Txid,
@@ -91,7 +91,7 @@ pub(crate) enum WithdrawalStatus {
     Complete,
 }
 
-/// Withdrawal information passed to dashboard
+/// Withdrawal information passed to status dashboard
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct WithdrawalInfo {
     pub withdrawal_request_txid: Buf32,
@@ -126,7 +126,7 @@ pub enum ReimbursementStatus {
     Complete,
 }
 
-/// Claim and reimbursement information passed to dashboard
+/// Claim and reimbursement information passed to status dashboard
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct ReimbursementInfo {
     pub claim_txid: Txid,
@@ -249,16 +249,14 @@ async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
 }
 
 /// Fetch bitcoin chain tip height
-async fn get_bitcoin_chain_tip_height(esplora_url: &str) -> Result<u64, reqwest::Error> {
+async fn get_bitcoin_chain_tip_height(
+    esplora_url: &str,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     let endpoint = format!("{}/blocks/tip/height", esplora_url.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
-        .get(&endpoint)
-        .send()
-        .await?
-        .text()
-        .await?;
+    let resp = reqwest::Client::new().get(&endpoint).send().await?;
 
-    let height = resp.trim().parse::<u64>().expect("valid height");
+    let text = resp.text().await?;
+    let height = text.trim().parse::<u64>()?;
     Ok(height)
 }
 
@@ -451,7 +449,7 @@ async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
         let rpc_client = create_rpc_client(rpc_url);
 
         match rpc_client
-            .request::<Vec<Txid>, _>("stratabridge_claim", ((),))
+            .request::<Vec<Txid>, _>("stratabridge_claims", ((),))
             .await
         {
             Ok(txids) if !txids.is_empty() => return txids,
