@@ -449,7 +449,7 @@ async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
         let rpc_client = create_rpc_client(rpc_url);
 
         match rpc_client
-            .request::<Vec<Txid>, _>("stratabridge_claim", ((),))
+            .request::<Vec<Txid>, _>("stratabridge_claims", ((),))
             .await
         {
             Ok(txids) if !txids.is_empty() => return txids,
