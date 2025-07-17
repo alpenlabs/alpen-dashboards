@@ -1,12 +1,13 @@
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
-use jsonrpsee::core::client::ClientT;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
 use strata_bridge_rpc::types::{
     RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
     RpcWithdrawalInfo, RpcWithdrawalStatus,
 };
+
 use strata_primitives::buf::Buf32;
 
 use tokio::{
@@ -236,11 +237,8 @@ pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMon
 async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
     let rpc_client = create_rpc_client(rpc_url);
 
-    if (rpc_client
-        .request::<u64, _>("stratabridge_uptime", ((),))
-        .await)
-        .is_ok()
-    {
+    // Directly use `get_uptime`
+    if rpc_client.get_uptime().await.is_ok() {
         RpcOperatorStatus::Online
     } else {
         warn!("Failed to fetch bridge operator uptime");
@@ -299,10 +297,7 @@ async fn get_deposit_requests(config: &BridgeMonitoringConfig) -> Vec<Txid> {
     for rpc_url in config.bridge_rpc_urls().values() {
         let rpc_client = create_rpc_client(rpc_url);
 
-        match rpc_client
-            .request::<Vec<Txid>, _>("stratabridge_depositRequests", ((),))
-            .await
-        {
+        match rpc_client.get_deposit_requests().await {
             Ok(txids) if !txids.is_empty() => return txids,
             Ok(_) | Err(_) => {} // Try next operator
         }
@@ -323,7 +318,7 @@ async fn get_deposits(config: &BridgeMonitoringConfig, chain_tip_height: u64) ->
         for rpc_url in config.bridge_rpc_urls().values() {
             let rpc_client = create_rpc_client(rpc_url);
             if let Ok(info) = rpc_client
-                .request::<RpcDepositInfo, _>("stratabridge_depositInfo", (deposit_request_txid,))
+                .get_deposit_request_info(*deposit_request_txid)
                 .await
             {
                 rpc_info = Some(info);
@@ -374,10 +369,7 @@ async fn get_withdrawal_requests(config: &BridgeMonitoringConfig) -> Vec<Buf32> 
     for rpc_url in config.bridge_rpc_urls().values() {
         let rpc_client = create_rpc_client(rpc_url);
 
-        match rpc_client
-            .request::<Vec<Buf32>, _>("stratabridge_withdrawals", ((),))
-            .await
-        {
+        match rpc_client.get_withdrawals().await {
             Ok(txids) if !txids.is_empty() => return txids,
             Ok(_) | Err(_) => {} // Try next operator
         }
@@ -400,13 +392,10 @@ async fn get_withdrawals(
         for rpc_url in config.bridge_rpc_urls().values() {
             let rpc_client = create_rpc_client(rpc_url);
             if let Ok(info) = rpc_client
-                .request::<RpcWithdrawalInfo, _>(
-                    "stratabridge_withdrawalInfo",
-                    (withdrawal_request_txid,),
-                )
+                .get_withdrawal_info(*withdrawal_request_txid)
                 .await
             {
-                rpc_info = Some(info);
+                rpc_info = info;
                 break;
             }
         }
@@ -448,10 +437,7 @@ async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
     for rpc_url in config.bridge_rpc_urls().values() {
         let rpc_client = create_rpc_client(rpc_url);
 
-        match rpc_client
-            .request::<Vec<Txid>, _>("stratabridge_claims", ((),))
-            .await
-        {
+        match rpc_client.get_claims().await {
             Ok(txids) if !txids.is_empty() => return txids,
             Ok(_) | Err(_) => {} // Try next operator
         }
@@ -473,11 +459,8 @@ async fn get_reimbursements(
         let mut rpc_info = None;
         for rpc_url in config.bridge_rpc_urls().values() {
             let rpc_client = create_rpc_client(rpc_url);
-            if let Ok(info) = rpc_client
-                .request::<RpcClaimInfo, _>("stratabridge_claimInfo", (claim_txid,))
-                .await
-            {
-                rpc_info = Some(info);
+            if let Ok(info) = rpc_client.get_claim_info(*claim_txid).await {
+                rpc_info = info;
                 break;
             }
         }
