@@ -466,7 +466,7 @@ async fn get_reimbursements(
         }
 
         let Some(claim_info) = rpc_info else {
-            error!(%claim_txid, "Failed to fetch deposit info");
+            error!(%claim_txid, "Failed to fetch claim info");
             continue;
         };
 
