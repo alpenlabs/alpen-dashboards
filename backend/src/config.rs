@@ -2,6 +2,9 @@ use dotenvy::dotenv;
 use std::collections::HashMap;
 use tracing::info;
 
+/// Default network status refetch interval in seconds
+const DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S: u64 = 10;
+
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
     /// JSON-RPC Endpoint for Strata sequencer
@@ -18,6 +21,9 @@ pub(crate) struct NetworkConfig {
 
     /// Total time in seconds to spend retrying
     total_retry_time: u64,
+
+    /// Network status refetch interval in seconds
+    status_refetch_interval_s: u64,
 }
 
 impl NetworkConfig {
@@ -46,6 +52,11 @@ impl NetworkConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(60);
 
+        let status_refetch_interval_s: u64 = std::env::var("NETWORK_STATUS_REFETCH_INTERVAL_S")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S);
+
         info!(%rpc_url, bundler_url, "Loaded Network monitoring config:");
 
         NetworkConfig {
@@ -54,6 +65,7 @@ impl NetworkConfig {
             bundler_url,
             max_retries,
             total_retry_time,
+            status_refetch_interval_s,
         }
     }
 
@@ -80,6 +92,11 @@ impl NetworkConfig {
     /// Getter for `total_retry_time`
     pub fn total_retry_time(&self) -> u64 {
         self.total_retry_time
+    }
+
+    /// Getter for `status_refetch_interval_s`
+    pub fn status_refetch_interval(&self) -> u64 {
+        self.status_refetch_interval_s
     }
 }
 
