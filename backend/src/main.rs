@@ -1,6 +1,5 @@
 mod bridge;
 mod config;
-mod retry_policy;
 mod utils;
 
 use axum::{routing::get, Json, Router};
@@ -20,8 +19,8 @@ use tracing::{error, info};
 use crate::{
     bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
     config::{BridgeMonitoringConfig, NetworkConfig},
-    retry_policy::ExponentialBackoff,
-    utils::create_rpc_client,
+    utils::retry_policy::ExponentialBackoff,
+    utils::rpc_client::create_rpc_client,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -2,7 +2,7 @@
 ///
 /// NOTE: This is borrowed from prover code.
 #[derive(Clone, Copy, Debug)]
-pub struct ExponentialBackoff {
+pub(crate) struct ExponentialBackoff {
     /// Maximum number of retries.
     max_retries: u64,
     /// Total time in seconds across all retries.
@@ -12,7 +12,7 @@ pub struct ExponentialBackoff {
 }
 
 impl ExponentialBackoff {
-    pub fn new(max_retries: u64, total_time: u64, base: f64) -> Self {
+    pub(crate) fn new(max_retries: u64, total_time: u64, base: f64) -> Self {
         Self {
             max_retries,
             total_time,
@@ -21,7 +21,7 @@ impl ExponentialBackoff {
     }
 
     /// Returns the delay in seconds.
-    pub fn get_delay(&self, retry_counter: u64) -> u64 {
+    pub(crate) fn get_delay(&self, retry_counter: u64) -> u64 {
         if retry_counter == 0 {
             return 0;
         }
