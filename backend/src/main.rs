@@ -11,7 +11,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 use crate::{
-    bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
+    bridge::status::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
     config::BridgeMonitoringConfig,
     network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
 };

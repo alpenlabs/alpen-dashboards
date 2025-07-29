@@ -1,11 +1,9 @@
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
 use strata_bridge_rpc::types::{
-    RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
-    RpcWithdrawalInfo, RpcWithdrawalStatus,
+    RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus, RpcWithdrawalStatus,
 };
 
 use strata_primitives::buf::Buf32;
@@ -16,176 +14,19 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
+use crate::bridge::types::{
+    BridgeStatus, DepositInfo, OperatorStatus, ReimbursementInfo, TxStatus, WithdrawalInfo,
+};
 use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
-
-/// Bridge operator status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct OperatorStatus {
-    operator_id: String,
-    operator_pk: PublicKey,
-    status: RpcOperatorStatus,
-}
-
-impl OperatorStatus {
-    pub(crate) fn new(
-        operator_id: String,
-        operator_pk: PublicKey,
-        status: RpcOperatorStatus,
-    ) -> Self {
-        Self {
-            operator_id,
-            operator_pk,
-            status,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct TxStatus {
-    confirmed: bool,
-    block_height: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) enum DepositStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Failed,
-    Complete,
-}
-
-/// Deposit information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct DepositInfo {
-    pub deposit_request_txid: Txid,
-    pub deposit_txid: Option<Txid>,
-    pub status: DepositStatus,
-}
-
-impl From<&RpcDepositInfo> for DepositInfo {
-    fn from(rpc_info: &RpcDepositInfo) -> Self {
-        match &rpc_info.status {
-            RpcDepositStatus::InProgress => DepositInfo {
-                deposit_request_txid: rpc_info.deposit_request_txid,
-                deposit_txid: None,
-                status: DepositStatus::InProgress,
-            },
-            RpcDepositStatus::Failed { .. } => DepositInfo {
-                deposit_request_txid: rpc_info.deposit_request_txid,
-                deposit_txid: None,
-                status: DepositStatus::Failed,
-            },
-            RpcDepositStatus::Complete { deposit_txid } => DepositInfo {
-                deposit_request_txid: rpc_info.deposit_request_txid,
-                deposit_txid: Some(*deposit_txid),
-                status: DepositStatus::Complete,
-            },
-        }
-    }
-}
-
-/// Withdrawal status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) enum WithdrawalStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Complete,
-}
-
-/// Withdrawal information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct WithdrawalInfo {
-    pub withdrawal_request_txid: Buf32,
-    pub fulfillment_txid: Option<Txid>,
-    pub status: WithdrawalStatus,
-}
-
-impl From<&RpcWithdrawalInfo> for WithdrawalInfo {
-    fn from(rpc_info: &RpcWithdrawalInfo) -> Self {
-        match &rpc_info.status {
-            RpcWithdrawalStatus::InProgress => Self {
-                withdrawal_request_txid: rpc_info.withdrawal_request_txid,
-                fulfillment_txid: None,
-                status: WithdrawalStatus::InProgress,
-            },
-            RpcWithdrawalStatus::Complete { fulfillment_txid } => Self {
-                withdrawal_request_txid: rpc_info.withdrawal_request_txid,
-                fulfillment_txid: Some(*fulfillment_txid),
-                status: WithdrawalStatus::Complete,
-            },
-        }
-    }
-}
-
-/// Reimbursement status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ReimbursementStatus {
-    #[serde(rename = "In progress")]
-    InProgress,
-    Challenged,
-    Cancelled,
-    Complete,
-}
-
-/// Claim and reimbursement information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct ReimbursementInfo {
-    pub claim_txid: Txid,
-    pub challenge_step: String,
-    pub payout_txid: Option<Txid>,
-    pub status: ReimbursementStatus,
-}
-
-impl From<&RpcClaimInfo> for ReimbursementInfo {
-    fn from(rpc_info: &RpcClaimInfo) -> Self {
-        match &rpc_info.status {
-            RpcReimbursementStatus::NotStarted => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
-                payout_txid: None,
-                status: ReimbursementStatus::InProgress,
-            },
-            RpcReimbursementStatus::InProgress { challenge_step, .. } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{challenge_step:?}"),
-                payout_txid: None,
-                status: ReimbursementStatus::InProgress,
-            },
-            RpcReimbursementStatus::Challenged { challenge_step, .. } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{challenge_step:?}"),
-                payout_txid: None,
-                status: ReimbursementStatus::Challenged,
-            },
-            RpcReimbursementStatus::Cancelled => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
-                payout_txid: None,
-                status: ReimbursementStatus::Cancelled,
-            },
-            RpcReimbursementStatus::Complete { payout_txid } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
-                payout_txid: Some(*payout_txid),
-                status: ReimbursementStatus::Complete,
-            },
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct BridgeStatus {
-    operators: Vec<OperatorStatus>,
-    deposits: Vec<DepositInfo>,
-    withdrawals: Vec<WithdrawalInfo>,
-    reimbursements: Vec<ReimbursementInfo>,
-}
 
 /// Shared bridge state
 pub type SharedBridgeState = Arc<RwLock<BridgeStatus>>;
 
 /// Periodically fetch bridge status and update shared bridge state
-pub async fn bridge_monitoring_task(state: SharedBridgeState, config: &BridgeMonitoringConfig) {
+pub(crate) async fn bridge_monitoring_task(
+    state: SharedBridgeState,
+    config: &BridgeMonitoringConfig,
+) {
     let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
 
     loop {
@@ -510,7 +351,7 @@ async fn get_reimbursements(
 }
 
 /// Return latest bridge status
-pub async fn get_bridge_status(state: SharedBridgeState) -> Json<BridgeStatus> {
+pub(crate) async fn get_bridge_status(state: SharedBridgeState) -> Json<BridgeStatus> {
     let data = state.read().await.clone();
     Json(data)
 }
