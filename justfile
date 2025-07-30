@@ -35,3 +35,11 @@ dev:
 clean:
 	cd backend && cargo clean
 	cd frontend && rm -rf node_modules dist
+
+# Generate documentation
+docs:
+	cd backend && cargo doc --no-deps --open
+
+# Generate documentation (for CI)
+docs-check:
+	cd backend && cargo doc --no-deps

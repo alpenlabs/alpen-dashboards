@@ -23,9 +23,8 @@ env:
   CI: false
   COMMIT: ${{ github.sha }}
 
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
+
 jobs:
   build-and-push:
     permissions:
@@ -39,17 +38,17 @@ jobs:
     outputs:
       service: ${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
       - name: Configure AWS ECR Details
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4
         with:
           role-to-assume: ${{ secrets.AWS_ECR_ROLE }}
           aws-region: us-east-1
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2
         with:
           mask-password: "true"
       - name: Build and push Docker image
@@ -78,10 +77,13 @@ jobs:
     name: Update Helm Values
     needs: [build-and-push]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     environment: ${{ inputs.environment || (github.ref == 'refs/heads/main' && 'staging') }}
     steps:
       - name: Set up SSH for private repo access
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd # 0.9.1
         with:
           ssh-private-key: ${{ secrets.DEPLOYMENTS_REPO_WRITE }}
       - name: Clone deployments repo (specific branch)
