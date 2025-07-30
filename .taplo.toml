@@ -1,0 +1,14 @@
+[fmt]
+align_comments = true
+align_entries = true
+align_values = true
+array_trailing_comma = true
+column_alignment = true
+compact_arrays = false
+compact_inline_tables = false
+indent_entries = true
+indent_tables = true
+reorder_arrays = true
+reorder_keys = true
+reorder_tables = true
+column_width = 80 
