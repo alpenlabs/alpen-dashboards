@@ -7,12 +7,14 @@ check:
 	cd backend && cargo fmt --all -- --check
 	cd backend && cargo clippy --all-targets --all-features -- -D warnings
 	cd backend && cargo test --all --locked
+	taplo fmt --check
 	cd frontend && npm run format:check
 	cd frontend && npm run lint
 
 # Format code
 format:
 	cd backend && cargo fmt --all
+	taplo fmt
 	cd frontend && npm run format
 
 # Run tests

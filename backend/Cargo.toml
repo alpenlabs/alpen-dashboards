@@ -1,34 +1,36 @@
 [package]
-name = "backend"
-version = "0.1.0"
-edition = "2021"
+  edition = "2021"
+  name    = "backend"
+  version = "0.1.0"
 
 [dependencies]
-axum = { version = "0.7" }
-bitcoin = { version = "0.32.5", features = ["serde"] }
-clap = { version = "4.5", features = ["derive"] }
-chrono = { version = "0.4.38" }
-dotenvy = { version = "0.15" }
-hex = { version = "0.4" }
-jsonrpsee = { version = "0.24", features = ["http-client"] }
-reqwest = { version = "0.12.12", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1.0", default-features = false, features = [
-  "alloc",
-  "raw_value",
-] }
-tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread"] }
-tower-http = { version = "0.5", features = ["cors"] }
-tracing = {version = "0.1" }
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+  axum = { version = "0.7" }
+  bitcoin = { version = "0.32.5", features = [ "serde" ] }
+  chrono = { version = "0.4.38" }
+  clap = { version = "4.5", features = [ "derive" ] }
+  dotenvy = { version = "0.15" }
+  hex = { version = "0.4" }
+  jsonrpsee = { version = "0.24", features = [ "http-client" ] }
+  reqwest = { version = "0.12.12", features = [ "json" ] }
+  serde = { version = "1", features = [ "derive" ] }
+  serde_json = { version = "1.0", default-features = false, features = [
+    "alloc",
+    "raw_value",
+  ] }
+  tokio = { version = "1.44.2", features = [ "macros", "rt-multi-thread" ] }
+  tower-http = { version = "0.5", features = [ "cors" ] }
+  tracing = { version = "0.1" }
+  tracing-subscriber = { version = "0.3.18", features = [ "env-filter" ] }
 
-strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = ["client"]}
-strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git" }
-strata-primitives = { git = "https://github.com/alpenlabs/alpen.git" }
+  strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git" }
+  strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
+    "client",
+  ] }
+  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git" }
 
 [dev-dependencies]
-mockito = "1.6.1"
+  mockito = "1.6.1"
 
 [[bin]]
-name = "backend"
-path = "src/main.rs"
+  name = "backend"
+  path = "src/main.rs"
