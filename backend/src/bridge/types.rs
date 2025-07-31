@@ -168,3 +168,28 @@ pub(crate) struct BridgeStatus {
     pub(crate) withdrawals: Vec<WithdrawalInfo>,
     pub(crate) reimbursements: Vec<ReimbursementInfo>,
 }
+
+use std::sync::{atomic::AtomicBool, Arc};
+use tokio::sync::{Notify, RwLock};
+
+use super::cache::BridgeStatusCache;
+use crate::config::BridgeMonitoringConfig;
+
+/// Bridge monitoring context
+pub struct BridgeMonitoringContext {
+    pub(crate) status_cache: Arc<RwLock<BridgeStatusCache>>,
+    pub(crate) config: BridgeMonitoringConfig,
+    pub(crate) status_available: Arc<AtomicBool>,
+    pub(crate) initial_status_query_complete: Arc<Notify>,
+}
+
+impl BridgeMonitoringContext {
+    pub fn new(config: BridgeMonitoringConfig) -> Self {
+        Self {
+            status_cache: Arc::new(RwLock::new(BridgeStatusCache::new())),
+            config,
+            status_available: Arc::new(AtomicBool::new(false)),
+            initial_status_query_complete: Arc::new(Notify::new()),
+        }
+    }
+}

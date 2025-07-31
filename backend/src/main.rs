@@ -11,7 +11,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 use crate::{
-    bridge::status::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
+    bridge::status::{bridge_monitoring_task, get_bridge_status},
+    bridge::types::BridgeMonitoringContext,
     config::BridgeMonitoringConfig,
     network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
 };
@@ -42,13 +43,11 @@ async fn main() {
 
     // bridge monitoring
     let bridge_monitoring_config = BridgeMonitoringConfig::new();
-    // Shared state for bridge status
-    let bridge_state = SharedBridgeState::default();
-    tokio::spawn({
-        let bridge_state_clone = Arc::clone(&bridge_state);
-        async move {
-            bridge_monitoring_task(bridge_state_clone, &bridge_monitoring_config).await;
-        }
+    let bridge_context = Arc::new(BridgeMonitoringContext::new(bridge_monitoring_config));
+    let bridge_context_clone = Arc::clone(&bridge_context);
+
+    tokio::spawn(async move {
+        bridge_monitoring_task(bridge_context_clone).await;
     });
 
     let app = Router::new()
@@ -58,7 +57,7 @@ async fn main() {
         )
         .route(
             "/api/bridge_status",
-            get(move || get_bridge_status(Arc::clone(&bridge_state))),
+            get(move || get_bridge_status(Arc::clone(&bridge_context))),
         )
         .layer(cors);
 
