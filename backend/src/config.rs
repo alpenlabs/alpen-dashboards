@@ -27,7 +27,7 @@ pub(crate) struct NetworkConfig {
 }
 
 impl NetworkConfig {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
         let sequencer_url = std::env::var("STRATA_SEQUENCER_URL")
@@ -70,32 +70,32 @@ impl NetworkConfig {
     }
 
     /// Getter for `sequencer_url`
-    pub fn sequencer_url(&self) -> &str {
+    pub(crate) fn sequencer_url(&self) -> &str {
         &self.sequencer_url
     }
 
     /// Getter for `rpc_url`
-    pub fn rpc_url(&self) -> &str {
+    pub(crate) fn rpc_url(&self) -> &str {
         &self.rpc_url
     }
 
     /// Getter for `bundler_url`
-    pub fn bundler_url(&self) -> &str {
+    pub(crate) fn bundler_url(&self) -> &str {
         &self.bundler_url
     }
 
     /// Getter for `max_retries`
-    pub fn max_retries(&self) -> u64 {
+    pub(crate) fn max_retries(&self) -> u64 {
         self.max_retries
     }
 
     /// Getter for `total_retry_time`
-    pub fn total_retry_time(&self) -> u64 {
+    pub(crate) fn total_retry_time(&self) -> u64 {
         self.total_retry_time
     }
 
     /// Getter for `status_refetch_interval_s`
-    pub fn status_refetch_interval(&self) -> u64 {
+    pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 }
@@ -125,7 +125,7 @@ pub struct BridgeMonitoringConfig {
 }
 
 impl BridgeMonitoringConfig {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
         let bridge_operators_count = std::env::var("STRATA_BRIDGE_OPERATORS_COUNT")
@@ -168,22 +168,22 @@ impl BridgeMonitoringConfig {
     }
 
     /// Getter for `bridge_rpc_urls`
-    pub fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
+    pub(crate) fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
         &self.bridge_rpc_urls
     }
 
     /// Getter for `esplora_url`
-    pub fn esplora_url(&self) -> &str {
+    pub(crate) fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
 
     /// Getter for `max_tx_confirmations`
-    pub fn max_tx_confirmations(&self) -> u64 {
+    pub(crate) fn max_tx_confirmations(&self) -> u64 {
         self.max_tx_confirmations
     }
 
     /// Getter for `status_refetch_interval_s`
-    pub fn status_refetch_interval(&self) -> u64 {
+    pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 }
