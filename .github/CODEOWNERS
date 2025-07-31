@@ -1,0 +1,29 @@
+* @krsnapaudel # fallback
+
+# Bookkeeping
+*.toml @krsnapaudel
+README.md @krsnapaudel
+.vscode/ @krsnapaudel
+.editorconfig @krsnapaudel
+**/Cargo.toml @krsnapaudel
+**/Cargo.lock @krsnapaudel
+**/justfile @krsnapaudel
+**/LICENSE* @krsnapaudel
+**/.gitignore @krsnapaudel
+**/.prettierrc @krsnapaudel
+**/.prettierignore @krsnapaudel
+
+# Modules
+backend/src/main.rs @purusang
+backend/src/network/* @krsnapaudel @purusang
+backend/src/bridge/* @krsnapaudel
+backend/src/utils/* @krsnapaudel @purusang
+frontend/* @krsnapaudel @purusang
+
+# CI/CD
+/.github/ @krsnapaudel
+.github/workflows/cd.yml @krsnapaudel @purusang
+
+# Docker
+*.Dockerfile @krsnapaudel @purusang
+docker-compose.yml @krsnapaudel @purusang
