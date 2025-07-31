@@ -1,139 +1,139 @@
 .bridge-container {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 40px;
-    background-color: white;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  background-color: white;
 }
 
 .bridge-title {
-    margin-bottom: 50px;
-    text-align: left;
-    font-weight: bold;
-    color: black;
+  margin-bottom: 50px;
+  text-align: left;
+  font-weight: bold;
+  color: black;
 }
 
 .bridge-section {
-    max-width: 100%;
-    overflow-x: visible;
-    padding-right: 0;
-    padding-left: 40px;
-    color: black;
+  max-width: 100%;
+  overflow-x: visible;
+  padding-right: 0;
+  padding-left: 40px;
+  color: black;
 }
 
 .table-wrapper {
-    margin-top: 20px;
-    overflow-x: auto;
-    max-width: 100%;
-    box-sizing: border-box;
+  margin-top: 20px;
+  overflow-x: auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .operators-table,
 .transactions-table {
-    min-width: 768px;
-    width: auto;
-    border-collapse: collapse;
+  min-width: 768px;
+  width: auto;
+  border-collapse: collapse;
 }
 
 .operator-status {
-    font-weight: bold;
+  font-weight: bold;
 }
 
 .operator-status.online {
-    color: green;
+  color: green;
 }
 
 .operator-status.offline {
-    color: red;
+  color: red;
 }
 
 .operators-header th,
 .transactions-header th,
 .operators-row td,
 .transactions-row td {
-    text-align: left;
-    padding: 12px 24px;
+  text-align: left;
+  padding: 12px 24px;
 }
 
 .operators-row td:first-child,
 .transactions-row td:first-child,
 .operators-header th:first-child,
 .transactions-header th:first-child {
-    text-align: left;
-    padding-left: 0;
+  text-align: left;
+  padding-left: 0;
 }
 
 .operators-row td:last-child,
 .transactions-row td:last-child,
 .operators-header th:last-child,
 .transactions-header th:last-child {
-    text-align: right;
+  text-align: right;
 }
 
 .operators-row td:not(:first-child):not(:last-child),
 .transactions-row td:not(:first-child):not(:last-child),
 .operators-header th:not(:first-child):not(:last-child),
 .transactions-header th:not(:first-child):not(:last-child) {
-    text-align: center;
+  text-align: center;
 }
 
 .operators-row:not(:last-child),
 .transactions-row:not(:last-child),
 .transactions-header th {
-    border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid #ececec;
 }
 
 .operators-row:not(:last-child),
 .transactions-header th,
 .transactions-row:not(:last-child) {
-    border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid #ececec;
 }
 
 .table-cell {
-    text-align: center;
+  text-align: center;
 }
 
 .txidWrapper {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
 }
 
 .txidLink {
-    color: black;
-    text-decoration: underline;
+  color: black;
+  text-decoration: underline;
 }
 
 .no-items {
-    font-style: italic;
-    color: gray;
+  font-style: italic;
+  color: gray;
 }
 
 @media screen and (min-width: 769px) {
-    .table-wrapper {
-        overflow-x: visible;
-    }
+  .table-wrapper {
+    overflow-x: visible;
+  }
 }
 
 @media screen and (max-width: 768px) {
-    .table-wrapper {
-        display: block;
-    }
+  .table-wrapper {
+    display: block;
+  }
 
-    .bridge-section {
-        margin: 1rem 0;
-    }
+  .bridge-section {
+    margin: 1rem 0;
+  }
 
-    .operators-table,
-    .transactions-table {
-        min-width: 600px;
-    }
+  .operators-table,
+  .transactions-table {
+    min-width: 600px;
+  }
 
-    .transactions-header th,
-    .transactions-row td,
-    .operators-row td {
-        padding: 8px;
-        font-size: 14px;
-    }
+  .transactions-header th,
+  .transactions-row td,
+  .operators-row td {
+    padding: 8px;
+    font-size: 14px;
+  }
 }

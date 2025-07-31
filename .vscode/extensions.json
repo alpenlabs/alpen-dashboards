@@ -2,11 +2,12 @@
     "recommendations": [
         "editorconfig.editorconfig",
         "rust-lang.rust-analyzer",
-        "ryanluker.vscode-coverage-gutters",
-        "wayou.vscode-todo-highlight",
+        "esbenp.prettier-vscode",
         "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "wayou.vscode-todo-highlight",
         "github.vscode-github-actions",
         "charliermarsh.ruff",
-        "redhat.vscode-yaml"
+        "bradlc.vscode-tailwindcss"
     ]
-}
+} 
