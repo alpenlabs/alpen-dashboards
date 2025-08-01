@@ -5,5 +5,9 @@
   "networkStatusRefetchIntervalS": 60,
   "bridgeStatusRefetchIntervalS": 120,
   "balanceRefetchIntervalS": 30,
+  "faucetBalanceThresholds": {
+    "signet": 200,
+    "alpen": 200
+  },
   "environment": "staging"
 }

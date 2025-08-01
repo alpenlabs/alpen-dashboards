@@ -80,6 +80,17 @@
   color: gray;
 }
 
+/* Balance status colors */
+.balance-healthy {
+  color: #22c55e !important;
+  font-weight: bold;
+}
+
+.balance-warning {
+  color: #f97316 !important;
+  font-weight: bold;
+}
+
 @media screen and (min-width: 769px) {
   .table-wrapper {
     overflow-x: visible;
