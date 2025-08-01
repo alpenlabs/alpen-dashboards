@@ -1,5 +1,5 @@
-import { createContext, useState, useEffect } from 'react';
 import type { PropsWithChildren } from 'react';
+import { createContext, useEffect, useState } from 'react';
 
 export interface AppConfig {
   apiBaseUrl: string;
@@ -9,6 +9,10 @@ export interface AppConfig {
   networkStatusRefetchIntervalS: number;
   balanceRefetchIntervalS: number;
   environment: string;
+  faucetBalanceSatsThresholds: {
+    signet: number;
+    alpen: number;
+  };
 }
 
 const ConfigContext = createContext<AppConfig | null>(null);

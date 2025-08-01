@@ -1,4 +1,5 @@
 import type { FaucetBalances } from '../hooks/useBalances';
+import { useConfig } from '../hooks/useConfig';
 
 interface FaucetBalanceProps {
   faucet: FaucetBalances;
@@ -8,15 +9,28 @@ interface FaucetBalanceProps {
 function formatSats(sats: number): string {
   if (sats === 0) return '0 SATS';
 
-  // Add comma separators for readability
-  const formattedNumber = sats.toLocaleString();
+  const formattedNumber = sats.toLocaleString('en-US');
   return `${formattedNumber} SATS`;
 }
 
+function getHealthStatus(balanceSats: number, thresholdSats: number): string {
+  return balanceSats >= thresholdSats ? 'Healthy' : 'Low';
+}
+
 export default function FaucetBalance({ faucet, title }: FaucetBalanceProps) {
+  const config = useConfig();
+
   const faucetWallets = [
-    { name: 'Signet wallet', balance_sats: faucet.l1_balance_sats },
-    { name: 'Alpen wallet', balance_sats: faucet.l2_balance_sats },
+    {
+      name: 'Signet wallet',
+      balance_sats: faucet.l1_balance_sats,
+      threshold_sats: config.faucetBalanceSatsThresholds.signet,
+    },
+    {
+      name: 'Alpen wallet',
+      balance_sats: faucet.l2_balance_sats,
+      threshold_sats: config.faucetBalanceSatsThresholds.alpen,
+    },
   ];
 
   return (
@@ -28,6 +42,8 @@ export default function FaucetBalance({ faucet, title }: FaucetBalanceProps) {
             <tr className="operators-header">
               <th>Wallet</th>
               <th>Balance</th>
+              <th>Threshold</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -36,6 +52,12 @@ export default function FaucetBalance({ faucet, title }: FaucetBalanceProps) {
                 <td className="table-cell">{wallet.name}</td>
                 <td className="table-cell">
                   {formatSats(wallet.balance_sats)}
+                </td>
+                <td className="table-cell">
+                  {formatSats(wallet.threshold_sats)}
+                </td>
+                <td className="table-cell">
+                  {getHealthStatus(wallet.balance_sats, wallet.threshold_sats)}
                 </td>
               </tr>
             ))}
