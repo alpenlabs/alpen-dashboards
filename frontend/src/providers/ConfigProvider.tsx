@@ -7,6 +7,7 @@ export interface AppConfig {
   alpenExplorerUrl: string;
   bridgeStatusRefetchIntervalS: number;
   networkStatusRefetchIntervalS: number;
+  balanceRefetchIntervalS: number;
   environment: string;
 }
 
