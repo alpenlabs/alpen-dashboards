@@ -2,6 +2,7 @@ mod bridge;
 mod config;
 mod retry_policy;
 mod utils;
+mod wallets;
 
 use axum::{routing::get, Json, Router};
 use dotenvy::dotenv;
@@ -19,9 +20,13 @@ use tracing::{error, info};
 
 use crate::{
     bridge::{bridge_monitoring_task, get_bridge_status, SharedBridgeState},
-    config::{BridgeMonitoringConfig, NetworkConfig},
+    config::{BalanceMonitoringConfig, BridgeMonitoringConfig, NetworkConfig},
     retry_policy::ExponentialBackoff,
     utils::create_rpc_client,
+    wallets::{
+        balance::{balance_monitoring_task, get_balances},
+        types::{BalanceContext, WalletBalances},
+    },
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -165,6 +170,19 @@ async fn main() {
         }
     });
 
+    // unified balance monitoring
+    let balance_config = BalanceMonitoringConfig::new();
+    let balance_context = Arc::new(BalanceContext::new(
+        balance_config,
+        WalletBalances::default(),
+    ));
+    tokio::spawn({
+        let balance_context_clone = Arc::clone(&balance_context);
+        async move {
+            balance_monitoring_task(balance_context_clone).await;
+        }
+    });
+
     let app = Router::new()
         .route(
             "/api/status",
@@ -173,6 +191,10 @@ async fn main() {
         .route(
             "/api/bridge_status",
             get(move || get_bridge_status(Arc::clone(&bridge_state))),
+        )
+        .route(
+            "/api/balances",
+            get(move || get_balances(Arc::clone(&balance_context))),
         )
         .layer(cors);
 
