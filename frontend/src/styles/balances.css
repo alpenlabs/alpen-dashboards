@@ -1,0 +1,106 @@
+.balances-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  background-color: white;
+}
+
+.balance-title {
+  margin-bottom: 50px;
+  text-align: left;
+  font-weight: bold;
+  color: black;
+}
+
+.balance-section {
+  max-width: 100%;
+  overflow-x: visible;
+  padding-right: 0;
+  padding-left: 40px;
+  color: black;
+}
+
+.table-wrapper {
+  margin-top: 20px;
+  overflow-x: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.operators-table {
+  min-width: 768px;
+  width: auto;
+  border-collapse: collapse;
+}
+
+.operators-header th,
+.operators-row td {
+  text-align: left;
+  padding: 12px 24px;
+}
+
+.operators-row td:first-child,
+.operators-header th:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+.operators-row td:last-child,
+.operators-header th:last-child {
+  text-align: right;
+}
+
+.operators-row td:not(:first-child):not(:last-child),
+.operators-header th:not(:first-child):not(:last-child) {
+  text-align: center;
+}
+
+.operators-row:not(:last-child),
+.operators-header th {
+  border-bottom: 1px solid #ececec;
+}
+
+.table-cell {
+  text-align: center;
+}
+
+.error-text {
+  color: red;
+  font-weight: bold;
+}
+
+.loading-text {
+  color: gray;
+  font-style: italic;
+}
+
+.no-items {
+  font-style: italic;
+  color: gray;
+}
+
+@media screen and (min-width: 769px) {
+  .table-wrapper {
+    overflow-x: visible;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .table-wrapper {
+    display: block;
+  }
+
+  .balance-section {
+    margin: 1rem 0;
+  }
+
+  .operators-table {
+    min-width: 600px;
+  }
+
+  .operators-row td {
+    padding: 8px;
+    font-size: 14px;
+  }
+}
