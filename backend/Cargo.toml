@@ -6,7 +6,7 @@
 [dependencies]
   axum = { version = "0.7" }
   bitcoin = { version = "0.32.5", features = [ "serde" ] }
-  chrono = { version = "0.4.38" }
+  chrono = { version = "0.4.38", features = ["serde"] }
   clap = { version = "4.5", features = [ "derive" ] }
   dotenvy = { version = "0.15" }
   hex = { version = "0.4" }
@@ -26,7 +26,7 @@
   strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
     "client",
   ] }
-  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git" }
+  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.2.0-rc4" }
 
 [dev-dependencies]
   mockito = "1.6.1"

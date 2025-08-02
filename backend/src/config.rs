@@ -93,6 +93,7 @@ const DEFAULT_MAX_TX_CONFIRMATIONS: u64 = 6;
 const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
 
 /// Bridge monitoring configuration
+#[derive(Clone)]
 pub struct BridgeMonitoringConfig {
     /// Strata bridge RPC urls
     bridge_rpc_urls: HashMap<String, String>,
@@ -168,5 +169,115 @@ impl BridgeMonitoringConfig {
     /// Getter for `status_refetch_interval_s`
     pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+}
+
+/// Balance monitoring configuration
+#[derive(Debug, Clone)]
+pub(crate) struct BalanceMonitoringConfig {
+    /// Faucet L1 balance URL
+    pub(crate) faucet_l1_url: String,
+    /// Faucet L2 balance URL
+    pub(crate) faucet_l2_url: String,
+    /// Esplora URL for Bitcoin address balance queries
+    pub(crate) esplora_url: String,
+    /// Bridge operator general wallet addresses keyed by public key
+    pub(crate) bridge_operator_general_addresses: HashMap<String, String>,
+    /// Bridge operator stake chain wallet addresses keyed by public key
+    pub(crate) bridge_operator_stake_addresses: HashMap<String, String>,
+    /// Refresh interval in seconds
+    pub(crate) refresh_interval_s: u64,
+}
+
+impl BalanceMonitoringConfig {
+    pub(crate) fn new() -> Self {
+        dotenv().ok(); // Load `.env` file if present
+
+        let refresh_interval_s: u64 = std::env::var("BALANCE_MONITORING_REFRESH_INTERVAL_S")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(300); // Default to 5 minutes
+
+        let faucet_l1_url = std::env::var("FAUCET_L1_BALANCE_URL")
+            .unwrap_or_else(|_| "http://localhost:8080/balance/l1".to_string());
+
+        let faucet_l2_url = std::env::var("FAUCET_L2_BALANCE_URL")
+            .unwrap_or_else(|_| "http://localhost:8080/balance/l2".to_string());
+
+        let esplora_url = std::env::var("ESPLORA_URL")
+            .unwrap_or_else(|_| "https://bitcoin.testnet.alpenlabs.io".to_string());
+
+        // Load bridge operator addresses from environment
+        let bridge_operators_count = std::env::var("STRATA_BRIDGE_OPERATORS_COUNT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
+
+        let mut bridge_operator_general_addresses = HashMap::new();
+        let mut bridge_operator_stake_addresses = HashMap::new();
+
+        for i in 1..=bridge_operators_count {
+            if let Ok(operator_pk) = std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")) {
+                if let Ok(general_addr) =
+                    std::env::var(format!("STRATA_BRIDGE_{i}_GENERAL_WALLET_ADDRESS"))
+                {
+                    bridge_operator_general_addresses.insert(operator_pk.clone(), general_addr);
+                }
+                if let Ok(stake_addr) =
+                    std::env::var(format!("STRATA_BRIDGE_{i}_STAKE_CHAIN_WALLET_ADDRESS"))
+                {
+                    bridge_operator_stake_addresses.insert(operator_pk, stake_addr);
+                }
+            }
+        }
+
+        info!(
+            faucet_l1_url = %faucet_l1_url,
+            faucet_l2_url = %faucet_l2_url,
+            esplora_url = %esplora_url,
+            general_addresses = bridge_operator_general_addresses.len(),
+            stake_addresses = bridge_operator_stake_addresses.len(),
+            refresh_interval = refresh_interval_s,
+            "Loaded balance monitoring config"
+        );
+
+        BalanceMonitoringConfig {
+            faucet_l1_url,
+            faucet_l2_url,
+            esplora_url,
+            bridge_operator_general_addresses,
+            bridge_operator_stake_addresses,
+            refresh_interval_s,
+        }
+    }
+
+    /// Getter for faucet L1 URL
+    pub(crate) fn faucet_l1_url(&self) -> &str {
+        &self.faucet_l1_url
+    }
+
+    /// Getter for faucet L2 URL
+    pub(crate) fn faucet_l2_url(&self) -> &str {
+        &self.faucet_l2_url
+    }
+
+    /// Getter for Esplora URL
+    pub(crate) fn esplora_url(&self) -> &str {
+        &self.esplora_url
+    }
+
+    /// Getter for bridge operator general addresses
+    pub(crate) fn bridge_operator_general_addresses(&self) -> &HashMap<String, String> {
+        &self.bridge_operator_general_addresses
+    }
+
+    /// Getter for bridge operator stake addresses
+    pub(crate) fn bridge_operator_stake_addresses(&self) -> &HashMap<String, String> {
+        &self.bridge_operator_stake_addresses
+    }
+
+    /// Getter for refresh interval
+    pub(crate) fn refresh_interval_s(&self) -> u64 {
+        self.refresh_interval_s
     }
 }
