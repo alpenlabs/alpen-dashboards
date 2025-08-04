@@ -56,6 +56,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY_PREFIX: ${{ vars.ECR_REPOSITORY_PREFIX }}
+          ECR_REPOSITORY_PREFIX_INTERNAL: ${{ vars.ECR_REPOSITORY_PREFIX_INTERNAL }}
         run: |
           IMAGE_TAG=${COMMIT::7}
           SERVICE="${{ matrix.service }}"
@@ -63,16 +64,25 @@ jobs:
 
           DOCKERFILE_PATH="$SERVICE.Dockerfile"
           CONTEXT_DIR="."
-          ECR_REPOSITORY="$ECR_REPOSITORY_PREFIX/${SERVICE}"
+          
+          # Define repositories for both public and internal dashboards
+          ECR_REPOSITORY_PUBLIC="$ECR_REPOSITORY_PREFIX/${SERVICE}"
+          ECR_REPOSITORY_INTERNAL="$ECR_REPOSITORY_PREFIX_INTERNAL/${SERVICE}"
 
           # Build with both the commit tag and latest
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-                      -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_PUBLIC:$IMAGE_TAG \
+                      -t $ECR_REGISTRY/$ECR_REPOSITORY_PUBLIC:latest \
+                      -f $DOCKERFILE_PATH $CONTEXT_DIR
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_INTERNAL:$IMAGE_TAG \
+                      -t $ECR_REGISTRY/$ECR_REPOSITORY_INTERNAL:latest \
                       -f $DOCKERFILE_PATH $CONTEXT_DIR
 
-          # Push both tags
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # Push both tags to both repositories
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_PUBLIC:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_PUBLIC:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_INTERNAL:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_INTERNAL:latest
+
   update-helm-values:
     name: Update Helm Values
     needs: [build-and-push]
@@ -102,7 +112,7 @@ jobs:
         run: |
           yq --version
           which yq
-      - name: Update Docker image tag in Helm values # Sanitized SHORT_TAG and safe yq usage
+      - name: Update Docker image tags in Helm values for both dashboards
         env:
           CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
         run: |
@@ -112,13 +122,13 @@ jobs:
 
           VALUES_FILE="deployments/clusters/$CLUSTER_NAME/values/strata-apps-values.yaml"
 
-
-          echo "Updating frontend tag in $VALUES_FILE"
+          echo "Updating strataStatus (public) dashboard tags in $VALUES_FILE"
           yq eval -i ".strataStatus.frontend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
-
-          echo "Updating backend tag in $VALUES_FILE"
           yq eval -i ".strataStatus.backend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
 
+          echo "Updating strataDashboard (internal) dashboard tags in $VALUES_FILE"
+          yq eval -i ".strataDashboard.frontend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
+          yq eval -i ".strataDashboard.backend.image.tag = \"$SHORT_TAG\"" "$VALUES_FILE"
 
       - name: Commit and push changes
         env:
@@ -137,7 +147,7 @@ jobs:
             echo "No changes to commit."
           else
             git add clusters/$CLUSTER_NAME/values
-            git commit -m "Update image tags to $SHORT_TAG for updated services"
+            git commit -m "Update image tags to $SHORT_TAG for both strataStatus and strataDashboard"
             git pull --rebase origin $BRANCH_OF_DEPLOYMENT_REPO
             git push origin $BRANCH_OF_DEPLOYMENT_REPO
           fi
