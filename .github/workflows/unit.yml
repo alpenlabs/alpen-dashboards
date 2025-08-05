@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fcf085fcb4b4b8f63f96906cd713eb52181b5ea4 # stable
+        uses: dtolnay/rust-toolchain@b95584d8105b9ab200e15821fa671848cf2b7017 # nightly
 
       - name: Install latest cargo-nextest release
         uses: taiki-e/install-action@d31232495ad76f47aad66e3501e47780b49f0f3e # v2.57.5
