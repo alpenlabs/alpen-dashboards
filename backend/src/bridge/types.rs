@@ -34,7 +34,7 @@ pub(crate) struct TxStatus {
     pub(crate) block_height: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub(crate) enum DepositStatus {
     #[serde(rename = "In progress")]
     InProgress,
@@ -43,7 +43,7 @@ pub(crate) enum DepositStatus {
 }
 
 /// Deposit information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub(crate) struct DepositInfo {
     pub(crate) deposit_request_txid: Txid,
     pub(crate) deposit_txid: Option<Txid>,
@@ -73,7 +73,7 @@ impl From<&RpcDepositInfo> for DepositInfo {
 }
 
 /// Withdrawal status
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub(crate) enum WithdrawalStatus {
     #[serde(rename = "In progress")]
     InProgress,
@@ -81,7 +81,7 @@ pub(crate) enum WithdrawalStatus {
 }
 
 /// Withdrawal information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub(crate) struct WithdrawalInfo {
     pub(crate) withdrawal_request_txid: Buf32,
     pub(crate) fulfillment_txid: Option<Txid>,
@@ -106,8 +106,10 @@ impl From<&RpcWithdrawalInfo> for WithdrawalInfo {
 }
 
 /// Reimbursement status
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ReimbursementStatus {
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub(crate) enum ReimbursementStatus {
+    #[serde(rename = "Not started")]
+    NotStarted,
     #[serde(rename = "In progress")]
     InProgress,
     Challenged,
@@ -115,11 +117,21 @@ pub enum ReimbursementStatus {
     Complete,
 }
 
+/// Challenge step for reimbursements
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
+pub(crate) enum ChallengeStep {
+    #[serde(rename = "N/A")]
+    NotApplicable,
+    Claim,
+    Challenge,
+    Assert,
+}
+
 /// Claim and reimbursement information passed to status dashboard
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub(crate) struct ReimbursementInfo {
     pub(crate) claim_txid: Txid,
-    pub(crate) challenge_step: String,
+    pub(crate) challenge_step: ChallengeStep,
     pub(crate) payout_txid: Option<Txid>,
     pub(crate) status: ReimbursementStatus,
 }
@@ -129,31 +141,31 @@ impl From<&RpcClaimInfo> for ReimbursementInfo {
         match &rpc_info.status {
             RpcReimbursementStatus::NotStarted => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
+                challenge_step: ChallengeStep::NotApplicable,
+                payout_txid: None,
+                status: ReimbursementStatus::NotStarted,
+            },
+            RpcReimbursementStatus::InProgress { .. } => Self {
+                claim_txid: rpc_info.claim_txid,
+                challenge_step: ChallengeStep::Claim,
                 payout_txid: None,
                 status: ReimbursementStatus::InProgress,
             },
-            RpcReimbursementStatus::InProgress { challenge_step, .. } => Self {
+            RpcReimbursementStatus::Challenged { .. } => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{challenge_step:?}"),
-                payout_txid: None,
-                status: ReimbursementStatus::InProgress,
-            },
-            RpcReimbursementStatus::Challenged { challenge_step, .. } => Self {
-                claim_txid: rpc_info.claim_txid,
-                challenge_step: format!("{challenge_step:?}"),
+                challenge_step: ChallengeStep::Challenge,
                 payout_txid: None,
                 status: ReimbursementStatus::Challenged,
             },
             RpcReimbursementStatus::Cancelled => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
+                challenge_step: ChallengeStep::NotApplicable,
                 payout_txid: None,
                 status: ReimbursementStatus::Cancelled,
             },
             RpcReimbursementStatus::Complete { payout_txid } => Self {
                 claim_txid: rpc_info.claim_txid,
-                challenge_step: "N/A".to_string(),
+                challenge_step: ChallengeStep::NotApplicable,
                 payout_txid: Some(*payout_txid),
                 status: ReimbursementStatus::Complete,
             },

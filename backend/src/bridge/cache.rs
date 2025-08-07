@@ -140,7 +140,7 @@ impl BridgeStatusCache {
         self.deposits
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(txid, entry)| (*txid, entry.data.clone()))
+            .map(|(txid, entry)| (*txid, entry.data))
             .collect()
     }
 
@@ -152,7 +152,7 @@ impl BridgeStatusCache {
         self.withdrawals
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(request_id, entry)| (*request_id, entry.data.clone()))
+            .map(|(request_id, entry)| (*request_id, entry.data))
             .collect()
     }
 
@@ -164,7 +164,7 @@ impl BridgeStatusCache {
         self.reimbursements
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(txid, entry)| (*txid, entry.data.clone()))
+            .map(|(txid, entry)| (*txid, entry.data))
             .collect()
     }
 

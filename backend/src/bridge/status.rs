@@ -49,25 +49,6 @@ async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u
         .unwrap_or(0)
 }
 
-/// Helper function to filter bridge status items based on confirmations
-async fn filter_by_confirmations<T>(
-    txid: Txid,
-    item: T,
-    config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
-) -> Option<(T, u64)>
-where
-    T: Clone,
-{
-    let confirmations = get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
-
-    if confirmations < config.max_tx_confirmations() {
-        Some((item, confirmations))
-    } else {
-        None
-    }
-}
-
 /// Determine which cached deposit entries should be purged
 async fn determine_deposits_to_purge(
     cache: &BridgeStatusCache,
@@ -148,7 +129,9 @@ async fn determine_reimbursements_to_purge(
             ReimbursementStatus::Complete => reimbursement_info
                 .payout_txid
                 .unwrap_or(reimbursement_info.claim_txid),
-            ReimbursementStatus::Challenged | ReimbursementStatus::InProgress => unreachable!(),
+            ReimbursementStatus::Challenged
+            | ReimbursementStatus::InProgress
+            | ReimbursementStatus::NotStarted => unreachable!(),
         };
 
         let current_confirmations =
@@ -208,13 +191,13 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
             let cache = context.status_cache.read().await;
             let deposits: Vec<Txid> = cache
                 .filter_deposits(|s| matches!(s, DepositStatus::InProgress))
-                .into_iter()
-                .map(|(txid, _)| txid)
+                .iter()
+                .map(|(txid, _)| *txid)
                 .collect();
             let withdrawals: Vec<Buf32> = cache
                 .filter_withdrawals(|s| matches!(s, WithdrawalStatus::InProgress))
-                .into_iter()
-                .map(|(request_id, _)| request_id)
+                .iter()
+                .map(|(request_id, _)| *request_id)
                 .collect();
             let reimbursements: Vec<Txid> = cache
                 .filter_reimbursements(|s| {
@@ -223,8 +206,8 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
                         ReimbursementStatus::InProgress | ReimbursementStatus::Challenged
                     )
                 })
-                .into_iter()
-                .map(|(txid, _)| txid)
+                .iter()
+                .map(|(txid, _)| *txid)
                 .collect();
             (deposits, withdrawals, reimbursements)
         };
@@ -233,8 +216,8 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
         let deposit_updates: Vec<(Txid, DepositInfo, u64)> =
             get_deposits(&context.config, chain_tip_height, &active_deposits)
                 .await
-                .into_iter()
-                .map(|(info, confirmations)| (info.deposit_request_txid, info, confirmations))
+                .iter()
+                .map(|(info, confirmations)| (info.deposit_request_txid, *info, *confirmations))
                 .collect();
 
         {
@@ -251,8 +234,8 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
         let withdrawal_updates: Vec<(Buf32, WithdrawalInfo, u64)> =
             get_withdrawals(&context.config, chain_tip_height, &active_withdrawals)
                 .await
-                .into_iter()
-                .map(|(info, confirmations)| (info.withdrawal_request_txid, info, confirmations))
+                .iter()
+                .map(|(info, confirmations)| (info.withdrawal_request_txid, *info, *confirmations))
                 .collect();
 
         {
@@ -269,8 +252,8 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
         let reimbursement_updates: Vec<(Txid, ReimbursementInfo, u64)> =
             get_reimbursements(&context.config, chain_tip_height, &active_reimbursements)
                 .await
-                .into_iter()
-                .map(|(info, confirmations)| (info.claim_txid, info, confirmations))
+                .iter()
+                .map(|(info, confirmations)| (info.claim_txid, *info, *confirmations))
                 .collect();
 
         {
@@ -388,15 +371,10 @@ async fn get_deposits(
                     RpcDepositStatus::InProgress => unreachable!(), // Already matched
                 };
 
-                if let Some(result) = filter_by_confirmations(
-                    txid,
-                    DepositInfo::from(&dep_info),
-                    config,
-                    chain_tip_height,
-                )
-                .await
-                {
-                    deposit_infos.push(result);
+                let confirmations =
+                    get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
+                if confirmations < config.max_tx_confirmations() {
+                    deposit_infos.push((DepositInfo::from(&dep_info), confirmations));
                 }
             }
         }
@@ -471,15 +449,11 @@ async fn get_withdrawals(
                 withdrawal_infos.push((WithdrawalInfo::from(&wd_info), 0));
             }
             RpcWithdrawalStatus::Complete { fulfillment_txid } => {
-                if let Some(result) = filter_by_confirmations(
-                    *fulfillment_txid,
-                    WithdrawalInfo::from(&wd_info),
-                    config,
-                    chain_tip_height,
-                )
-                .await
-                {
-                    withdrawal_infos.push(result);
+                let confirmations =
+                    get_tx_confirmations(config.esplora_url(), *fulfillment_txid, chain_tip_height)
+                        .await;
+                if confirmations < config.max_tx_confirmations() {
+                    withdrawal_infos.push((WithdrawalInfo::from(&wd_info), confirmations));
                 }
             }
         }
@@ -563,15 +537,10 @@ async fn get_reimbursements(
                     | RpcReimbursementStatus::InProgress { .. }
                     | RpcReimbursementStatus::Challenged { .. } => unreachable!(), // Already matched
                 };
-                if let Some(result) = filter_by_confirmations(
-                    txid,
-                    ReimbursementInfo::from(&claim_info),
-                    config,
-                    chain_tip_height,
-                )
-                .await
-                {
-                    reimbursement_infos.push(result);
+                let confirmations =
+                    get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
+                if confirmations < config.max_tx_confirmations() {
+                    reimbursement_infos.push((ReimbursementInfo::from(&claim_info), confirmations));
                 }
             }
         }
