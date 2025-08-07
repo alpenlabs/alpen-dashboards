@@ -11,14 +11,22 @@ services:
       STRATA_BRIDGE_OPERATORS_COUNT: 4
       STRATA_BRIDGE_1_RPC_URL: https://bridge.testnet.alpenlabs.io/1
       STRATA_BRIDGE_1_PUBLIC_KEY: 0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0
+      STRATA_BRIDGE_1_GENERAL_WALLET_ADDRESS: tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l
+      STRATA_BRIDGE_1_STAKE_CHAIN_WALLET_ADDRESS: tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq
       STRATA_BRIDGE_2_RPC_URL: https://bridge.testnet.alpenlabs.io/2
       STRATA_BRIDGE_2_PUBLIC_KEY: 026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f
+      STRATA_BRIDGE_2_GENERAL_WALLET_ADDRESS: tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj
+      STRATA_BRIDGE_2_STAKE_CHAIN_WALLET_ADDRESS: tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg
       STRATA_BRIDGE_3_RPC_URL: https://bridge.testnet.alpenlabs.io/3
       STRATA_BRIDGE_3_PUBLIC_KEY: 022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6
+      STRATA_BRIDGE_3_GENERAL_WALLET_ADDRESS: tb1psmyffux46qmxxma3r23hn7ezam5ghur3e3j7g4lryqda9vthdyqsde0gw5
+      STRATA_BRIDGE_3_STAKE_CHAIN_WALLET_ADDRESS: tb1ph6ln768aj6wv8mazd8k7t27sk935wxka6twraaxqrenln26kwlvshy4gdp
       STRATA_BRIDGE_4_RPC_URL: https://bridge.testnet.alpenlabs.io/4
       STRATA_BRIDGE_4_PUBLIC_KEY: 02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3
+      STRATA_BRIDGE_4_GENERAL_WALLET_ADDRESS: tb1plssru8qpturzq0xe6auesc0245nkzjk34mk4qldf4f3dqa2elyeq2sktyp
+      STRATA_BRIDGE_4_STAKE_CHAIN_WALLET_ADDRESS: tb1pywhfaznzmw8mncx7ly779mps9wcnec75sep3my3ew8m00spyasms977ces
       ESPLORA_URL: https://esplora.testnet.alpenlabs.io
-      BRIDGE_TX_MAX_CONFIRMATIONS: 6
+      BRIDGE_TX_MAX_CONFIRMATIONS: 144
       BUNDLER_URL: https://bundler.testnet.alpenlabs.io/health
       BRIDGE_STATUS_REFETCH_INTERVAL_S: 120
     ports:

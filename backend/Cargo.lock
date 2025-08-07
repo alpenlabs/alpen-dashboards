@@ -489,6 +489,7 @@ dependencies = [
 name = "backend"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "axum",
  "bitcoin",
  "chrono",
@@ -503,6 +504,7 @@ dependencies = [
  "strata-bridge-primitives",
  "strata-bridge-rpc",
  "strata-primitives",
+ "thiserror 1.0.69",
  "tokio",
  "tower-http",
  "tracing",
