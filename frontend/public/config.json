@@ -4,5 +4,10 @@
   "alpenExplorerUrl": "https://explorer.testnet.alpenlabs.io",
   "networkStatusRefetchIntervalS": 60,
   "bridgeStatusRefetchIntervalS": 120,
+  "balanceRefetchIntervalS": 30,
+  "faucetBalanceSatsThresholds": {
+    "signet": 20000000000,
+    "alpen": 20000000000
+  },
   "environment": "staging"
 }
