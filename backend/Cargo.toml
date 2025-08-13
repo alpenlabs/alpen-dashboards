@@ -26,7 +26,7 @@
   strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
     "client",
   ], tag = "v0.2.0-rc3" }
-  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.2.0-rc4" }
+  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.2.0-rc6" }
 
 [dev-dependencies]
   mockito = "1.6.1"
