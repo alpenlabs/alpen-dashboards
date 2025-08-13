@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within this project, please send an email to security@alpenlabs.com. All security vulnerabilities will be promptly addressed.
+If you believe you have found a vulnerability, please provide details [here]([https://immunefi.com/bug-bounty/alpen-labs/information/]).
 
 ## Supported Versions
 
