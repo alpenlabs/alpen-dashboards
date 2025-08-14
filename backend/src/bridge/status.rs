@@ -156,15 +156,13 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
 
         // Bridge operator status
         let mut operator_statuses = Vec::new();
-        for (index, public_key_string) in context.config.bridge_rpc_urls().keys().enumerate() {
+        let mut sorted_operators: Vec<_> = context.config.bridge_rpc_urls().iter().collect();
+        sorted_operators.sort_by_key(|(_, rpc_url)| *rpc_url);
+
+        for (index, (public_key_string, rpc_url)) in sorted_operators.iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(public_key_string).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let rpc_url = context
-                .config
-                .bridge_rpc_urls()
-                .get(public_key_string)
-                .expect("valid rpc url");
             let status = get_operator_status(rpc_url).await;
 
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
