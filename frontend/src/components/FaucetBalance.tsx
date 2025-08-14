@@ -1,19 +1,15 @@
 import type { FaucetBalances } from '../hooks/useBalances';
 import { useConfig } from '../hooks/useConfig';
+import { btcToSats } from '../utils';
+import { formatBTC } from '../utils';
 
 interface FaucetBalanceProps {
   faucet: FaucetBalances;
   title: string;
 }
 
-function formatSats(sats: number): string {
-  if (sats === 0) return '0 SATS';
-
-  const formattedNumber = sats.toLocaleString('en-US');
-  return `${formattedNumber} SATS`;
-}
-
-function getHealthStatus(balanceSats: number, thresholdSats: number): string {
+function getHealthStatus(balanceSats: number, thresholdBtc: number): string {
+  const thresholdSats = btcToSats(thresholdBtc);
   return balanceSats >= thresholdSats ? 'Healthy' : 'Low';
 }
 
@@ -24,12 +20,12 @@ export default function FaucetBalance({ faucet, title }: FaucetBalanceProps) {
     {
       name: 'Signet wallet',
       balance_sats: faucet.l1_balance_sats,
-      threshold_sats: config.faucetBalanceSatsThresholds.signet,
+      threshold_btc: config.faucetBalanceBtcThresholds.signet,
     },
     {
       name: 'Alpen wallet',
       balance_sats: faucet.l2_balance_sats,
-      threshold_sats: config.faucetBalanceSatsThresholds.alpen,
+      threshold_btc: config.faucetBalanceBtcThresholds.alpen,
     },
   ];
 
@@ -50,14 +46,10 @@ export default function FaucetBalance({ faucet, title }: FaucetBalanceProps) {
             {faucetWallets.map(wallet => (
               <tr key={wallet.name} className="operators-row">
                 <td className="table-cell">{wallet.name}</td>
+                <td className="table-cell">{formatBTC(wallet.balance_sats)}</td>
+                <td className="table-cell">{wallet.threshold_btc} BTC</td>
                 <td className="table-cell">
-                  {formatSats(wallet.balance_sats)}
-                </td>
-                <td className="table-cell">
-                  {formatSats(wallet.threshold_sats)}
-                </td>
-                <td className="table-cell">
-                  {getHealthStatus(wallet.balance_sats, wallet.threshold_sats)}
+                  {getHealthStatus(wallet.balance_sats, wallet.threshold_btc)}
                 </td>
               </tr>
             ))}

@@ -1,6 +1,8 @@
 use dotenvy::dotenv;
-use std::collections::HashMap;
 use tracing::info;
+
+/// Default network status refetch interval in seconds
+const DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S: u64 = 10;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NetworkConfig {
@@ -18,10 +20,13 @@ pub(crate) struct NetworkConfig {
 
     /// Total time in seconds to spend retrying
     total_retry_time: u64,
+
+    /// Network status refetch interval in seconds
+    status_refetch_interval_s: u64,
 }
 
 impl NetworkConfig {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
         let sequencer_url = std::env::var("STRATA_SEQUENCER_URL")
@@ -46,6 +51,11 @@ impl NetworkConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(60);
 
+        let status_refetch_interval_s: u64 = std::env::var("NETWORK_STATUS_REFETCH_INTERVAL_S")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S);
+
         info!(%rpc_url, bundler_url, "Loaded Network monitoring config:");
 
         NetworkConfig {
@@ -54,32 +64,38 @@ impl NetworkConfig {
             bundler_url,
             max_retries,
             total_retry_time,
+            status_refetch_interval_s,
         }
     }
 
     /// Getter for `sequencer_url`
-    pub fn sequencer_url(&self) -> &str {
+    pub(crate) fn sequencer_url(&self) -> &str {
         &self.sequencer_url
     }
 
     /// Getter for `rpc_url`
-    pub fn rpc_url(&self) -> &str {
+    pub(crate) fn rpc_url(&self) -> &str {
         &self.rpc_url
     }
 
     /// Getter for `bundler_url`
-    pub fn bundler_url(&self) -> &str {
+    pub(crate) fn bundler_url(&self) -> &str {
         &self.bundler_url
     }
 
     /// Getter for `max_retries`
-    pub fn max_retries(&self) -> u64 {
+    pub(crate) fn max_retries(&self) -> u64 {
         self.max_retries
     }
 
     /// Getter for `total_retry_time`
-    pub fn total_retry_time(&self) -> u64 {
+    pub(crate) fn total_retry_time(&self) -> u64 {
         self.total_retry_time
+    }
+
+    /// Getter for `status_refetch_interval_s`
+    pub(crate) fn status_refetch_interval(&self) -> u64 {
+        self.status_refetch_interval_s
     }
 }
 
@@ -95,8 +111,8 @@ const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
 /// Bridge monitoring configuration
 #[derive(Clone)]
 pub struct BridgeMonitoringConfig {
-    /// Strata bridge RPC urls
-    bridge_rpc_urls: HashMap<String, String>,
+    /// Strata bridge RPC urls as vector of (public_key, rpc_url) tuples
+    bridge_rpc_urls: Vec<(String, String)>,
 
     /// Esplora URL
     esplora_url: String,
@@ -109,7 +125,7 @@ pub struct BridgeMonitoringConfig {
 }
 
 impl BridgeMonitoringConfig {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         dotenv().ok(); // Load `.env` file if present
 
         let bridge_operators_count = std::env::var("STRATA_BRIDGE_OPERATORS_COUNT")
@@ -117,14 +133,14 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
 
-        let mut bridge_rpc_urls = HashMap::new();
+        let mut bridge_rpc_urls = Vec::new();
         for i in 1..=bridge_operators_count {
             let operator_pk =
                 std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
             let rpc_url = std::env::var(format!("STRATA_BRIDGE_{i}_RPC_URL"))
                 .ok()
                 .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
-            bridge_rpc_urls.insert(operator_pk, rpc_url);
+            bridge_rpc_urls.push((operator_pk, rpc_url));
         }
 
         let esplora_url = std::env::var("ESPLORA_URL")
@@ -152,22 +168,22 @@ impl BridgeMonitoringConfig {
     }
 
     /// Getter for `bridge_rpc_urls`
-    pub fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
+    pub(crate) fn bridge_rpc_urls(&self) -> &Vec<(String, String)> {
         &self.bridge_rpc_urls
     }
 
     /// Getter for `esplora_url`
-    pub fn esplora_url(&self) -> &str {
+    pub(crate) fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
 
     /// Getter for `max_tx_confirmations`
-    pub fn max_tx_confirmations(&self) -> u64 {
+    pub(crate) fn max_tx_confirmations(&self) -> u64 {
         self.max_tx_confirmations
     }
 
     /// Getter for `status_refetch_interval_s`
-    pub fn status_refetch_interval(&self) -> u64 {
+    pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 }
@@ -193,15 +209,15 @@ impl FaucetBalanceConfig {
     }
 }
 
-/// Configuration for bridge operator balance monitoring
+/// Bridge operator configuration
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeOperatorConfig {
     /// Esplora API URL
     esplora_url: String,
-    /// General wallet addresses keyed by public key
-    general_addresses: HashMap<String, String>,
-    /// Stake chain wallet addresses keyed by public key
-    stake_chain_addresses: HashMap<String, String>,
+    /// General wallet addresses as vector of (public_key, address) tuples
+    general_addresses: Vec<(String, String)>,
+    /// Stake chain wallet addresses as vector of (public_key, address) tuples
+    stake_chain_addresses: Vec<(String, String)>,
 }
 
 impl BridgeOperatorConfig {
@@ -211,12 +227,12 @@ impl BridgeOperatorConfig {
     }
 
     /// Getter for general addresses
-    pub(crate) fn general_addresses(&self) -> &HashMap<String, String> {
+    pub(crate) fn general_addresses(&self) -> &Vec<(String, String)> {
         &self.general_addresses
     }
 
     /// Getter for stake chain addresses
-    pub(crate) fn stake_chain_addresses(&self) -> &HashMap<String, String> {
+    pub(crate) fn stake_chain_addresses(&self) -> &Vec<(String, String)> {
         &self.stake_chain_addresses
     }
 }
@@ -256,20 +272,20 @@ impl BalanceMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(3);
 
-        let mut general_addresses = HashMap::new();
-        let mut stake_chain_addresses = HashMap::new();
+        let mut general_addresses = Vec::new();
+        let mut stake_chain_addresses = Vec::new();
 
         for i in 1..=bridge_operators_count {
             if let Ok(operator_pk) = std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")) {
                 if let Ok(general_addr) =
                     std::env::var(format!("STRATA_BRIDGE_{i}_GENERAL_WALLET_ADDRESS"))
                 {
-                    general_addresses.insert(operator_pk.clone(), general_addr);
+                    general_addresses.push((operator_pk.clone(), general_addr));
                 }
                 if let Ok(stake_addr) =
                     std::env::var(format!("STRATA_BRIDGE_{i}_STAKE_CHAIN_WALLET_ADDRESS"))
                 {
-                    stake_chain_addresses.insert(operator_pk, stake_addr);
+                    stake_chain_addresses.push((operator_pk, stake_addr));
                 }
             }
         }
