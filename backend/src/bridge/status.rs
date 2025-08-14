@@ -156,15 +156,13 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
 
         // Bridge operator status
         let mut operator_statuses = Vec::new();
-        for (index, public_key_string) in context.config.bridge_rpc_urls().keys().enumerate() {
+
+        for (index, (public_key_string, rpc_url)) in
+            context.config.bridge_rpc_urls().iter().enumerate()
+        {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(public_key_string).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let rpc_url = context
-                .config
-                .bridge_rpc_urls()
-                .get(public_key_string)
-                .expect("valid rpc url");
             let status = get_operator_status(rpc_url).await;
 
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
@@ -304,7 +302,7 @@ async fn get_bitcoin_chain_tip_height(
 
 /// Fetch deposit requests
 async fn get_deposit_requests(config: &BridgeMonitoringConfig) -> Vec<Txid> {
-    for rpc_url in config.bridge_rpc_urls().values() {
+    for (_, rpc_url) in config.bridge_rpc_urls() {
         let rpc_client = create_rpc_client(rpc_url);
 
         match rpc_client.get_deposit_requests().await {
@@ -342,7 +340,7 @@ async fn get_deposits(
     let mut deposit_infos: Vec<(DepositInfo, u64)> = Vec::new();
     for deposit_request_txid in deposit_requests.iter() {
         let mut rpc_info = None;
-        for rpc_url in config.bridge_rpc_urls().values() {
+        for (_, rpc_url) in config.bridge_rpc_urls() {
             let rpc_client = create_rpc_client(rpc_url);
             if let Ok(info) = rpc_client
                 .get_deposit_request_info(*deposit_request_txid)
@@ -388,7 +386,7 @@ async fn get_deposits(
 
 /// Fetch withdrawal requests
 async fn get_withdrawal_requests(config: &BridgeMonitoringConfig) -> Vec<Buf32> {
-    for rpc_url in config.bridge_rpc_urls().values() {
+    for (_, rpc_url) in config.bridge_rpc_urls() {
         let rpc_client = create_rpc_client(rpc_url);
 
         match rpc_client.get_withdrawals().await {
@@ -426,7 +424,7 @@ async fn get_withdrawals(
     let mut withdrawal_infos: Vec<(WithdrawalInfo, u64)> = Vec::new();
     for withdrawal_request_txid in withdrawal_requests.iter() {
         let mut rpc_info = None;
-        for rpc_url in config.bridge_rpc_urls().values() {
+        for (_, rpc_url) in config.bridge_rpc_urls() {
             let rpc_client = create_rpc_client(rpc_url);
             if let Ok(info) = rpc_client
                 .get_withdrawal_info(*withdrawal_request_txid)
@@ -467,7 +465,7 @@ async fn get_withdrawals(
 
 /// Fetch claims
 async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
-    for rpc_url in config.bridge_rpc_urls().values() {
+    for (_, rpc_url) in config.bridge_rpc_urls() {
         let rpc_client = create_rpc_client(rpc_url);
 
         match rpc_client.get_claims().await {
@@ -505,7 +503,7 @@ async fn get_reimbursements(
     let mut reimbursement_infos = Vec::new();
     for claim_txid in claims.iter() {
         let mut rpc_info = None;
-        for rpc_url in config.bridge_rpc_urls().values() {
+        for (_, rpc_url) in config.bridge_rpc_urls() {
             let rpc_client = create_rpc_client(rpc_url);
             if let Ok(info) = rpc_client.get_claim_info(*claim_txid).await {
                 rpc_info = info;
