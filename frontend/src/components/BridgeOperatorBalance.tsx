@@ -1,20 +1,12 @@
-import type {
+import {
   BridgeOperatorBalances,
   BridgeOperatorWalletBalance,
 } from '../hooks/useBalances';
-import { truncateHex } from '../utils';
+import { formatBTC, truncateHex } from '../utils';
 
 interface BridgeOperatorBalanceProps {
   bridgeOperators: BridgeOperatorBalances;
   title: string;
-}
-
-function formatSats(sats: number): string {
-  if (sats === 0) return '0 SATS';
-
-  // Add comma separators for readability
-  const formattedNumber = sats.toLocaleString();
-  return `${formattedNumber} SATS`;
 }
 
 export default function BridgeOperatorBalance({
@@ -103,12 +95,12 @@ export default function BridgeOperatorBalance({
                 </td>
                 <td className="table-cell">
                   {operator.generalWalletBalance
-                    ? formatSats(operator.generalWalletBalance.balance_sats)
+                    ? formatBTC(operator.generalWalletBalance.balance_sats)
                     : '-'}
                 </td>
                 <td className="table-cell">
                   {operator.stakeChainWalletBalance
-                    ? formatSats(operator.stakeChainWalletBalance.balance_sats)
+                    ? formatBTC(operator.stakeChainWalletBalance.balance_sats)
                     : '-'}
                 </td>
               </tr>
