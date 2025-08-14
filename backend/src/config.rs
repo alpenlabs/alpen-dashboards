@@ -1,5 +1,4 @@
 use dotenvy::dotenv;
-use std::collections::HashMap;
 use tracing::info;
 
 /// Default network status refetch interval in seconds
@@ -112,8 +111,8 @@ const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
 /// Bridge monitoring configuration
 #[derive(Clone)]
 pub struct BridgeMonitoringConfig {
-    /// Strata bridge RPC urls
-    bridge_rpc_urls: HashMap<String, String>,
+    /// Strata bridge RPC urls as vector of (public_key, rpc_url) tuples
+    bridge_rpc_urls: Vec<(String, String)>,
 
     /// Esplora URL
     esplora_url: String,
@@ -134,14 +133,14 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
 
-        let mut bridge_rpc_urls = HashMap::new();
+        let mut bridge_rpc_urls = Vec::new();
         for i in 1..=bridge_operators_count {
             let operator_pk =
                 std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
             let rpc_url = std::env::var(format!("STRATA_BRIDGE_{i}_RPC_URL"))
                 .ok()
                 .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
-            bridge_rpc_urls.insert(operator_pk, rpc_url);
+            bridge_rpc_urls.push((operator_pk, rpc_url));
         }
 
         let esplora_url = std::env::var("ESPLORA_URL")
@@ -169,7 +168,7 @@ impl BridgeMonitoringConfig {
     }
 
     /// Getter for `bridge_rpc_urls`
-    pub(crate) fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
+    pub(crate) fn bridge_rpc_urls(&self) -> &Vec<(String, String)> {
         &self.bridge_rpc_urls
     }
 
@@ -210,15 +209,15 @@ impl FaucetBalanceConfig {
     }
 }
 
-/// Configuration for bridge operator balance monitoring
+/// Bridge operator configuration
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeOperatorConfig {
     /// Esplora API URL
     esplora_url: String,
-    /// General wallet addresses keyed by public key
-    general_addresses: HashMap<String, String>,
-    /// Stake chain wallet addresses keyed by public key
-    stake_chain_addresses: HashMap<String, String>,
+    /// General wallet addresses as vector of (public_key, address) tuples
+    general_addresses: Vec<(String, String)>,
+    /// Stake chain wallet addresses as vector of (public_key, address) tuples
+    stake_chain_addresses: Vec<(String, String)>,
 }
 
 impl BridgeOperatorConfig {
@@ -228,12 +227,12 @@ impl BridgeOperatorConfig {
     }
 
     /// Getter for general addresses
-    pub(crate) fn general_addresses(&self) -> &HashMap<String, String> {
+    pub(crate) fn general_addresses(&self) -> &Vec<(String, String)> {
         &self.general_addresses
     }
 
     /// Getter for stake chain addresses
-    pub(crate) fn stake_chain_addresses(&self) -> &HashMap<String, String> {
+    pub(crate) fn stake_chain_addresses(&self) -> &Vec<(String, String)> {
         &self.stake_chain_addresses
     }
 }
@@ -273,20 +272,20 @@ impl BalanceMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(3);
 
-        let mut general_addresses = HashMap::new();
-        let mut stake_chain_addresses = HashMap::new();
+        let mut general_addresses = Vec::new();
+        let mut stake_chain_addresses = Vec::new();
 
         for i in 1..=bridge_operators_count {
             if let Ok(operator_pk) = std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")) {
                 if let Ok(general_addr) =
                     std::env::var(format!("STRATA_BRIDGE_{i}_GENERAL_WALLET_ADDRESS"))
                 {
-                    general_addresses.insert(operator_pk.clone(), general_addr);
+                    general_addresses.push((operator_pk.clone(), general_addr));
                 }
                 if let Ok(stake_addr) =
                     std::env::var(format!("STRATA_BRIDGE_{i}_STAKE_CHAIN_WALLET_ADDRESS"))
                 {
-                    stake_chain_addresses.insert(operator_pk, stake_addr);
+                    stake_chain_addresses.push((operator_pk, stake_addr));
                 }
             }
         }
