@@ -1,5 +1,4 @@
 use dotenvy::dotenv;
-use std::collections::HashMap;
 use tracing::info;
 
 /// Default network status refetch interval in seconds
@@ -111,8 +110,8 @@ const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
 
 /// Bridge monitoring configuration
 pub struct BridgeMonitoringConfig {
-    /// Strata bridge RPC urls
-    bridge_rpc_urls: HashMap<String, String>,
+    /// Strata bridge RPC urls as vector of (public_key, rpc_url) tuples
+    bridge_rpc_urls: Vec<(String, String)>,
 
     /// Esplora URL
     esplora_url: String,
@@ -133,14 +132,14 @@ impl BridgeMonitoringConfig {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
 
-        let mut bridge_rpc_urls = HashMap::new();
+        let mut bridge_rpc_urls = Vec::new();
         for i in 1..=bridge_operators_count {
             let operator_pk =
                 std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
             let rpc_url = std::env::var(format!("STRATA_BRIDGE_{i}_RPC_URL"))
                 .ok()
                 .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
-            bridge_rpc_urls.insert(operator_pk, rpc_url);
+            bridge_rpc_urls.push((operator_pk, rpc_url));
         }
 
         let esplora_url = std::env::var("ESPLORA_URL")
@@ -168,7 +167,7 @@ impl BridgeMonitoringConfig {
     }
 
     /// Getter for `bridge_rpc_urls`
-    pub(crate) fn bridge_rpc_urls(&self) -> &HashMap<String, String> {
+    pub(crate) fn bridge_rpc_urls(&self) -> &Vec<(String, String)> {
         &self.bridge_rpc_urls
     }
 
