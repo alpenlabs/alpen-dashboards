@@ -9,7 +9,7 @@ use strata_primitives::buf::Buf32;
 use tokio::sync::{Notify, RwLock};
 
 use super::cache::BridgeStatusCache;
-use crate::config::BridgeMonitoringConfig;
+use crate::configs::bridge::BridgeMonitoringConfig;
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]

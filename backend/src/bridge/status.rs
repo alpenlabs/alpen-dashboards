@@ -20,7 +20,7 @@ use super::{
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 
-use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
+use crate::{configs::bridge::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
 
 /// Get transaction confirmations from esplora
 async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u64) -> u64 {

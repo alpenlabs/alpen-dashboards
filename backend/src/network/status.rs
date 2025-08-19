@@ -10,7 +10,7 @@ use tracing::{error, info};
 
 use super::types::{NetworkStatus, Status};
 use crate::{
-    config::NetworkConfig,
+    configs::network::NetworkConfig,
     utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
 };
 

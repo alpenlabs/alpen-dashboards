@@ -1,5 +1,5 @@
 mod bridge;
-mod config;
+mod configs;
 mod network;
 mod utils;
 
@@ -13,7 +13,7 @@ use tracing::info;
 use crate::{
     bridge::status::{bridge_monitoring_task, get_bridge_status},
     bridge::types::BridgeMonitoringContext,
-    config::BridgeMonitoringConfig,
+    configs::bridge::BridgeMonitoringConfig,
     network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
 };
 
@@ -23,9 +23,10 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    // Load .env file
     dotenv().ok();
 
-    let config = Arc::new(config::NetworkConfig::new());
+    let config = Arc::new(configs::network::NetworkConfig::new());
 
     let cors = CorsLayer::new().allow_origin(Any);
 
