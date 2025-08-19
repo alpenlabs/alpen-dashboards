@@ -1,0 +1,61 @@
+# Dashboard backend configuration
+
+# API server configuration
+[server]
+host = "0.0.0.0"
+port = 3000
+
+# Network monitoring configuration
+[network]
+sequencer_url = "https://rpc.testnet.alpenlabs.io"
+rpc_url = "https://rpc.testnet.alpenlabs.io"
+bundler_url = "https://bundler.testnet.alpenlabs.io/health"
+max_retries = 5
+total_retry_time_s = 60
+status_refetch_interval_s = 10
+
+# Bridge monitoring configuration
+[bridge]
+esplora_url = "https://esplora.testnet.alpenlabs.io"
+max_tx_confirmations = 6
+status_refetch_interval_s = 120
+
+# Bridge operators configuration
+[[bridge.operators]]
+public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
+rpc_url = "https://bridge.testnet.alpenlabs.io/1"
+
+[[bridge.operators]]
+public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
+rpc_url = "https://bridge.testnet.alpenlabs.io/2"
+
+[[bridge.operators]]
+public_key = "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6"
+rpc_url = "https://bridge.testnet.alpenlabs.io/3"
+
+[[bridge.operators]]
+public_key = "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3"
+rpc_url = "https://bridge.testnet.alpenlabs.io/4"
+
+# Balance monitoring configuration
+[balance]
+refresh_interval_s = 300
+
+[balance.faucet]
+l1_url = "https://faucet-api.testnet.alpenlabs.io/balance/l1"
+l2_url = "https://faucet-api.testnet.alpenlabs.io/balance/l2"
+
+[balance.bridge_operators]
+esplora_url = "https://esplora.testnet.alpenlabs.io"
+general_addresses = [
+    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"],
+    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj"],
+    ["022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6", "tb1psmyffux46qmxxma3r23hn7ezam5ghur3e3j7g4lryqda9vthdyqsde0gw5"],
+    ["02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3", "tb1plssru8qpturzq0xe6auesc0245nkzjk34mk4qldf4f3dqa2elyeq2sktyp"]
+]
+stake_chain_addresses = [
+    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"],
+    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg"],
+    ["022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6", "tb1ph6ln768aj6wv8mazd8k7t27sk935wxka6twraaxqrenln26kwlvshy4gdp"],
+    ["02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3", "tb1pywhfaznzmw8mncx7ly779mps9wcnec75sep3my3ew8m00spyasms977ces"]
+]

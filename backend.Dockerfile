@@ -19,10 +19,13 @@ RUN cargo build
 FROM rust
 
 # Set working directory in the final container
-WORKDIR /usr/src/app/backend
+WORKDIR /usr/src/app
 
 # Copy the compiled binary from the builder stage
-COPY --from=builder /usr/src/app/backend/target/debug/backend .
+COPY --from=builder /usr/src/app/backend/target/debug/backend ./backend
+
+# Copy the config file to the working directory
+COPY backend/config.toml ./config.toml
 
 # Expose the backend service port (should match docker-compose.yml)
 EXPOSE 3000
