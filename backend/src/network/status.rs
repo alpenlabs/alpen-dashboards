@@ -10,7 +10,7 @@ use tracing::{error, info};
 
 use super::types::{NetworkStatus, Status};
 use crate::{
-    config::NetworkConfig,
+    config::NetworkMonitoringConfig,
     utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
 };
 
@@ -19,7 +19,7 @@ pub(crate) type SharedNetworkState = Arc<RwLock<NetworkStatus>>;
 
 /// Calls `strata_syncStatus` using `jsonrpsee`
 async fn call_rpc_status(
-    config: &NetworkConfig,
+    config: &NetworkMonitoringConfig,
     client: &HttpClient,
     retry_policy: ExponentialBackoff,
 ) -> Status {
@@ -55,7 +55,10 @@ async fn call_rpc_status(
 }
 
 /// Checks bundler health (`/health`)
-async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) -> Status {
+async fn check_bundler_health(
+    client: &reqwest::Client,
+    config: &NetworkMonitoringConfig,
+) -> Status {
     let url = config.bundler_url();
     if let Ok(resp) = client.get(url).send().await {
         let body = resp.text().await.unwrap_or_default();
@@ -67,7 +70,10 @@ async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) 
 }
 
 /// Periodically fetches real statuses
-pub(crate) async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) {
+pub(crate) async fn fetch_statuses_task(
+    state: SharedNetworkState,
+    config: &NetworkMonitoringConfig,
+) {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
     let sequencer_client = create_rpc_client(config.sequencer_url());

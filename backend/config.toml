@@ -1,0 +1,38 @@
+# Dashboard backend configuration
+
+# API server configuration
+[server]
+host = "0.0.0.0"
+port = 3000
+
+# Network monitoring configuration
+[network]
+sequencer_url = "https://rpc.testnet.alpenlabs.io"
+rpc_url = "https://rpc.testnet.alpenlabs.io"
+bundler_url = "https://bundler.testnet.alpenlabs.io/health"
+max_retries = 5
+total_retry_time_s = 60
+status_refetch_interval_s = 10
+
+# Bridge monitoring configuration
+[bridge]
+esplora_url = "https://esplora.testnet.alpenlabs.io"
+max_tx_confirmations = 6
+status_refetch_interval_s = 120
+
+# Bridge operators configuration
+[[bridge.operators]]
+public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
+rpc_url = "https://bridge.testnet.alpenlabs.io/1"
+
+[[bridge.operators]]
+public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
+rpc_url = "https://bridge.testnet.alpenlabs.io/2"
+
+[[bridge.operators]]
+public_key = "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6"
+rpc_url = "https://bridge.testnet.alpenlabs.io/3"
+
+[[bridge.operators]]
+public_key = "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3"
+rpc_url = "https://bridge.testnet.alpenlabs.io/4"

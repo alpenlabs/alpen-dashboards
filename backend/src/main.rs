@@ -4,7 +4,6 @@ mod network;
 mod utils;
 
 use axum::{routing::get, Router};
-use dotenvy::dotenv;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -13,19 +12,19 @@ use tracing::info;
 use crate::{
     bridge::status::{bridge_monitoring_task, get_bridge_status},
     bridge::types::BridgeMonitoringContext,
-    config::BridgeMonitoringConfig,
+    config::Config,
     network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
 };
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    dotenv().ok();
-
-    let config = Arc::new(config::NetworkConfig::new());
+    // Load configuration from TOML
+    let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
+    let config = Arc::new(Config::load_from_path(&config_path));
 
     let cors = CorsLayer::new().allow_origin(Any);
 
@@ -37,13 +36,12 @@ async fn main() {
     tokio::spawn({
         let config = Arc::clone(&config);
         async move {
-            fetch_statuses_task(state_clone, &config).await;
+            fetch_statuses_task(state_clone, &config.network).await;
         }
     });
 
-    // bridge monitoring
-    let bridge_monitoring_config = BridgeMonitoringConfig::new();
-    let bridge_context = Arc::new(BridgeMonitoringContext::new(bridge_monitoring_config));
+    // Bridge monitoring
+    let bridge_context = Arc::new(BridgeMonitoringContext::new(config.bridge.clone()));
     let bridge_context_clone = Arc::clone(&bridge_context);
 
     tokio::spawn(async move {
@@ -61,9 +59,14 @@ async fn main() {
         )
         .layer(cors);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    info!(%addr, "Server running at http://");
+    let addr = SocketAddr::from((
+        config.server.host().parse::<std::net::IpAddr>()?,
+        config.server.port(),
+    ));
+    info!(%addr, "Server running at http://{}", addr);
 
-    let listener = TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }

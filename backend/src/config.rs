@@ -1,188 +1,304 @@
-use dotenvy::dotenv;
-use tracing::info;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+use tracing::{debug, trace};
 
-/// Default network status refetch interval in seconds
-const DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S: u64 = 10;
-
-#[derive(Debug, Clone)]
-pub(crate) struct NetworkConfig {
-    /// JSON-RPC Endpoint for Strata sequencer
-    sequencer_url: String,
-
-    /// JSON-RPC Endpoint for Strata client and reth
-    rpc_url: String,
-
-    /// Bundler health check URL (overrides `.env`)
-    bundler_url: String,
-
-    /// Max retries in querying status
-    max_retries: u64,
-
-    /// Total time in seconds to spend retrying
-    total_retry_time: u64,
-
-    /// Network status refetch interval in seconds
-    status_refetch_interval_s: u64,
+/// Main configuration struct containing all application settings
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Config {
+    /// API server configuration
+    pub(crate) server: ApiServerConfig,
+    /// Network monitoring configuration
+    pub(crate) network: NetworkMonitoringConfig,
+    /// Bridge monitoring configuration
+    pub(crate) bridge: BridgeMonitoringConfig,
 }
 
-impl NetworkConfig {
-    pub(crate) fn new() -> Self {
-        dotenv().ok(); // Load `.env` file if present
+/// Configuration for the API server
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ApiServerConfig {
+    /// Host address to bind the server to
+    pub(crate) host: String,
+    /// Port number to bind the server to
+    pub(crate) port: u16,
+}
 
-        let sequencer_url = std::env::var("STRATA_SEQUENCER_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8432".to_string());
-
-        let rpc_url = std::env::var("RPC_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8433".to_string());
-
-        let bundler_url = std::env::var("BUNDLER_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8434".to_string());
-
-        let max_retries: u64 = std::env::var("MAX_STATUS_RETRIES")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(5);
-
-        let total_retry_time: u64 = std::env::var("TOTAL_RETRY_TIME")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(60);
-
-        let status_refetch_interval_s: u64 = std::env::var("NETWORK_STATUS_REFETCH_INTERVAL_S")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_NETWORK_STATUS_REFETCH_INTERVAL_S);
-
-        info!(%rpc_url, bundler_url, "Loaded Network monitoring config:");
-
-        NetworkConfig {
-            sequencer_url,
-            rpc_url,
-            bundler_url,
-            max_retries,
-            total_retry_time,
-            status_refetch_interval_s,
-        }
+impl ApiServerConfig {
+    /// Get a reference to the host address
+    pub(crate) fn host(&self) -> &str {
+        &self.host
     }
 
-    /// Getter for `sequencer_url`
+    /// Get the port number
+    pub(crate) fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+/// Configuration for network monitoring services
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct NetworkMonitoringConfig {
+    /// JSON-RPC Endpoint for Strata sequencer
+    pub(crate) sequencer_url: String,
+
+    /// JSON-RPC Endpoint for Strata client and reth
+    pub(crate) rpc_url: String,
+
+    /// Bundler health check URL
+    pub(crate) bundler_url: String,
+
+    /// Max retries for status queries
+    pub(crate) max_retries: u64,
+
+    /// Total time in seconds to spend retrying status queries
+    pub(crate) total_retry_time_s: u64,
+
+    /// Network status refetch interval in seconds
+    pub(crate) status_refetch_interval_s: u64,
+}
+
+impl NetworkMonitoringConfig {
     pub(crate) fn sequencer_url(&self) -> &str {
         &self.sequencer_url
     }
 
-    /// Getter for `rpc_url`
     pub(crate) fn rpc_url(&self) -> &str {
         &self.rpc_url
     }
 
-    /// Getter for `bundler_url`
     pub(crate) fn bundler_url(&self) -> &str {
         &self.bundler_url
     }
 
-    /// Getter for `max_retries`
     pub(crate) fn max_retries(&self) -> u64 {
         self.max_retries
     }
 
-    /// Getter for `total_retry_time`
     pub(crate) fn total_retry_time(&self) -> u64 {
-        self.total_retry_time
+        self.total_retry_time_s
     }
 
-    /// Getter for `status_refetch_interval_s`
     pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 }
 
-/// Default bridge status refetch interval in seconds
-const DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S: u64 = 120;
-
-/// Default maximum number of confirmations for transactions tracked
-const DEFAULT_MAX_TX_CONFIRMATIONS: u64 = 6;
-
-/// Default number of bridge operators
-const DEFAULT_BRIDGE_OPERATORS_COUNT: u64 = 3;
-
-/// Bridge monitoring configuration
-pub struct BridgeMonitoringConfig {
-    /// Strata bridge RPC urls as vector of (public_key, rpc_url) tuples
-    bridge_rpc_urls: Vec<(String, String)>,
-
+/// Configuration for bridge monitoring services
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct BridgeMonitoringConfig {
     /// Esplora URL
-    esplora_url: String,
+    pub(crate) esplora_url: String,
 
     /// Maximum confirmations
-    max_tx_confirmations: u64,
+    pub(crate) max_tx_confirmations: u64,
 
     /// Bridge status refetch interval in seconds
-    status_refetch_interval_s: u64,
+    pub(crate) status_refetch_interval_s: u64,
+
+    /// Bridge operators
+    pub(crate) operators: Vec<BridgeOperator>,
+}
+
+/// Configuration for a bridge operator
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct BridgeOperator {
+    /// Public key of the bridge operator
+    pub(crate) public_key: String,
+    /// RPC URL for the bridge operator
+    pub(crate) rpc_url: String,
+}
+
+impl BridgeOperator {
+    pub(crate) fn public_key(&self) -> &str {
+        &self.public_key
+    }
+
+    pub(crate) fn rpc_url(&self) -> &str {
+        &self.rpc_url
+    }
 }
 
 impl BridgeMonitoringConfig {
-    pub(crate) fn new() -> Self {
-        dotenv().ok(); // Load `.env` file if present
-
-        let bridge_operators_count = std::env::var("STRATA_BRIDGE_OPERATORS_COUNT")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_BRIDGE_OPERATORS_COUNT);
-
-        let mut bridge_rpc_urls = Vec::new();
-        for i in 1..=bridge_operators_count {
-            let operator_pk =
-                std::env::var(format!("STRATA_BRIDGE_{i}_PUBLIC_KEY")).expect("valid public key");
-            let rpc_url = std::env::var(format!("STRATA_BRIDGE_{i}_RPC_URL"))
-                .ok()
-                .unwrap_or_else(|| format!("http://localhost:{}", 8545 + i));
-            bridge_rpc_urls.push((operator_pk, rpc_url));
-        }
-
-        let esplora_url = std::env::var("ESPLORA_URL")
-            .ok()
-            .unwrap_or_else(|| "http://localhost:8545".to_string());
-
-        let max_tx_confirmations: u64 = std::env::var("BRIDGE_TX_MAX_CONFIRMATIONS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_MAX_TX_CONFIRMATIONS);
-
-        let refresh_interval_s: u64 = std::env::var("BRIDGE_STATUS_REFETCH_INTERVAL_S")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_BRIDGE_STATUS_REFETCH_INTERVAL_S);
-
-        info!(?bridge_rpc_urls, %esplora_url, "Loaded Bridge monitoring config:");
-
-        BridgeMonitoringConfig {
-            bridge_rpc_urls,
-            esplora_url,
-            max_tx_confirmations,
-            status_refetch_interval_s: refresh_interval_s,
-        }
-    }
-
-    /// Getter for `bridge_rpc_urls`
-    pub(crate) fn bridge_rpc_urls(&self) -> &Vec<(String, String)> {
-        &self.bridge_rpc_urls
-    }
-
-    /// Getter for `esplora_url`
     pub(crate) fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
 
-    /// Getter for `max_tx_confirmations`
     pub(crate) fn max_tx_confirmations(&self) -> u64 {
         self.max_tx_confirmations
     }
 
-    /// Getter for `status_refetch_interval_s`
     pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+
+    pub(crate) fn operators(&self) -> &Vec<BridgeOperator> {
+        &self.operators
+    }
+}
+
+impl Config {
+    /// Load configuration from the specified path
+    pub(crate) fn load_from_path(path: &str) -> Self {
+        parse_toml::<Config>(path)
+    }
+}
+
+/// Reads and parses a TOML file from the given path into the given type `T`.
+///
+/// # Panics
+///
+/// 1. If the file is not readable.
+/// 2. If the contents of the file cannot be deserialized into the given type `T`.
+///
+fn parse_toml<T>(path: impl AsRef<Path>) -> T
+where
+    T: std::fmt::Debug + serde::de::DeserializeOwned,
+{
+    // Code borrowed from strata-bridge: https://github.com/alpenlabs/strata-bridge
+    std::fs::read_to_string(path)
+        .map(|p| {
+            trace!(?p, "read file");
+
+            let parsed = toml::from_str::<T>(&p).unwrap_or_else(|e| {
+                panic!("failed to parse TOML file: {e:?}");
+            });
+            debug!(?parsed, "parsed TOML file");
+
+            parsed
+        })
+        .unwrap_or_else(|_| {
+            panic!("failed to read TOML file");
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_serde_toml() {
+        let config = r#"
+[server]
+host = "0.0.0.0"
+port = 3000
+
+[network]
+sequencer_url = "https://rpc.testnet.alpenlabs.io"
+rpc_url = "https://rpc.testnet.alpenlabs.io"
+bundler_url = "https://bundler.testnet.alpenlabs.io/health"
+max_retries = 5
+total_retry_time = 60
+status_refetch_interval_s = 10
+
+[bridge]
+esplora_url = "https://esplora.testnet.alpenlabs.io"
+max_tx_confirmations = 6
+status_refetch_interval_s = 120
+
+[[bridge.operators]]
+public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+rpc_url = "https://bridge.testnet.alpenlabs.io/1"
+
+[[bridge.operators]]
+public_key = "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+rpc_url = "https://bridge.testnet.alpenlabs.io/2"
+
+[[bridge.operators]]
+public_key = "02f00dbabe9876543210fedcba9876543210fedcba9876543210fedcba987654"
+rpc_url = "https://bridge.testnet.alpenlabs.io/3"
+
+[[bridge.operators]]
+public_key = "02badcafe1111111111111111111111111111111111111111111111111111111111"
+rpc_url = "https://bridge.testnet.alpenlabs.io/4"
+"#;
+
+        let config = toml::from_str::<Config>(config);
+        assert!(
+            config.is_ok(),
+            "must be able to deserialize config from toml but got: {}",
+            config.unwrap_err()
+        );
+
+        let config = config.unwrap();
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized = toml::from_str::<Config>(&serialized).unwrap();
+
+        assert_eq!(
+            deserialized, config,
+            "must be able to serialize and deserialize config to toml"
+        );
+    }
+
+    #[test]
+    fn test_load_from_path() {
+        // Test that load_from_path works with a valid config
+        let config = Config::load_from_path("config.toml");
+        assert_eq!(config.server.host(), "0.0.0.0");
+        assert_eq!(config.server.port(), 3000);
+        assert_eq!(config.network.max_retries(), 5);
+        assert_eq!(config.bridge.max_tx_confirmations(), 144);
+    }
+
+    #[test]
+    fn test_getter_functions() {
+        let config_content = r#"
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[network]
+sequencer_url = "https://sequencer.example.com"
+rpc_url = "https://rpc.example.com"
+bundler_url = "https://bundler.example.com/health"
+max_retries = 3
+total_retry_time = 30
+status_refetch_interval_s = 5
+
+[bridge]
+esplora_url = "https://esplora.example.com"
+max_tx_confirmations = 12
+status_refetch_interval_s = 60
+
+[[bridge.operators]]
+public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+rpc_url = "https://bridge.example.com/1"
+
+[[bridge.operators]]
+public_key = "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+rpc_url = "https://bridge.example.com/2"
+"#;
+
+        let config = toml::from_str::<Config>(config_content);
+        let config = config.unwrap();
+
+        // Verify the loaded configuration
+        assert_eq!(config.server.host(), "127.0.0.1");
+        assert_eq!(config.server.port(), 8080);
+        assert_eq!(
+            config.network.sequencer_url(),
+            "https://sequencer.example.com"
+        );
+        assert_eq!(config.network.max_retries(), 3);
+        assert_eq!(config.network.total_retry_time(), 30);
+        assert_eq!(config.network.status_refetch_interval(), 5);
+        assert_eq!(config.bridge.esplora_url(), "https://esplora.example.com");
+        assert_eq!(config.bridge.max_tx_confirmations(), 12);
+        assert_eq!(config.bridge.status_refetch_interval(), 60);
+        assert_eq!(config.bridge.operators().len(), 2);
+        assert_eq!(
+            config.bridge.operators()[0].public_key(),
+            "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        );
+        assert_eq!(
+            config.bridge.operators()[0].rpc_url(),
+            "https://bridge.example.com/1"
+        );
+        assert_eq!(
+            config.bridge.operators()[1].public_key(),
+            "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+        );
+        assert_eq!(
+            config.bridge.operators()[1].rpc_url(),
+            "https://bridge.example.com/2"
+        );
     }
 }
