@@ -8,6 +8,9 @@ services:
       RUST_LOG: INFO
       STRATA_SEQUENCER_URL: https://strataseq.testnet.alpenlabs.io
       RPC_URL: https://rpc.testnet.alpenlabs.io
+      NETWORK_STATUS_MAX_RETRIES: 5
+      NETWORK_STATUS_TOTAL_RETRY_TIME_S: 60
+      NETWORK_STATUS_REFETCH_INTERVAL_S: 10
       STRATA_BRIDGE_OPERATORS_COUNT: 4
       STRATA_BRIDGE_1_RPC_URL: https://bridge.testnet.alpenlabs.io/1
       STRATA_BRIDGE_1_PUBLIC_KEY: 0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0
