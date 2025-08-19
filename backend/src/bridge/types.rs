@@ -1,10 +1,15 @@
 use bitcoin::{secp256k1::PublicKey, Txid};
 use serde::{Deserialize, Serialize};
+use std::sync::{atomic::AtomicBool, Arc};
 use strata_bridge_rpc::types::{
     RpcClaimInfo, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
     RpcWithdrawalInfo, RpcWithdrawalStatus,
 };
 use strata_primitives::buf::Buf32;
+use tokio::sync::{Notify, RwLock};
+
+use super::cache::BridgeStatusCache;
+use crate::config::BridgeMonitoringConfig;
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -181,12 +186,6 @@ pub(crate) struct BridgeStatus {
     pub(crate) reimbursements: Vec<ReimbursementInfo>,
 }
 
-use std::sync::{atomic::AtomicBool, Arc};
-use tokio::sync::{Notify, RwLock};
-
-use super::cache::BridgeStatusCache;
-use crate::config::BridgeMonitoringConfig;
-
 /// Bridge monitoring context
 pub struct BridgeMonitoringContext {
     pub(crate) status_cache: Arc<RwLock<BridgeStatusCache>>,
@@ -198,7 +197,7 @@ pub struct BridgeMonitoringContext {
 impl BridgeMonitoringContext {
     pub fn new(config: BridgeMonitoringConfig) -> Self {
         Self {
-            status_cache: Arc::new(RwLock::new(BridgeStatusCache::new())),
+            status_cache: Arc::new(RwLock::new(BridgeStatusCache::default())),
             config,
             status_available: Arc::new(AtomicBool::new(false)),
             initial_status_query_complete: Arc::new(Notify::new()),
