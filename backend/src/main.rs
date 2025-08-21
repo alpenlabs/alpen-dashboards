@@ -1,5 +1,5 @@
 mod bridge;
-mod config;
+mod configs;
 mod network;
 mod utils;
 
@@ -13,8 +13,11 @@ use tracing::info;
 use crate::{
     bridge::status::{bridge_monitoring_task, get_bridge_status},
     bridge::types::BridgeMonitoringContext,
-    config::BridgeMonitoringConfig,
-    network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
+    configs::{bridge::BridgeMonitoringConfig, network::NetworkConfig},
+    network::{
+        status::{fetch_statuses_task, get_network_status},
+        types::NetworkMonitoringContext,
+    },
 };
 
 #[tokio::main]
@@ -23,22 +26,17 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    // Load .env file
     dotenv().ok();
-
-    let config = Arc::new(config::NetworkConfig::new());
 
     let cors = CorsLayer::new().allow_origin(Any);
 
-    // Shared state for network status
-    let shared_state = SharedNetworkState::default();
+    let network_config = NetworkConfig::new();
+    let network_context = Arc::new(NetworkMonitoringContext::new(network_config));
+    let network_context_clone = Arc::clone(&network_context);
 
-    // Spawn a background task to fetch real statuses
-    let state_clone = Arc::clone(&shared_state);
-    tokio::spawn({
-        let config = Arc::clone(&config);
-        async move {
-            fetch_statuses_task(state_clone, &config).await;
-        }
+    tokio::spawn(async move {
+        fetch_statuses_task(network_context_clone).await;
     });
 
     // bridge monitoring
@@ -53,11 +51,11 @@ async fn main() {
     let app = Router::new()
         .route(
             "/api/status",
-            get(move || get_network_status(Arc::clone(&shared_state))),
+            get(move || get_network_status(network_context)),
         )
         .route(
             "/api/bridge_status",
-            get(move || get_bridge_status(Arc::clone(&bridge_context))),
+            get(move || get_bridge_status(bridge_context)),
         )
         .layer(cors);
 

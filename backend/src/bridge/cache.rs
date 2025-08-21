@@ -49,15 +49,6 @@ pub(crate) struct BridgeStatusCache {
 }
 
 impl BridgeStatusCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            deposits: HashMap::new(),
-            withdrawals: HashMap::new(),
-            reimbursements: HashMap::new(),
-            operators: Vec::new(),
-        }
-    }
-
     /// Update deposit cache entry
     pub(crate) fn update_deposit(&mut self, txid: Txid, info: DepositInfo, confirmations: u64) {
         if let Some(entry) = self.deposits.get_mut(&txid) {
