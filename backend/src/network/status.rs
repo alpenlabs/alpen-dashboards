@@ -12,11 +12,7 @@ use crate::{
 };
 
 /// Calls `strata_syncStatus` using `jsonrpsee`
-async fn call_rpc_status(
-    config: &NetworkMonitoringConfig,
-    client: &HttpClient,
-    retry_policy: ExponentialBackoff,
-) -> Status {
+async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
     let mut retry_count: u64 = 0;
 
     loop {
@@ -32,7 +28,7 @@ async fn call_rpc_status(
                 }
             }
             Err(e) => {
-                if retry_count < config.max_retries() {
+                if retry_count < retry_policy.max_retries() {
                     let delay_seconds = retry_policy.get_delay(retry_count);
                     if delay_seconds > 0 {
                         info!(?delay_seconds, "Retrying `strata_syncStatus` after");
@@ -72,17 +68,13 @@ pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) 
     let sequencer_client = create_rpc_client(context.config.sequencer_url());
     let rpc_client = create_rpc_client(context.config.rpc_url());
     let http_client = reqwest::Client::new();
-    let retry_policy = ExponentialBackoff::new(
-        context.config.max_retries(),
-        context.config.total_retry_time(),
-        1.5,
-    );
 
     loop {
         interval.tick().await;
 
-        let sequencer = call_rpc_status(&context.config, &sequencer_client, retry_policy).await;
-        let rpc_endpoint = call_rpc_status(&context.config, &rpc_client, retry_policy).await;
+        let sequencer =
+            call_rpc_status(&sequencer_client, context.config.sequencer_retry_policy()).await;
+        let rpc_endpoint = call_rpc_status(&rpc_client, context.config.rpc_retry_policy()).await;
         let bundler_endpoint = check_bundler_health(&http_client, &context.config).await;
 
         let new_status = NetworkStatus {

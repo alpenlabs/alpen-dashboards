@@ -10,8 +10,8 @@ port = 3000
 sequencer_url = "https://rpc.testnet.alpenlabs.io"
 rpc_url = "https://rpc.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
-max_retries = 5
-total_retry_time_s = 60
+retry_policy_max_retries = 5
+retry_policy_total_time_s = 60
 status_refetch_interval_s = 10
 
 # Bridge monitoring configuration

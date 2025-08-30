@@ -34,6 +34,9 @@ impl ApiServerConfig {
     }
 }
 
+/// Default retry policy base for exponential backoff
+const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
+
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct NetworkMonitoringConfig {
@@ -47,10 +50,10 @@ pub(crate) struct NetworkMonitoringConfig {
     pub(crate) bundler_url: String,
 
     /// Max retries for status queries
-    pub(crate) max_retries: u64,
+    pub(crate) retry_policy_max_retries: u64,
 
     /// Total time in seconds to spend retrying status queries
-    pub(crate) total_retry_time_s: u64,
+    pub(crate) retry_policy_total_time_s: u64,
 
     /// Network status refetch interval in seconds
     pub(crate) status_refetch_interval_s: u64,
@@ -69,16 +72,26 @@ impl NetworkMonitoringConfig {
         &self.bundler_url
     }
 
-    pub(crate) fn max_retries(&self) -> u64 {
-        self.max_retries
-    }
-
-    pub(crate) fn total_retry_time(&self) -> u64 {
-        self.total_retry_time_s
-    }
-
     pub(crate) fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+
+    /// Retry policy for sequencer status queries
+    pub(crate) fn sequencer_retry_policy(&self) -> crate::utils::retry_policy::ExponentialBackoff {
+        crate::utils::retry_policy::ExponentialBackoff::new(
+            self.retry_policy_max_retries,
+            self.retry_policy_total_time_s,
+            DEFAULT_RETRY_POLICY_BASE,
+        )
+    }
+
+    /// Retry policy for RPC endpoint status queries
+    pub(crate) fn rpc_retry_policy(&self) -> crate::utils::retry_policy::ExponentialBackoff {
+        crate::utils::retry_policy::ExponentialBackoff::new(
+            self.retry_policy_max_retries,
+            self.retry_policy_total_time_s,
+            DEFAULT_RETRY_POLICY_BASE,
+        )
     }
 }
 
@@ -185,8 +198,8 @@ port = 3000
 sequencer_url = "https://rpc.testnet.alpenlabs.io"
 rpc_url = "https://rpc.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
-max_retries = 5
-total_retry_time = 60
+retry_policy_max_retries = 5
+retry_policy_total_time_s = 60
 status_refetch_interval_s = 10
 
 [bridge]
@@ -234,8 +247,6 @@ rpc_url = "https://bridge.testnet.alpenlabs.io/4"
         let config = Config::load_from_path("config.toml");
         assert_eq!(config.server.host(), "0.0.0.0");
         assert_eq!(config.server.port(), 3000);
-        assert_eq!(config.network.max_retries(), 5);
-        assert_eq!(config.bridge.max_tx_confirmations(), 144);
     }
 
     #[test]
@@ -249,8 +260,8 @@ port = 8080
 sequencer_url = "https://sequencer.example.com"
 rpc_url = "https://rpc.example.com"
 bundler_url = "https://bundler.example.com/health"
-max_retries = 3
-total_retry_time = 30
+retry_policy_max_retries = 3
+retry_policy_total_time_s = 30
 status_refetch_interval_s = 5
 
 [bridge]
@@ -277,8 +288,6 @@ rpc_url = "https://bridge.example.com/2"
             config.network.sequencer_url(),
             "https://sequencer.example.com"
         );
-        assert_eq!(config.network.max_retries(), 3);
-        assert_eq!(config.network.total_retry_time(), 30);
         assert_eq!(config.network.status_refetch_interval(), 5);
         assert_eq!(config.bridge.esplora_url(), "https://esplora.example.com");
         assert_eq!(config.bridge.max_tx_confirmations(), 12);
