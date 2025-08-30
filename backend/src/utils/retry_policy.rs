@@ -20,6 +20,11 @@ impl ExponentialBackoff {
         }
     }
 
+    /// Returns the maximum number of retries.
+    pub fn max_retries(&self) -> u64 {
+        self.max_retries
+    }
+
     /// Returns the delay in seconds.
     pub fn get_delay(&self, retry_counter: u64) -> u64 {
         if retry_counter == 0 {
