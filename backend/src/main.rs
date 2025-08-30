@@ -14,7 +14,10 @@ use crate::{
     bridge::status::{bridge_monitoring_task, get_bridge_status},
     bridge::types::BridgeMonitoringContext,
     config::Config,
-    network::status::{fetch_statuses_task, get_network_status, SharedNetworkState},
+    network::{
+        status::{fetch_statuses_task, get_network_status},
+        types::NetworkMonitoringContext,
+    },
     wallets::{balance::balance_monitoring_task, context::BalanceContext},
 };
 
@@ -30,16 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors = CorsLayer::new().allow_origin(Any);
 
-    // Shared state for network status
-    let shared_state = SharedNetworkState::default();
+    let network_context = Arc::new(NetworkMonitoringContext::new(config.network.clone()));
+    let network_context_clone = Arc::clone(&network_context);
 
-    // Spawn a background task to fetch real statuses
-    let state_clone = Arc::clone(&shared_state);
-    let network_config = config.network.clone();
-    tokio::spawn({
-        async move {
-            fetch_statuses_task(state_clone, &network_config).await;
-        }
+    tokio::spawn(async move {
+        fetch_statuses_task(network_context_clone).await;
     });
 
     // Bridge monitoring
@@ -63,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route(
             "/api/status",
-            get(move || get_network_status(Arc::clone(&shared_state))),
+            get(move || get_network_status(network_context)),
         )
         .route(
             "/api/bridge_status",
