@@ -23,7 +23,7 @@ use tracing::{error, info, warn};
 use crate::{config::BridgeMonitoringConfig, utils::rpc_client::create_rpc_client};
 
 /// Get transaction confirmations from esplora
-async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u64) -> u64 {
+async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u64) -> Option<u64> {
     let url = format!("{}/tx/{}/status", esplora_url.trim_end_matches('/'), txid);
 
     let status_resp = reqwest::get(&url).await;
@@ -33,12 +33,12 @@ async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u
             Ok(status) => status,
             Err(e) => {
                 error!(%txid, %e, "Failed to parse tx status JSON from esplora");
-                return 0;
+                return None;
             }
         },
         Err(e) => {
             error!(%txid, %e, "Failed to fetch tx status from esplora");
-            return 0;
+            return None;
         }
     };
 
@@ -46,7 +46,6 @@ async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u
         .block_height
         .filter(|_| status.confirmed)
         .map(|h| chain_tip_height.saturating_sub(h) + 1)
-        .unwrap_or(0)
 }
 
 /// Determine which cached deposit entries should be purged
@@ -73,8 +72,10 @@ async fn determine_deposits_to_purge(
         let current_confirmations =
             get_tx_confirmations(config.esplora_url(), check_txid, chain_tip_height).await;
 
-        if current_confirmations >= max_confirmations {
-            deposits_to_purge.push(txid);
+        if let Some(confirmations) = current_confirmations {
+            if confirmations >= max_confirmations {
+                deposits_to_purge.push(txid);
+            }
         }
     }
 
@@ -98,8 +99,10 @@ async fn determine_withdrawals_to_purge(
                 get_tx_confirmations(config.esplora_url(), fulfillment_txid, chain_tip_height)
                     .await;
 
-            if current_confirmations >= max_confirmations {
-                withdrawals_to_purge.push(request_id);
+            if let Some(confirmations) = current_confirmations {
+                if confirmations >= max_confirmations {
+                    withdrawals_to_purge.push(request_id);
+                }
             }
         }
     }
@@ -137,8 +140,10 @@ async fn determine_reimbursements_to_purge(
         let current_confirmations =
             get_tx_confirmations(config.esplora_url(), check_txid, chain_tip_height).await;
 
-        if current_confirmations >= max_confirmations {
-            reimbursements_to_purge.push(txid);
+        if let Some(confirmations) = current_confirmations {
+            if confirmations >= max_confirmations {
+                reimbursements_to_purge.push(txid);
+            }
         }
     }
 
@@ -371,8 +376,10 @@ async fn get_deposits(
 
                 let confirmations =
                     get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
-                if confirmations < config.max_tx_confirmations() {
-                    deposit_infos.push((DepositInfo::from(&dep_info), confirmations));
+                if let Some(confirmations) = confirmations {
+                    if confirmations < config.max_tx_confirmations() {
+                        deposit_infos.push((DepositInfo::from(&dep_info), confirmations));
+                    }
                 }
             }
         }
@@ -450,8 +457,10 @@ async fn get_withdrawals(
                 let confirmations =
                     get_tx_confirmations(config.esplora_url(), *fulfillment_txid, chain_tip_height)
                         .await;
-                if confirmations < config.max_tx_confirmations() {
-                    withdrawal_infos.push((WithdrawalInfo::from(&wd_info), confirmations));
+                if let Some(confirmations) = confirmations {
+                    if confirmations < config.max_tx_confirmations() {
+                        withdrawal_infos.push((WithdrawalInfo::from(&wd_info), confirmations));
+                    }
                 }
             }
         }
@@ -537,8 +546,11 @@ async fn get_reimbursements(
                 };
                 let confirmations =
                     get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
-                if confirmations < config.max_tx_confirmations() {
-                    reimbursement_infos.push((ReimbursementInfo::from(&claim_info), confirmations));
+                if let Some(confirmations) = confirmations {
+                    if confirmations < config.max_tx_confirmations() {
+                        reimbursement_infos
+                            .push((ReimbursementInfo::from(&claim_info), confirmations));
+                    }
                 }
             }
         }
