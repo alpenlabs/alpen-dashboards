@@ -494,7 +494,7 @@ dependencies = [
  "serde_json",
  "strata-bridge-primitives",
  "strata-bridge-rpc",
- "strata-primitives",
+ "strata-primitives 0.2.0 (git+https://github.com/alpenlabs/alpen.git?tag=v0.2.0-rc6)",
  "tokio",
  "toml",
  "tower-http",
@@ -1253,7 +1253,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2969,7 +2969,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3451,7 +3451,7 @@ dependencies = [
  "serde",
  "sha2",
  "strata-p2p-types",
- "strata-primitives",
+ "strata-primitives 0.2.0 (git+https://github.com/alpenlabs/alpen.git?tag=v0.2.0-rc4)",
  "thiserror 2.0.16",
 ]
 
@@ -3464,7 +3464,7 @@ dependencies = [
  "jsonrpsee",
  "serde",
  "strata-bridge-primitives",
- "strata-primitives",
+ "strata-primitives 0.2.0 (git+https://github.com/alpenlabs/alpen.git?tag=v0.2.0-rc4)",
 ]
 
 [[package]]
@@ -3482,6 +3482,34 @@ dependencies = [
 name = "strata-primitives"
 version = "0.2.0"
 source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.2.0-rc4#dd4f4d71171a0f8aa401fc4cb464a69aac679cc2"
+dependencies = [
+ "anyhow",
+ "arbitrary",
+ "bincode",
+ "bitcoin",
+ "bitcoin-bosd",
+ "borsh",
+ "const-hex",
+ "digest",
+ "hex",
+ "k256",
+ "musig2",
+ "num_enum",
+ "rand 0.8.5",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.16",
+ "tracing",
+ "zeroize",
+ "zkaleido",
+]
+
+[[package]]
+name = "strata-primitives"
+version = "0.2.0"
+source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.2.0-rc6#e136896b045ceab71c4597a6fd7ffec9f962946d"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3591,7 +3619,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4182,7 +4210,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
