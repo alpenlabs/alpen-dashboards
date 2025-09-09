@@ -2,27 +2,17 @@ use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
 use std::sync::Arc;
-use tokio::{
-    sync::RwLock,
-    time::{interval, sleep, Duration},
-};
+use tokio::time::{interval, sleep, Duration};
 use tracing::{error, info};
 
-use super::types::{NetworkStatus, Status};
+use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
 use crate::{
-    config::NetworkConfig,
+    config::NetworkMonitoringConfig,
     utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
 };
 
-/// Shared Network State
-pub(crate) type SharedNetworkState = Arc<RwLock<NetworkStatus>>;
-
 /// Calls `strata_syncStatus` using `jsonrpsee`
-async fn call_rpc_status(
-    config: &NetworkConfig,
-    client: &HttpClient,
-    retry_policy: ExponentialBackoff,
-) -> Status {
+async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
     let mut retry_count: u64 = 0;
 
     loop {
@@ -38,7 +28,7 @@ async fn call_rpc_status(
                 }
             }
             Err(e) => {
-                if retry_count < config.max_retries() {
+                if retry_count < retry_policy.max_retries() {
                     let delay_seconds = retry_policy.get_delay(retry_count);
                     if delay_seconds > 0 {
                         info!(?delay_seconds, "Retrying `strata_syncStatus` after");
@@ -55,7 +45,10 @@ async fn call_rpc_status(
 }
 
 /// Checks bundler health (`/health`)
-async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) -> Status {
+async fn check_bundler_health(
+    client: &reqwest::Client,
+    config: &NetworkMonitoringConfig,
+) -> Status {
     let url = config.bundler_url();
     if let Ok(resp) = client.get(url).send().await {
         let body = resp.text().await.unwrap_or_default();
@@ -67,21 +60,22 @@ async fn check_bundler_health(client: &reqwest::Client, config: &NetworkConfig) 
 }
 
 /// Periodically fetches real statuses
-pub(crate) async fn fetch_statuses_task(state: SharedNetworkState, config: &NetworkConfig) {
+pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) {
     info!("Fetching statuses...");
-    let mut interval = interval(Duration::from_secs(config.status_refetch_interval()));
-    let sequencer_client = create_rpc_client(config.sequencer_url());
-    let rpc_client = create_rpc_client(config.rpc_url());
+    let mut interval = interval(Duration::from_secs(
+        context.config.status_refetch_interval(),
+    ));
+    let sequencer_client = create_rpc_client(context.config.sequencer_url());
+    let rpc_client = create_rpc_client(context.config.rpc_url());
     let http_client = reqwest::Client::new();
-    let retry_policy =
-        ExponentialBackoff::new(config.max_retries(), config.total_retry_time(), 1.5);
 
     loop {
         interval.tick().await;
 
-        let sequencer = call_rpc_status(config, &sequencer_client, retry_policy).await;
-        let rpc_endpoint = call_rpc_status(config, &rpc_client, retry_policy).await;
-        let bundler_endpoint = check_bundler_health(&http_client, config).await;
+        let sequencer =
+            call_rpc_status(&sequencer_client, context.config.sequencer_retry_policy()).await;
+        let rpc_endpoint = call_rpc_status(&rpc_client, context.config.rpc_retry_policy()).await;
+        let bundler_endpoint = check_bundler_health(&http_client, &context.config).await;
 
         let new_status = NetworkStatus {
             sequencer,
@@ -91,13 +85,34 @@ pub(crate) async fn fetch_statuses_task(state: SharedNetworkState, config: &Netw
 
         info!(?new_status, "Updated Status");
 
-        let mut locked_state = state.write().await;
-        *locked_state = new_status;
+        let mut locked_status = context.network_status.write().await;
+        *locked_status = new_status;
+
+        if !context
+            .status_available
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            context
+                .status_available
+                .store(true, std::sync::atomic::Ordering::Release);
+            context.initial_status_query_complete.notify_waiters();
+        }
     }
 }
 
 /// Handler to get the current network status
-pub(crate) async fn get_network_status(state: SharedNetworkState) -> Json<NetworkStatus> {
-    let data = state.read().await.clone();
+pub(crate) async fn get_network_status(
+    context: Arc<NetworkMonitoringContext>,
+) -> Json<NetworkStatus> {
+    // Wait for initial status query to complete if not yet available
+    if !context
+        .status_available
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        info!("Waiting for initial network status query to complete");
+        context.initial_status_query_complete.notified().await;
+    }
+
+    let data = context.network_status.read().await.clone();
     Json(data)
 }

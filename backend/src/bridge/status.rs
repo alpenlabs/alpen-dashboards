@@ -162,14 +162,11 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
         // Bridge operator status
         let mut operator_statuses = Vec::new();
 
-        for (index, (public_key_string, rpc_url)) in
-            context.config.bridge_rpc_urls().iter().enumerate()
-        {
+        for (index, operator) in context.config.operators().iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
-            let pk_bytes = hex::decode(public_key_string).expect("decode to succeed");
+            let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let status = get_operator_status(rpc_url).await;
-
+            let status = get_operator_status(operator.rpc_url()).await;
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
@@ -307,8 +304,8 @@ async fn get_bitcoin_chain_tip_height(
 
 /// Fetch deposit requests
 async fn get_deposit_requests(config: &BridgeMonitoringConfig) -> Vec<Txid> {
-    for (_, rpc_url) in config.bridge_rpc_urls() {
-        let rpc_client = create_rpc_client(rpc_url);
+    for operator in config.operators().iter() {
+        let rpc_client = create_rpc_client(operator.rpc_url());
 
         match rpc_client.get_deposit_requests().await {
             Ok(txids) if !txids.is_empty() => return txids,
@@ -345,8 +342,8 @@ async fn get_deposits(
     let mut deposit_infos: Vec<(DepositInfo, u64)> = Vec::new();
     for deposit_request_txid in deposit_requests.iter() {
         let mut rpc_info = None;
-        for (_, rpc_url) in config.bridge_rpc_urls() {
-            let rpc_client = create_rpc_client(rpc_url);
+        for operator in config.operators() {
+            let rpc_client = create_rpc_client(operator.rpc_url());
             if let Ok(info) = rpc_client
                 .get_deposit_request_info(*deposit_request_txid)
                 .await
@@ -393,8 +390,8 @@ async fn get_deposits(
 
 /// Fetch withdrawal requests
 async fn get_withdrawal_requests(config: &BridgeMonitoringConfig) -> Vec<Buf32> {
-    for (_, rpc_url) in config.bridge_rpc_urls() {
-        let rpc_client = create_rpc_client(rpc_url);
+    for operator in config.operators().iter() {
+        let rpc_client = create_rpc_client(operator.rpc_url());
 
         match rpc_client.get_withdrawals().await {
             Ok(txids) if !txids.is_empty() => return txids,
@@ -431,8 +428,8 @@ async fn get_withdrawals(
     let mut withdrawal_infos: Vec<(WithdrawalInfo, u64)> = Vec::new();
     for withdrawal_request_txid in withdrawal_requests.iter() {
         let mut rpc_info = None;
-        for (_, rpc_url) in config.bridge_rpc_urls() {
-            let rpc_client = create_rpc_client(rpc_url);
+        for operator in config.operators().iter() {
+            let rpc_client = create_rpc_client(operator.rpc_url());
             if let Ok(info) = rpc_client
                 .get_withdrawal_info(*withdrawal_request_txid)
                 .await
@@ -474,8 +471,8 @@ async fn get_withdrawals(
 
 /// Fetch claims
 async fn get_claims(config: &BridgeMonitoringConfig) -> Vec<Txid> {
-    for (_, rpc_url) in config.bridge_rpc_urls() {
-        let rpc_client = create_rpc_client(rpc_url);
+    for operator in config.operators().iter() {
+        let rpc_client = create_rpc_client(operator.rpc_url());
 
         match rpc_client.get_claims().await {
             Ok(txids) if !txids.is_empty() => return txids,
@@ -512,8 +509,8 @@ async fn get_reimbursements(
     let mut reimbursement_infos = Vec::new();
     for claim_txid in claims.iter() {
         let mut rpc_info = None;
-        for (_, rpc_url) in config.bridge_rpc_urls() {
-            let rpc_client = create_rpc_client(rpc_url);
+        for operator in config.operators().iter() {
+            let rpc_client = create_rpc_client(operator.rpc_url());
             if let Ok(info) = rpc_client.get_claim_info(*claim_txid).await {
                 rpc_info = info;
                 break;
