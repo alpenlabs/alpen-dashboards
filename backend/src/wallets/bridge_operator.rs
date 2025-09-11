@@ -180,27 +180,27 @@ impl BridgeOperatorWallets {
         let mut wallets = Vec::new();
 
         // Create general wallets
-        for (index, (pub_key, address)) in config.general_addresses().iter().enumerate() {
+        for (index, (pub_key_str, address)) in config.general_addresses().iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let wallet = BridgeOperatorWallet::new(
                 operator_id,
-                pub_key.clone(),
+                (*pub_key_str).clone(),
                 WalletType::General,
                 config.esplora_url().to_string(),
-                address.clone(),
+                (*address).clone(),
             );
             wallets.push(wallet);
         }
 
         // Create stake chain wallets
-        for (index, (pub_key, address)) in config.stake_chain_addresses().iter().enumerate() {
+        for (index, (pub_key_str, address)) in config.stake_chain_addresses().iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let wallet = BridgeOperatorWallet::new(
                 operator_id,
-                pub_key.clone(),
+                (*pub_key_str).clone(),
                 WalletType::StakeChain,
                 config.esplora_url().to_string(),
-                address.clone(),
+                (*address).clone(),
             );
             wallets.push(wallet);
         }

@@ -9,7 +9,7 @@ export interface AppConfig {
   networkStatusRefetchIntervalS: number;
   balanceRefetchIntervalS: number;
   environment: string;
-  faucetBalanceSatsThresholds: {
+  faucetBalanceBtcThresholds: {
     signet: number;
     alpen: number;
   };
