@@ -1,5 +1,10 @@
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use std::time::Duration;
+use std::{fmt, future::Future};
+use tokio::time::sleep;
+use tracing::warn;
+
+use super::retry_policy::ExponentialBackoff;
 
 /// Creates a JSON-RPC HTTP client with connection pooling and timeout configuration
 ///
@@ -36,35 +41,36 @@ pub fn create_rpc_client(rpc_url: &str) -> HttpClient {
         .expect("Failed to create JSON-RPC client")
 }
 
-/// Creates a JSON-RPC HTTP client with a custom timeout duration
-///
-/// Similar to [`create_rpc_client`] but allows specifying a custom request timeout.
-/// This is useful for operations that may take longer than the default 30 seconds.
-///
-/// # Arguments
-///
-/// * `rpc_url` - Base URL of the JSON-RPC server
-/// * `timeout_secs` - Request timeout in seconds
-///
-/// # Returns
-///
-/// A configured [`HttpClient`] with the specified timeout
-///
-/// # Panics
-///
-/// Panics if the client cannot be built (e.g., invalid URL format)
-///
-/// # Example
-///
-/// ```ignore
-/// // Create a client with 60-second timeout for slow operations
-/// let client = create_rpc_client_with_timeout("http://localhost:8332", 60);
-/// ```
-#[allow(dead_code)]
-pub fn create_rpc_client_with_timeout(rpc_url: &str, timeout_secs: u64) -> HttpClient {
-    HttpClientBuilder::default()
-        .request_timeout(Duration::from_secs(timeout_secs))
-        .max_request_size(10 * 1024 * 1024) // 10MB
-        .build(rpc_url)
-        .expect("Failed to create JSON-RPC client")
+/// Execute an async operation with exponential backoff retry logic
+pub async fn execute_with_retries<F, Fut, T, E>(operation: F, operation_name: &str) -> Result<T, E>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: fmt::Display,
+{
+    let retry_policy = ExponentialBackoff::new(3, 10, 1.5);
+    let mut last_error = None;
+
+    for attempt in 0..=retry_policy.max_retries() {
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if attempt < retry_policy.max_retries() {
+                    let delay = retry_policy.get_delay(attempt + 1);
+                    warn!(
+                        operation = operation_name,
+                        attempt = attempt + 1,
+                        max_retries = retry_policy.max_retries(),
+                        delay_secs = delay,
+                        error = %e,
+                        "Operation failed, retrying..."
+                    );
+                    sleep(Duration::from_secs(delay)).await;
+                }
+                last_error = Some(e);
+            }
+        }
+    }
+
+    Err(last_error.expect("last_error should be set after all retries"))
 }

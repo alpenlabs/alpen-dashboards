@@ -19,12 +19,12 @@ use super::{
     },
 };
 
-use tokio::time::{interval, sleep, Duration};
+use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     config::BridgeMonitoringConfig,
-    utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
+    utils::rpc_client::{create_rpc_client, execute_with_retries},
 };
 
 /// RPC client manager with connection pooling and retry logic
@@ -52,8 +52,6 @@ struct RpcClientManager {
     /// HTTP clients for each operator, keyed by operator public key ([`String`])
     /// [`BTreeMap`] ensures deterministic ordering (sorted by key)
     clients: BTreeMap<String, HttpClient>,
-    /// Retry policy configuration ([`ExponentialBackoff`]) (3 retries over 10 seconds with exponential backoff)
-    retry_policy: ExponentialBackoff,
 }
 
 impl RpcClientManager {
@@ -64,9 +62,6 @@ impl RpcClientManager {
     /// - 30-second request timeout
     /// - 10MB max request size
     /// - Connection pooling enabled
-    ///
-    /// The retry policy is configured for 3 retries (4 total attempts) over 10 seconds
-    /// with a 1.5x exponential backoff multiplier.
     ///
     /// # Arguments
     ///
@@ -80,20 +75,15 @@ impl RpcClientManager {
             );
         }
 
-        // Configure retry policy: 3 retries (4 total attempts) over 10 seconds
-        let retry_policy = ExponentialBackoff::new(3, 10, 1.5);
-
-        Self {
-            clients,
-            retry_policy,
-        }
+        Self { clients }
     }
 
     /// Execute an async operation across all available clients with retry logic
     ///
     /// This method tries the given operation on each operator sequentially (in sorted order
-    /// by public key). For each operator, it retries up to `max_retries` times with exponential
-    /// backoff between attempts. The first successful result is returned immediately.
+    /// by public key). For each operator, it retries up to 3 times with exponential
+    /// backoff between attempts using [`execute_with_retries`]. The first successful result
+    /// is returned immediately.
     ///
     /// # Type Parameters
     ///
@@ -112,17 +102,13 @@ impl RpcClientManager {
     ///
     /// # Retry Behavior
     ///
+    /// Uses [`execute_with_retries`] for each operator with exponential backoff:
+    ///
     /// - **Attempt 0**: Immediate (no delay)
     /// - **Attempt 1**: After ~2s delay
     /// - **Attempt 2**: After ~3s delay  
     /// - **Attempt 3**: After ~5s delay
     /// - Total: ~10 seconds per operator
-    ///
-    /// # Logging
-    ///
-    /// - `debug`: Successful requests and retry attempts with delays
-    /// - `info`: Requests that succeed after retries
-    /// - `warn`: Operators that fail after all retries
     ///
     /// # Example
     ///
@@ -138,45 +124,30 @@ impl RpcClientManager {
         F: Fn(HttpClient) -> Fut,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
-        let max_retries = self.retry_policy.max_retries();
-
         // BTreeMap maintains sorted order automatically
         for (key, client) in self.clients.iter() {
-            let mut attempt = 0;
+            let client_clone = client.clone();
+            let operation_name = format!("RPC request to operator {key}");
 
-            // Retry loop: attempt 0, 1, 2, ..., max_retries (inclusive)
-            loop {
-                match operation(client.clone()).await {
-                    Ok(result) => {
-                        if attempt > 0 {
-                            info!(
-                                "RPC request succeeded for operator {} after {} retries",
-                                key, attempt
-                            );
-                        } else {
-                            debug!("RPC request succeeded for operator: {}", key);
-                        }
-                        return Some(result);
-                    }
-                    Err(e) => {
-                        if attempt < max_retries {
-                            let delay_secs = self.retry_policy.get_delay(attempt);
-                            if delay_secs > 0 {
-                                debug!(
-                                    "RPC request failed for operator {}, retry {}/{}, waiting {} seconds: {}",
-                                    key, attempt + 1, max_retries, delay_secs, e
-                                );
-                                sleep(Duration::from_secs(delay_secs)).await;
-                            }
-                            attempt += 1;
-                        } else {
-                            warn!(
-                                "RPC request failed for operator {} after {} retries: {}",
-                                key, max_retries, e
-                            );
-                            break;
-                        }
-                    }
+            match execute_with_retries(
+                || {
+                    let client = client_clone.clone();
+                    operation(client)
+                },
+                &operation_name,
+            )
+            .await
+            {
+                Ok(result) => {
+                    debug!("RPC request succeeded for operator: {}", key);
+                    return Some(result);
+                }
+                Err(e) => {
+                    warn!(
+                        "RPC request failed for operator {} after retries: {}",
+                        key, e
+                    );
+                    // Continue to next operator
                 }
             }
         }
@@ -332,7 +303,7 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let status = get_operator_status(&rpc_manager, operator.rpc_url()).await;
+            let status = get_operator_status(operator.rpc_url()).await;
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
@@ -456,7 +427,7 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
 }
 
 /// Fetch operator status
-async fn get_operator_status(_rpc_manager: &RpcClientManager, rpc_url: &str) -> RpcOperatorStatus {
+async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
     let rpc_client = create_rpc_client(rpc_url);
 
     // Directly use `get_uptime`
@@ -496,12 +467,7 @@ async fn get_bitcoin_chain_tip_height(
 async fn get_deposit_requests(rpc_manager: &RpcClientManager) -> Vec<Txid> {
     let result = rpc_manager
         .try_with_retry(|client| async move {
-            let txids = client.get_deposit_requests().await?;
-            if txids.is_empty() {
-                Err("No deposit requests found".into())
-            } else {
-                Ok(txids)
-            }
+            client.get_deposit_requests().await.map_err(|e| e.into())
         })
         .await;
 
@@ -538,7 +504,9 @@ async fn get_deposits(
     chain_tip_height: u64,
     active_deposit_txids: &[Txid],
 ) -> Vec<(DepositInfo, u64)> {
-    let mut deposit_requests = get_deposit_requests(rpc_manager).await;
+    let new_deposit_requests = get_deposit_requests(rpc_manager).await;
+    let new_count = new_deposit_requests.len();
+    let mut deposit_requests = new_deposit_requests;
 
     // Add existing active deposits that we need to check for status updates
     for txid in active_deposit_txids {
@@ -550,7 +518,7 @@ async fn get_deposits(
     info!(
         "Checking {} deposit requests ({} new, {} existing active)",
         deposit_requests.len(),
-        get_deposit_requests(rpc_manager).await.len(),
+        new_count,
         active_deposit_txids.len()
     );
 
@@ -616,14 +584,9 @@ async fn get_deposits(
 /// Vector of withdrawal request IDs. Empty if no withdrawals found or all operators failed.
 async fn get_withdrawal_requests(rpc_manager: &RpcClientManager) -> Vec<Buf32> {
     let result = rpc_manager
-        .try_with_retry(|client| async move {
-            let txids = client.get_withdrawals().await?;
-            if txids.is_empty() {
-                Err("No withdrawal requests found".into())
-            } else {
-                Ok(txids)
-            }
-        })
+        .try_with_retry(
+            |client| async move { client.get_withdrawals().await.map_err(|e| e.into()) },
+        )
         .await;
 
     result.unwrap_or_else(|| {
@@ -658,7 +621,9 @@ async fn get_withdrawals(
     chain_tip_height: u64,
     active_withdrawal_request_ids: &[Buf32],
 ) -> Vec<(WithdrawalInfo, u64)> {
-    let mut withdrawal_requests = get_withdrawal_requests(rpc_manager).await;
+    let new_withdrawal_requests = get_withdrawal_requests(rpc_manager).await;
+    let new_count = new_withdrawal_requests.len();
+    let mut withdrawal_requests = new_withdrawal_requests;
 
     // Add existing active withdrawals that we need to check for status updates
     for request_id in active_withdrawal_request_ids {
@@ -670,7 +635,7 @@ async fn get_withdrawals(
     info!(
         "Checking {} withdrawal requests ({} new, {} existing active)",
         withdrawal_requests.len(),
-        get_withdrawal_requests(rpc_manager).await.len(),
+        new_count,
         active_withdrawal_request_ids.len()
     );
 
@@ -732,14 +697,7 @@ async fn get_withdrawals(
 /// Vector of claim transaction IDs. Empty if no claims found or all operators failed.
 async fn get_claims(rpc_manager: &RpcClientManager) -> Vec<Txid> {
     let result = rpc_manager
-        .try_with_retry(|client| async move {
-            let txids = client.get_claims().await?;
-            if txids.is_empty() {
-                Err("No claims found".into())
-            } else {
-                Ok(txids)
-            }
-        })
+        .try_with_retry(|client| async move { client.get_claims().await.map_err(|e| e.into()) })
         .await;
 
     result.unwrap_or_else(|| {
@@ -775,7 +733,9 @@ async fn get_reimbursements(
     chain_tip_height: u64,
     active_reimbursement_txids: &[Txid],
 ) -> Vec<(ReimbursementInfo, u64)> {
-    let mut claims = get_claims(rpc_manager).await;
+    let new_claims = get_claims(rpc_manager).await;
+    let new_count = new_claims.len();
+    let mut claims = new_claims;
 
     // Add existing active reimbursements that we need to check for status updates
     for txid in active_reimbursement_txids {
@@ -787,7 +747,7 @@ async fn get_reimbursements(
     info!(
         "Checking {} claims ({} new, {} existing active)",
         claims.len(),
-        get_claims(rpc_manager).await.len(),
+        new_count,
         active_reimbursement_txids.len()
     );
 
