@@ -12,15 +12,15 @@
   dotenv = "0.15"
   hex = { version = "0.4" }
   jsonrpsee = { version = "0.24", features = [ "http-client" ] }
-  reqwest = { version = "0.12.22", features = [ "json" ] }
+  reqwest = { version = "0.12.24", features = [ "json" ] }
   serde = { version = "1", features = [ "derive" ] }
   serde_json = { version = "1.0", default-features = false, features = [
     "alloc",
     "raw_value",
   ] }
   thiserror = "1.0"
-  tokio = { version = "1.47.1", features = [ "macros", "rt-multi-thread" ] }
-  toml = { version = "0.8.20" }
+  tokio = { version = "1.48.0", features = [ "macros", "rt-multi-thread" ] }
+  toml = { version = "0.9.8" }
   tower-http = { version = "0.6", features = [ "cors" ] }
   tracing = { version = "0.1" }
   tracing-subscriber = { version = "0.3.20", features = [ "env-filter" ] }
