@@ -22,7 +22,7 @@
   tracing = { version = "0.1" }
   tracing-subscriber = { version = "0.3.20", features = [ "env-filter" ] }
 
-  strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.2.0-rc3" }
+  strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.2.0-rc4" }
   strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
     "client",
   ], tag = "v0.2.0-rc3" }

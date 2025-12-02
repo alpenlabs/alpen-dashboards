@@ -34,6 +34,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "algebra"
+version = "0.1.0"
+source = "git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4#f384897733db885220238a56e387200e6a8d3abb"
+dependencies = [
+ "futures",
+ "proptest",
+ "tokio",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -43,6 +53,16 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "alpen-bridge-params"
 version = "0.1.0"
 source = "git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc3#292a08ce985cd5b2e9b2978bb38c7a89161006ab"
+dependencies = [
+ "bitcoin",
+ "serde",
+ "thiserror 2.0.16",
+]
+
+[[package]]
+name = "alpen-bridge-params"
+version = "0.1.0"
+source = "git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4#f384897733db885220238a56e387200e6a8d3abb"
 dependencies = [
  "bitcoin",
  "serde",
@@ -477,7 +497,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "strata-bridge-primitives",
+ "strata-bridge-primitives 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4)",
  "strata-bridge-rpc",
  "strata-primitives",
  "tokio",
@@ -595,7 +615,7 @@ checksum = "0b47c4ab7a93edb0c7198c5535ed9b52b63095f4e9b45279c6736cec4b856baf"
 [[package]]
 name = "bitcoin-script"
 version = "0.4.0"
-source = "git+https://github.com/BitVM/rust-bitcoin-script#3c75a6e4cfddb800f57710d8270c0a1dc60eb57e"
+source = "git+https://github.com/BitVM/rust-bitcoin-script#01b4cb66cbf5b525079cabe006f9f99627da97cd"
 dependencies = [
  "bitcoin",
  "script-macro",
@@ -3026,7 +3046,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "script-macro"
 version = "0.4.0"
-source = "git+https://github.com/BitVM/rust-bitcoin-script#3c75a6e4cfddb800f57710d8270c0a1dc60eb57e"
+source = "git+https://github.com/BitVM/rust-bitcoin-script#01b4cb66cbf5b525079cabe006f9f99627da97cd"
 dependencies = [
  "bitcoin",
  "proc-macro-error",
@@ -3374,8 +3394,33 @@ name = "strata-bridge-primitives"
 version = "0.1.0"
 source = "git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc3#292a08ce985cd5b2e9b2978bb38c7a89161006ab"
 dependencies = [
- "algebra",
- "alpen-bridge-params",
+ "algebra 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc3)",
+ "alpen-bridge-params 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc3)",
+ "anyhow",
+ "arbitrary",
+ "bitcoin",
+ "bitcoin-script",
+ "bitvm",
+ "miniscript",
+ "musig2",
+ "proptest",
+ "proptest-derive",
+ "rkyv",
+ "secp256k1",
+ "serde",
+ "sha2",
+ "strata-p2p-types",
+ "strata-primitives",
+ "thiserror 2.0.16",
+]
+
+[[package]]
+name = "strata-bridge-primitives"
+version = "0.1.0"
+source = "git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4#f384897733db885220238a56e387200e6a8d3abb"
+dependencies = [
+ "algebra 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4)",
+ "alpen-bridge-params 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc4)",
  "anyhow",
  "arbitrary",
  "bitcoin",
@@ -3402,7 +3447,7 @@ dependencies = [
  "bitcoin",
  "jsonrpsee",
  "serde",
- "strata-bridge-primitives",
+ "strata-bridge-primitives 0.1.0 (git+https://github.com/alpenlabs/strata-bridge.git?tag=v0.2.0-rc3)",
  "strata-primitives",
 ]
 
