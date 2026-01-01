@@ -5,7 +5,7 @@
 
 [dependencies]
   axum = { version = "0.8" }
-  bitcoin = { version = "0.32.5", features = [ "serde" ] }
+  bitcoin = { version = "0.32.8", features = [ "serde" ] }
   chrono = { version = "0.4.38", features = ["serde"] }
   clap = { version = "4.5", features = [ "derive" ] }
   hex = { version = "0.4" }
