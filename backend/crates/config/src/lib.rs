@@ -2,34 +2,36 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{debug, trace};
 
+use status_utils::ExponentialBackoff;
+
 /// Main configuration struct containing all application settings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct Config {
+pub struct Config {
     /// API server configuration
-    pub(crate) server: ApiServerConfig,
+    server: ApiServerConfig,
     /// Network monitoring configuration
-    pub(crate) network: NetworkMonitoringConfig,
+    network: NetworkMonitoringConfig,
     /// Bridge monitoring configuration
-    pub(crate) bridge: BridgeMonitoringConfig,
+    bridge: BridgeMonitoringConfig,
 }
 
 /// Configuration for the API server
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct ApiServerConfig {
+pub struct ApiServerConfig {
     /// Host address to bind the server to
-    pub(crate) host: String,
+    host: String,
     /// Port number to bind the server to
-    pub(crate) port: u16,
+    port: u16,
 }
 
 impl ApiServerConfig {
     /// Get a reference to the host address
-    pub(crate) fn host(&self) -> &str {
+    pub fn host(&self) -> &str {
         &self.host
     }
 
     /// Get the port number
-    pub(crate) fn port(&self) -> u16 {
+    pub fn port(&self) -> u16 {
         self.port
     }
 }
@@ -39,46 +41,46 @@ const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct NetworkMonitoringConfig {
+pub struct NetworkMonitoringConfig {
     /// JSON-RPC Endpoint for Strata sequencer
-    pub(crate) sequencer_url: String,
+    sequencer_url: String,
 
     /// JSON-RPC Endpoint for Strata client and reth
-    pub(crate) rpc_url: String,
+    rpc_url: String,
 
     /// Bundler health check URL
-    pub(crate) bundler_url: String,
+    bundler_url: String,
 
     /// Max retries for status queries
-    pub(crate) retry_policy_max_retries: u64,
+    retry_policy_max_retries: u64,
 
     /// Total time in seconds to spend retrying status queries
-    pub(crate) retry_policy_total_time_s: u64,
+    retry_policy_total_time_s: u64,
 
     /// Network status refetch interval in seconds
-    pub(crate) status_refetch_interval_s: u64,
+    status_refetch_interval_s: u64,
 }
 
 impl NetworkMonitoringConfig {
-    pub(crate) fn sequencer_url(&self) -> &str {
+    pub fn sequencer_url(&self) -> &str {
         &self.sequencer_url
     }
 
-    pub(crate) fn rpc_url(&self) -> &str {
+    pub fn rpc_url(&self) -> &str {
         &self.rpc_url
     }
 
-    pub(crate) fn bundler_url(&self) -> &str {
+    pub fn bundler_url(&self) -> &str {
         &self.bundler_url
     }
 
-    pub(crate) fn status_refetch_interval(&self) -> u64 {
+    pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 
     /// Retry policy for sequencer status queries
-    pub(crate) fn sequencer_retry_policy(&self) -> crate::utils::retry_policy::ExponentialBackoff {
-        crate::utils::retry_policy::ExponentialBackoff::new(
+    pub fn sequencer_retry_policy(&self) -> ExponentialBackoff {
+        ExponentialBackoff::new(
             self.retry_policy_max_retries,
             self.retry_policy_total_time_s,
             DEFAULT_RETRY_POLICY_BASE,
@@ -86,8 +88,8 @@ impl NetworkMonitoringConfig {
     }
 
     /// Retry policy for RPC endpoint status queries
-    pub(crate) fn rpc_retry_policy(&self) -> crate::utils::retry_policy::ExponentialBackoff {
-        crate::utils::retry_policy::ExponentialBackoff::new(
+    pub fn rpc_retry_policy(&self) -> ExponentialBackoff {
+        ExponentialBackoff::new(
             self.retry_policy_max_retries,
             self.retry_policy_total_time_s,
             DEFAULT_RETRY_POLICY_BASE,
@@ -97,61 +99,73 @@ impl NetworkMonitoringConfig {
 
 /// Configuration for bridge monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct BridgeMonitoringConfig {
+pub struct BridgeMonitoringConfig {
     /// Esplora URL
-    pub(crate) esplora_url: String,
+    esplora_url: String,
 
     /// Maximum confirmations
-    pub(crate) max_tx_confirmations: u64,
+    max_tx_confirmations: u64,
 
     /// Bridge status refetch interval in seconds
-    pub(crate) status_refetch_interval_s: u64,
+    status_refetch_interval_s: u64,
 
     /// Bridge operators
-    pub(crate) operators: Vec<BridgeOperator>,
+    operators: Vec<BridgeOperator>,
 }
 
 /// Configuration for a bridge operator
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(crate) struct BridgeOperator {
+pub struct BridgeOperator {
     /// Public key of the bridge operator
-    pub(crate) public_key: String,
+    public_key: String,
     /// RPC URL for the bridge operator
-    pub(crate) rpc_url: String,
+    rpc_url: String,
 }
 
 impl BridgeOperator {
-    pub(crate) fn public_key(&self) -> &str {
+    pub fn public_key(&self) -> &str {
         &self.public_key
     }
 
-    pub(crate) fn rpc_url(&self) -> &str {
+    pub fn rpc_url(&self) -> &str {
         &self.rpc_url
     }
 }
 
 impl BridgeMonitoringConfig {
-    pub(crate) fn esplora_url(&self) -> &str {
+    pub fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
 
-    pub(crate) fn max_tx_confirmations(&self) -> u64 {
+    pub fn max_tx_confirmations(&self) -> u64 {
         self.max_tx_confirmations
     }
 
-    pub(crate) fn status_refetch_interval(&self) -> u64 {
+    pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
     }
 
-    pub(crate) fn operators(&self) -> &Vec<BridgeOperator> {
+    pub fn operators(&self) -> &Vec<BridgeOperator> {
         &self.operators
     }
 }
 
 impl Config {
     /// Load configuration from the specified path
-    pub(crate) fn load_from_path(path: &str) -> Self {
+    pub fn load_from_path(path: &str) -> Self {
         parse_toml::<Config>(path)
+    }
+
+    pub fn server(&self) -> &ApiServerConfig {
+        &self.server
+    }
+
+    pub fn network(&self) -> &NetworkMonitoringConfig {
+        &self.network
+    }
+
+    pub fn bridge(&self) -> &BridgeMonitoringConfig {
+        &self.bridge
     }
 }
 
@@ -243,10 +257,38 @@ rpc_url = "https://bridge.testnet.alpenlabs.io/4"
 
     #[test]
     fn test_load_from_path() {
-        // Test that load_from_path works with a valid config
-        let config = Config::load_from_path("config.toml");
-        assert_eq!(config.server.host(), "0.0.0.0");
-        assert_eq!(config.server.port(), 3000);
+        const TOML_FIXTURE: &str = r#"
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[network]
+sequencer_url = ""
+rpc_url = ""
+bundler_url = ""
+retry_policy_max_retries = 0
+retry_policy_total_time_s = 0
+status_refetch_interval_s = 0
+
+[bridge]
+esplora_url = ""
+max_tx_confirmations = 0
+status_refetch_interval_s = 0
+operators = []
+"#;
+
+        let path = std::env::temp_dir().join(format!(
+            "status_config_load_from_path_{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, TOML_FIXTURE).expect("write tmp config");
+
+        let loaded = Config::load_from_path(path.to_str().expect("path utf-8"));
+
+        let _ = std::fs::remove_file(&path);
+
+        let expected = toml::from_str::<Config>(TOML_FIXTURE).expect("parse fixture");
+        assert_eq!(loaded, expected);
     }
 
     #[test]

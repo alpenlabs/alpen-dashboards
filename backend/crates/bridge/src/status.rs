@@ -22,10 +22,8 @@ use super::{
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    config::BridgeMonitoringConfig,
-    utils::rpc_client::{create_rpc_client, execute_with_retries},
-};
+use status_config::BridgeMonitoringConfig;
+use status_utils::{create_rpc_client, execute_with_retries};
 
 /// RPC client manager with connection pooling and retry logic
 ///

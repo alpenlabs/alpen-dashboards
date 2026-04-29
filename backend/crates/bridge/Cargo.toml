@@ -1,0 +1,22 @@
+[package]
+  edition.workspace = true
+  name              = "status-bridge"
+  version.workspace = true
+
+[lib]
+  path = "src/lib.rs"
+
+[dependencies]
+  status-config.workspace = true
+  status-utils.workspace  = true
+
+  axum.workspace              = true
+  bitcoin.workspace           = true
+  hex.workspace               = true
+  jsonrpsee.workspace         = true
+  reqwest.workspace           = true
+  serde.workspace             = true
+  strata-bridge-rpc.workspace = true
+  strata-primitives.workspace = true
+  tokio.workspace             = true
+  tracing.workspace           = true

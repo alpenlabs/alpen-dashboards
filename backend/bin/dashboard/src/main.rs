@@ -1,23 +1,12 @@
-mod bridge;
-mod config;
-mod network;
-mod utils;
-
 use axum::{routing::get, Router};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
-use crate::{
-    bridge::status::{bridge_monitoring_task, get_bridge_status},
-    bridge::types::BridgeMonitoringContext,
-    config::Config,
-    network::{
-        status::{fetch_statuses_task, get_network_status},
-        types::NetworkMonitoringContext,
-    },
-};
+use status_bridge::{bridge_monitoring_task, get_bridge_status, BridgeMonitoringContext};
+use status_config::Config;
+use status_network::{fetch_statuses_task, get_network_status, NetworkMonitoringContext};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors = CorsLayer::new().allow_origin(Any);
 
-    let network_context = Arc::new(NetworkMonitoringContext::new(config.network.clone()));
+    let network_context = Arc::new(NetworkMonitoringContext::new(config.network().clone()));
     let network_context_clone = Arc::clone(&network_context);
 
     tokio::spawn(async move {
@@ -39,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Bridge monitoring
-    let bridge_context = Arc::new(BridgeMonitoringContext::new(config.bridge.clone()));
+    let bridge_context = Arc::new(BridgeMonitoringContext::new(config.bridge().clone()));
     let bridge_context_clone = Arc::clone(&bridge_context);
 
     tokio::spawn(async move {
@@ -58,8 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors);
 
     let addr = SocketAddr::from((
-        config.server.host().parse::<std::net::IpAddr>()?,
-        config.server.port(),
+        config.server().host().parse::<std::net::IpAddr>()?,
+        config.server().port(),
     ));
     info!(%addr, "Server running at http://{}", addr);
 

@@ -8,8 +8,9 @@ use strata_bridge_rpc::types::{
 use strata_primitives::buf::Buf32;
 use tokio::sync::{Notify, RwLock};
 
+use status_config::BridgeMonitoringConfig;
+
 use super::cache::BridgeStatusCache;
-use crate::config::BridgeMonitoringConfig;
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -179,7 +180,7 @@ impl From<&RpcClaimInfo> for ReimbursementInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub(crate) struct BridgeStatus {
+pub struct BridgeStatus {
     pub(crate) operators: Vec<OperatorStatus>,
     pub(crate) deposits: Vec<DepositInfo>,
     pub(crate) withdrawals: Vec<WithdrawalInfo>,

@@ -6,10 +6,8 @@ use tokio::time::{interval, sleep, Duration};
 use tracing::{error, info};
 
 use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
-use crate::{
-    config::NetworkMonitoringConfig,
-    utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
-};
+use status_config::NetworkMonitoringConfig;
+use status_utils::{create_rpc_client, ExponentialBackoff};
 
 /// Calls `strata_syncStatus` using `jsonrpsee`
 async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
@@ -60,7 +58,7 @@ async fn check_bundler_health(
 }
 
 /// Periodically fetches real statuses
-pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) {
+pub async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(
         context.config.status_refetch_interval(),
@@ -101,9 +99,7 @@ pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) 
 }
 
 /// Handler to get the current network status
-pub(crate) async fn get_network_status(
-    context: Arc<NetworkMonitoringContext>,
-) -> Json<NetworkStatus> {
+pub async fn get_network_status(context: Arc<NetworkMonitoringContext>) -> Json<NetworkStatus> {
     // Wait for initial status query to complete if not yet available
     if !context
         .status_available
