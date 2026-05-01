@@ -40,8 +40,9 @@ datadir = "data"
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
-  eth_rpc_url     = "https://rpc.testnet.alpenlabs.io"
-  batch_size      = 1000
-  finality_lag    = 12
-  start_block     = 0
-  poll_interval_s = 10
+  eth_rpc_url                  = "https://rpc.testnet.alpenlabs.io"
+  batch_size                   = 1_000
+  finality_lag                 = 12
+  start_block                  = 0
+  poll_interval_s              = 10
+  withdrawal_denomination_sats = 100_000_000

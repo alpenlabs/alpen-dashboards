@@ -31,13 +31,6 @@ pub enum WithdrawalIndexConsistencyError {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "withdrawal indexer DB errors are constructed by follow-up indexer/pairing commits"
-    )
-)]
 pub enum DbError {
     #[error("create data dir {0:?}: {1}")]
     CreateDataDir(PathBuf, #[source] std::io::Error),

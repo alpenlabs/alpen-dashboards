@@ -15,7 +15,7 @@ use crate::db::{
     not(test),
     expect(
         dead_code,
-        reason = "consumed by the indexer task in a follow-up commit"
+        reason = "pairing methods are consumed by the pairing task in a follow-up commit"
     )
 )]
 pub(crate) trait WithdrawalIndexerDb: Send + Sync {

@@ -19,17 +19,25 @@
     status-network = { path = "crates/network" }
     status-utils   = { path = "crates/utils" }
 
+    # alpen pinned to the rev that strata-bridge HEAD uses, so the transitive
+    # `strata-primitives`/`Buf32` matches our direct pin (no double-resolution).
+    # Both are deploy-current as of 2026-04-30.
+    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "565fafccf2fe181d2f93003f9135ceed126a01ad" }
     strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
       "client",
-    ], tag = "v0.2.0-rc3" }
-    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.2.0-rc4" }
+    ], rev = "851a681200658a19d88493a70f3bed66e515a08b" }
+    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "565fafccf2fe181d2f93003f9135ceed126a01ad" }
+    strata-tasks      = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.1.0-alpha-rc16" }
     typed-sled        = { git = "https://github.com/alpenlabs/typed-sled" }
 
     # External
+    anyhow = { version = "1" }
+    alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
+    alloy-sol-types  = { version = "1.4.1" }
     axum = { version = "0.8" }
     bitcoin = { version = "0.32.8", features = [ "serde" ] }
     hex = { version = "0.4" }
-    jsonrpsee = { version = "0.24", features = [ "http-client" ] }
+    jsonrpsee = { version = "0.26", features = [ "http-client" ] }
     reqwest = { version = "0.13.3", features = [ "json" ] }
     serde = { version = "1", features = [ "derive" ] }
     serde_json = { version = "1.0", default-features = false, features = [

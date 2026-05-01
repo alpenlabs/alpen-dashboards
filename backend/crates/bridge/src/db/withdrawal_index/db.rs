@@ -20,26 +20,12 @@ use super::schema::{
 /// because it can wrap typed-sled codec errors. Use the shared consistency
 /// error type as the transactional abort payload and wrap it in [`DbError`]
 /// after the transaction.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used by withdrawal indexer and pairing DB writes in follow-up commits"
-    )
-)]
 fn abort_tx<T>(
     err: WithdrawalIndexConsistencyError,
 ) -> sled::transaction::ConflictableTransactionResult<T, TSledError> {
     Err(TSledError::abort(err).into())
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used by withdrawal indexer and pairing DB writes in follow-up commits"
-    )
-)]
 fn map_tx_result<T>(result: sled::transaction::TransactionResult<T, TSledError>) -> DbResult<T> {
     match result {
         Ok(value) => Ok(value),
@@ -70,16 +56,16 @@ pub(crate) struct WithdrawalIndexerDbSled {
     requests: SledTree<WithdrawalRequestSchema>,
     event_index: SledTree<WithdrawalEventIndexSchema>,
     assignments: SledTree<WithdrawalAssignmentSchema>,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "consumed by the pairing task in a follow-up commit"
+        )
+    )]
     seq_by_deposit_idx: SledTree<WithdrawalSeqByDepositIdxSchema>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired in by the indexer task in a follow-up commit"
-    )
-)]
 impl WithdrawalIndexerDbSled {
     /// Open the indexer database under `{datadir}/withdrawal_index`. Creates
     /// intermediate directories if they don't exist; sled itself only creates

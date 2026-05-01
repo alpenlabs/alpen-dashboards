@@ -130,6 +130,9 @@ const DEFAULT_ETH_LOGS_START_BLOCK: u64 = 0;
 /// Default poll interval for the indexer in seconds.
 const DEFAULT_ETH_LOGS_POLL_INTERVAL_S: u64 = 10;
 
+/// Default fixed withdrawal denomination in sats (1 BTC).
+const DEFAULT_WITHDRAWAL_DENOMINATION_SATS: u64 = 100_000_000;
+
 fn default_eth_logs_batch_size() -> u64 {
     DEFAULT_ETH_LOGS_BATCH_SIZE
 }
@@ -141,6 +144,9 @@ fn default_eth_logs_start_block() -> u64 {
 }
 fn default_eth_logs_poll_interval_s() -> u64 {
     DEFAULT_ETH_LOGS_POLL_INTERVAL_S
+}
+fn default_withdrawal_denomination_sats() -> u64 {
+    DEFAULT_WITHDRAWAL_DENOMINATION_SATS
 }
 
 /// Configuration for the EVM withdrawal-intent indexer.
@@ -164,6 +170,10 @@ pub struct WithdrawalIndexerConfig {
     /// Poll interval (in seconds) between successive indexer scans.
     #[serde(default = "default_eth_logs_poll_interval_s")]
     poll_interval_s: u64,
+
+    /// Fixed withdrawal denomination in sats.
+    #[serde(default = "default_withdrawal_denomination_sats")]
+    withdrawal_denomination_sats: u64,
 }
 
 impl WithdrawalIndexerConfig {
@@ -185,6 +195,10 @@ impl WithdrawalIndexerConfig {
 
     pub fn poll_interval_s(&self) -> u64 {
         self.poll_interval_s
+    }
+
+    pub fn withdrawal_denomination_sats(&self) -> u64 {
+        self.withdrawal_denomination_sats
     }
 }
 
@@ -324,6 +338,7 @@ rpc_url = "https://bridge.testnet.alpenlabs.io/4"
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.testnet.alpenlabs.io"
+withdrawal_denomination_sats = 100000000
 "#;
 
         let config = toml::from_str::<Config>(config);
@@ -372,6 +387,7 @@ batch_size = 500
 finality_lag = 6
 start_block = 100
 poll_interval_s = 5
+withdrawal_denomination_sats = 100000000
 "#;
 
         let path = std::env::temp_dir().join(format!(
@@ -424,6 +440,7 @@ batch_size = 250
 finality_lag = 8
 start_block = 1234
 poll_interval_s = 7
+withdrawal_denomination_sats = 100000000
 "#;
 
         let config = toml::from_str::<Config>(config_content);
@@ -466,6 +483,10 @@ poll_interval_s = 7
         assert_eq!(config.withdrawal_indexer().finality_lag(), 8);
         assert_eq!(config.withdrawal_indexer().start_block(), 1234);
         assert_eq!(config.withdrawal_indexer().poll_interval_s(), 7);
+        assert_eq!(
+            config.withdrawal_indexer().withdrawal_denomination_sats(),
+            100_000_000
+        );
     }
 
     #[test]
@@ -501,5 +522,9 @@ eth_rpc_url = "https://rpc.example.com"
         assert_eq!(indexer.finality_lag(), DEFAULT_ETH_LOGS_FINALITY_LAG);
         assert_eq!(indexer.start_block(), DEFAULT_ETH_LOGS_START_BLOCK);
         assert_eq!(indexer.poll_interval_s(), DEFAULT_ETH_LOGS_POLL_INTERVAL_S);
+        assert_eq!(
+            indexer.withdrawal_denomination_sats(),
+            DEFAULT_WITHDRAWAL_DENOMINATION_SATS
+        );
     }
 }
