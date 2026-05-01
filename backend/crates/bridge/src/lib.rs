@@ -1,4 +1,5 @@
 mod cache;
+mod db;
 mod status;
 mod types;
 
