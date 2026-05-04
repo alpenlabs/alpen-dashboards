@@ -87,11 +87,12 @@ where
         "withdrawal indexer starting"
     );
     loop {
-        // Process the tick `Result<_, IndexerError>` inside the select arm
-        // rather than binding it. `IndexerError` transitively wraps
-        // `Box<dyn Error>` (no `+ Send + Sync`) via `typed_sled::CodecError`,
-        // so it must not survive into the next await — only the `Send`
-        // `more_work` flag escapes.
+        // The indexer can stop mid-tick because writes are atomic per event
+        // and replay is idempotent on restart. Process the tick result
+        // inside the select arm rather than binding it: `IndexerError`
+        // transitively wraps `Box<dyn Error>` (no `+ Send + Sync`) via
+        // `typed_sled::CodecError`, so it must not survive into the next
+        // await — only the `Send` `more_work` flag escapes.
         let mut more_work = false;
         tokio::select! {
             _ = shutdown.wait_for_shutdown() => break,

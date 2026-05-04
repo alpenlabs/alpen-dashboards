@@ -1,3 +1,4 @@
+use anyhow::Result;
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
 
@@ -10,6 +11,7 @@ use strata_bridge_rpc::types::{
 };
 
 use strata_primitives::buf::Buf32;
+use strata_tasks::ShutdownGuard;
 
 use super::{
     cache::BridgeStatusCache,
@@ -283,7 +285,10 @@ async fn determine_reimbursements_to_purge(
 }
 
 /// Periodically fetch bridge status and update bridge cache
-pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
+pub async fn bridge_monitoring_task(
+    context: Arc<BridgeMonitoringContext>,
+    shutdown: ShutdownGuard,
+) -> Result<()> {
     let mut interval = interval(Duration::from_secs(
         context.config.status_refetch_interval(),
     ));
@@ -292,6 +297,11 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
     let rpc_manager = RpcClientManager::new(&context.config);
 
     loop {
+        tokio::select! {
+            _ = shutdown.wait_for_shutdown() => break,
+            _ = interval.tick() => {}
+        }
+
         // Fetch all data without holding lock
 
         // Bridge operator status
@@ -418,10 +428,9 @@ pub async fn bridge_monitoring_task(context: Arc<BridgeMonitoringContext>) {
             context.status_available.store(true, Ordering::Release);
             context.initial_status_query_complete.notify_waiters();
         }
-
-        // Wait for next interval
-        interval.tick().await;
     }
+
+    Ok(())
 }
 
 /// Fetch operator status

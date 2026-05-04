@@ -3940,10 +3940,12 @@ dependencies = [
 name = "status-dashboard-backend"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "axum",
  "status-bridge",
  "status-config",
  "status-network",
+ "strata-tasks",
  "tokio",
  "tower-http",
  "tracing",
@@ -3954,6 +3956,7 @@ dependencies = [
 name = "status-network"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "axum",
  "jsonrpsee",
  "reqwest",
@@ -3961,6 +3964,7 @@ dependencies = [
  "serde_json",
  "status-config",
  "status-utils",
+ "strata-tasks",
  "tokio",
  "tracing",
 ]

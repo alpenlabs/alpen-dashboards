@@ -7,8 +7,10 @@
   path = "src/lib.rs"
 
 [dependencies]
+  anyhow.workspace        = true
   status-config.workspace = true
   status-utils.workspace  = true
+  strata-tasks.workspace  = true
 
   axum.workspace       = true
   jsonrpsee.workspace  = true

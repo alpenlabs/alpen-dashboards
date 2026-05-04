@@ -8,9 +8,11 @@
   path = "src/main.rs"
 
 [dependencies]
+  anyhow.workspace         = true
   status-bridge.workspace  = true
   status-config.workspace  = true
   status-network.workspace = true
+  strata-tasks.workspace   = true
 
   axum.workspace               = true
   tokio.workspace              = true
