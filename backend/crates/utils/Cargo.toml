@@ -1,0 +1,12 @@
+[package]
+  edition.workspace = true
+  name              = "status-utils"
+  version.workspace = true
+
+[lib]
+  path = "src/lib.rs"
+
+[dependencies]
+  jsonrpsee.workspace = true
+  tokio.workspace     = true
+  tracing.workspace   = true

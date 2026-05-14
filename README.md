@@ -4,7 +4,8 @@
 
 ```bash
 cd backend
-cargo run
+export CONFIG_PATH=example-config.toml
+cargo run -p status-dashboard-backend
 ```
 
 ## Run frontend
