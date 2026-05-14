@@ -17,7 +17,7 @@ on:
         type: choice
         options:
           - staging
-          # currently we do not support cd to production, its only for future reference
+          # currently we do not support cd to production, it's only for future reference
           - production
 env:
   CI: false

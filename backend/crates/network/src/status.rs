@@ -1,15 +1,15 @@
+use anyhow::Result;
 use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
 use std::sync::Arc;
+use strata_tasks::ShutdownGuard;
 use tokio::time::{interval, sleep, Duration};
 use tracing::{error, info};
 
 use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
-use crate::{
-    config::NetworkMonitoringConfig,
-    utils::{retry_policy::ExponentialBackoff, rpc_client::create_rpc_client},
-};
+use status_config::NetworkMonitoringConfig;
+use status_utils::{create_rpc_client, ExponentialBackoff};
 
 /// Calls `strata_syncStatus` using `jsonrpsee`
 async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
@@ -60,7 +60,10 @@ async fn check_bundler_health(
 }
 
 /// Periodically fetches real statuses
-pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) {
+pub async fn fetch_statuses_task(
+    context: Arc<NetworkMonitoringContext>,
+    shutdown: ShutdownGuard,
+) -> Result<()> {
     info!("Fetching statuses...");
     let mut interval = interval(Duration::from_secs(
         context.config.status_refetch_interval(),
@@ -70,7 +73,10 @@ pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) 
     let http_client = reqwest::Client::new();
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = shutdown.wait_for_shutdown() => break,
+            _ = interval.tick() => {}
+        }
 
         let sequencer =
             call_rpc_status(&sequencer_client, context.config.sequencer_retry_policy()).await;
@@ -98,12 +104,12 @@ pub(crate) async fn fetch_statuses_task(context: Arc<NetworkMonitoringContext>) 
             context.initial_status_query_complete.notify_waiters();
         }
     }
+
+    Ok(())
 }
 
 /// Handler to get the current network status
-pub(crate) async fn get_network_status(
-    context: Arc<NetworkMonitoringContext>,
-) -> Json<NetworkStatus> {
+pub async fn get_network_status(context: Arc<NetworkMonitoringContext>) -> Json<NetworkStatus> {
     // Wait for initial status query to complete if not yet available
     if !context
         .status_available
