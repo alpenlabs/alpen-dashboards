@@ -19,14 +19,14 @@
     status-network = { path = "crates/network" }
     status-utils   = { path = "crates/utils" }
 
-    # alpen pinned to the rev that strata-bridge HEAD uses, so the transitive
-    # `strata-primitives`/`Buf32` matches our direct pin (no double-resolution).
-    # Both are deploy-current as of 2026-04-30.
-    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "565fafccf2fe181d2f93003f9135ceed126a01ad" }
+    # alpen pinned to the rev referenced by the chosen strata-bridge revision,
+    # so the transitive `strata-primitives`/`Buf32` matches our direct pin.
+    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "2c6ae209dd5f2ed71e6f9f7b721ea7ab21190e10" }
+    strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", rev = "0ecec67b67db89f6b761ffeaa09af8e7ad864bb1" }
     strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
       "client",
-    ], rev = "851a681200658a19d88493a70f3bed66e515a08b" }
-    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "565fafccf2fe181d2f93003f9135ceed126a01ad" }
+    ], rev = "0ecec67b67db89f6b761ffeaa09af8e7ad864bb1" }
+    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "2c6ae209dd5f2ed71e6f9f7b721ea7ab21190e10" }
     strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.1.0-alpha-rc16" }
     typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 

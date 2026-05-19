@@ -28,6 +28,10 @@ impl BridgeMonitoringContext {
         &self.config
     }
 
+    #[expect(
+        dead_code,
+        reason = "read-only state access is used by later status lifecycle commits"
+    )]
     pub(crate) async fn with_state<T>(&self, f: impl FnOnce(&BridgeStatusCache) -> T) -> T {
         let state = self.state.read().await;
         f(&state)
@@ -109,7 +113,7 @@ mod tests {
         context
             .with_state_mut(|state| {
                 state.update_deposit(
-                    deposit_request_txid,
+                    0,
                     DepositInfo {
                         deposit_request_txid,
                         deposit_txid: Some(deposit_txid),

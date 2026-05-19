@@ -1,6 +1,6 @@
-use bitcoin::Txid;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::buf::Buf32;
 
 use super::types::{
@@ -42,20 +42,25 @@ impl<T> CacheEntry<T> {
 /// In-memory cache for bridge monitoring data
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
-    deposits: HashMap<Txid, CacheEntry<DepositInfo>>,
+    deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
     withdrawals: HashMap<Buf32, CacheEntry<WithdrawalInfo>>,
-    reimbursements: HashMap<Txid, CacheEntry<ReimbursementInfo>>,
+    reimbursements: HashMap<DepositIdx, CacheEntry<ReimbursementInfo>>,
     operators: Vec<OperatorStatus>,
 }
 
 impl BridgeStatusCache {
     /// Update deposit cache entry
-    pub(crate) fn update_deposit(&mut self, txid: Txid, info: DepositInfo, confirmations: u64) {
-        if let Some(entry) = self.deposits.get_mut(&txid) {
+    pub(crate) fn update_deposit(
+        &mut self,
+        deposit_idx: DepositIdx,
+        info: DepositInfo,
+        confirmations: u64,
+    ) {
+        if let Some(entry) = self.deposits.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
         } else {
             self.deposits
-                .insert(txid, CacheEntry::new(info, confirmations));
+                .insert(deposit_idx, CacheEntry::new(info, confirmations));
         }
     }
 
@@ -77,15 +82,15 @@ impl BridgeStatusCache {
     /// Update reimbursement cache entry
     pub(crate) fn update_reimbursement(
         &mut self,
-        txid: Txid,
+        deposit_idx: DepositIdx,
         info: ReimbursementInfo,
         confirmations: u64,
     ) {
-        if let Some(entry) = self.reimbursements.get_mut(&txid) {
+        if let Some(entry) = self.reimbursements.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
         } else {
             self.reimbursements
-                .insert(txid, CacheEntry::new(info, confirmations));
+                .insert(deposit_idx, CacheEntry::new(info, confirmations));
         }
     }
 
@@ -100,9 +105,9 @@ impl BridgeStatusCache {
     }
 
     /// Batch update deposits
-    pub(crate) fn apply_deposit_updates(&mut self, updates: Vec<(Txid, DepositInfo, u64)>) {
-        for (txid, info, confirmations) in updates {
-            self.update_deposit(txid, info, confirmations);
+    pub(crate) fn apply_deposit_updates(&mut self, updates: Vec<(DepositIdx, DepositInfo, u64)>) {
+        for (deposit_idx, info, confirmations) in updates {
+            self.update_deposit(deposit_idx, info, confirmations);
         }
     }
 
@@ -116,22 +121,22 @@ impl BridgeStatusCache {
     /// Batch update reimbursements
     pub(crate) fn apply_reimbursement_updates(
         &mut self,
-        updates: Vec<(Txid, ReimbursementInfo, u64)>,
+        updates: Vec<(DepositIdx, ReimbursementInfo, u64)>,
     ) {
-        for (txid, info, confirmations) in updates {
-            self.update_reimbursement(txid, info, confirmations);
+        for (deposit_idx, info, confirmations) in updates {
+            self.update_reimbursement(deposit_idx, info, confirmations);
         }
     }
 
     /// Filter deposits based on status condition
-    pub(crate) fn filter_deposits<F>(&self, filter: F) -> Vec<(Txid, DepositInfo)>
+    pub(crate) fn filter_deposits<F>(&self, filter: F) -> Vec<(DepositIdx, DepositInfo)>
     where
         F: Fn(&DepositStatus) -> bool,
     {
         self.deposits
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(txid, entry)| (*txid, entry.data))
+            .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
@@ -148,25 +153,29 @@ impl BridgeStatusCache {
     }
 
     /// Filter reimbursements based on status condition
-    pub(crate) fn filter_reimbursements<F>(&self, filter: F) -> Vec<(Txid, ReimbursementInfo)>
+    pub(crate) fn filter_reimbursements<F>(&self, filter: F) -> Vec<(DepositIdx, ReimbursementInfo)>
     where
         F: Fn(&ReimbursementStatus) -> bool,
     {
         self.reimbursements
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(txid, entry)| (*txid, entry.data))
+            .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
     /// Purge specific deposit entries
-    pub(crate) fn purge_deposits(&mut self, deposits_to_purge: Vec<Txid>) {
-        for txid in deposits_to_purge {
-            self.deposits.remove(&txid);
+    pub(crate) fn purge_deposits(&mut self, deposits_to_purge: Vec<DepositIdx>) {
+        for deposit_idx in deposits_to_purge {
+            self.deposits.remove(&deposit_idx);
         }
     }
 
     /// Purge specific withdrawal entries
+    #[expect(
+        dead_code,
+        reason = "withdrawal purge resumes when deposit-index pairing is wired in the next commit"
+    )]
     pub(crate) fn purge_withdrawals(&mut self, withdrawals_to_purge: Vec<Buf32>) {
         for request_id in withdrawals_to_purge {
             self.withdrawals.remove(&request_id);
@@ -174,9 +183,9 @@ impl BridgeStatusCache {
     }
 
     /// Purge specific reimbursement entries
-    pub(crate) fn purge_reimbursements(&mut self, reimbursements_to_purge: Vec<Txid>) {
-        for txid in reimbursements_to_purge {
-            self.reimbursements.remove(&txid);
+    pub(crate) fn purge_reimbursements(&mut self, reimbursements_to_purge: Vec<DepositIdx>) {
+        for deposit_idx in reimbursements_to_purge {
+            self.reimbursements.remove(&deposit_idx);
         }
     }
 }

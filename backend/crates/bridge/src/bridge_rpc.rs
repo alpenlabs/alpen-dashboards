@@ -1,12 +1,9 @@
-use anyhow::Result;
-use bitcoin::Txid;
+use anyhow::{anyhow, Result};
 use jsonrpsee::http_client::HttpClient;
 use std::collections::BTreeMap;
+use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
-use strata_bridge_rpc::types::{
-    RpcClaimInfo, RpcDepositInfo, RpcOperatorStatus, RpcWithdrawalInfo,
-};
-use strata_primitives::buf::Buf32;
+use strata_bridge_rpc::types::{RpcDepositInfo, RpcOperatorStatus, RpcReimbursementStatus};
 use tracing::{debug, warn};
 
 use status_config::BridgeMonitoringConfig;
@@ -100,7 +97,7 @@ impl RpcClientManager {
     /// ```ignore
     /// let result = rpc_manager
     ///     .query_clients_with_retry(|client| async move {
-    ///         client.get_deposit_requests().await.map_err(|e| e.into())
+    ///         client.get_deposit_indices().await.map_err(|e| e.into())
     ///     })
     ///     .await;
     /// ```
@@ -155,127 +152,49 @@ pub(crate) async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
     }
 }
 
-/// Fetch all pending deposit request transaction IDs from bridge operators.
+/// Fetch all known deposit indices from bridge operators.
 ///
-/// Uses the RPC client manager with retry logic to query all operators for their
-/// list of deposit requests. Returns the first non-empty result, or an empty vector
-/// if all operators have no deposits or all fail.
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-///
-/// # Returns
-///
-/// Vector of deposit request transaction IDs. Empty if no deposits found or all operators failed.
-pub(crate) async fn get_deposit_requests(rpc_manager: &RpcClientManager) -> Vec<Txid> {
-    let result = rpc_manager
+/// Uses the RPC client manager with retry logic to query operators for the
+/// bridge's durable deposit index set.
+pub(crate) async fn get_deposit_indices(rpc_manager: &RpcClientManager) -> Result<Vec<DepositIdx>> {
+    rpc_manager
         .query_clients_with_retry(|client| async move {
-            client.get_deposit_requests().await.map_err(|e| e.into())
+            client.get_deposit_indices().await.map_err(|e| e.into())
         })
-        .await;
-
-    result.unwrap_or_else(|| {
-        warn!("no deposit requests found from any operator");
-        Vec::new()
-    })
+        .await
+        .ok_or_else(|| anyhow!("failed to fetch deposit indices after retries"))
 }
 
-/// Fetch deposit request information from bridge operators.
-pub(crate) async fn get_deposit_request_info(
+/// Fetch deposit details by bridge-side deposit index.
+pub(crate) async fn get_deposit_info(
     rpc_manager: &RpcClientManager,
-    txid: Txid,
-) -> Option<RpcDepositInfo> {
+    deposit_idx: DepositIdx,
+) -> Result<RpcDepositInfo> {
     rpc_manager
         .query_clients_with_retry(|client| async move {
             client
-                .get_deposit_request_info(txid)
+                .get_deposit_info(deposit_idx)
                 .await
                 .map_err(|e| e.into())
         })
         .await
+        .ok_or_else(|| anyhow!("failed to fetch deposit info for deposit_idx {deposit_idx}"))
 }
 
-/// Fetch all pending withdrawal request IDs from bridge operators.
-///
-/// Uses the RPC client manager with retry logic to query all operators for their
-/// list of withdrawal requests. Returns the first non-empty result, or an empty vector
-/// if all operators have no withdrawals or all fail.
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-///
-/// # Returns
-///
-/// Vector of withdrawal request IDs. Empty if no withdrawals found or all operators failed.
-pub(crate) async fn get_withdrawal_requests(rpc_manager: &RpcClientManager) -> Vec<Buf32> {
-    let result = rpc_manager
-        .query_clients_with_retry(|client| async move {
-            client.get_withdrawals().await.map_err(|e| e.into())
-        })
-        .await;
-
-    result.unwrap_or_else(|| {
-        warn!("no withdrawal requests found from any operator");
-        Vec::new()
-    })
-}
-
-/// Fetch withdrawal information from bridge operators.
-pub(crate) async fn get_withdrawal_info(
+/// Fetch reimbursement status by bridge-side deposit index.
+pub(crate) async fn get_reimbursement_status(
     rpc_manager: &RpcClientManager,
-    request_id: Buf32,
-) -> Option<RpcWithdrawalInfo> {
+    deposit_idx: DepositIdx,
+) -> Result<Option<RpcReimbursementStatus>> {
     rpc_manager
         .query_clients_with_retry(|client| async move {
-            match client.get_withdrawal_info(request_id).await {
-                Ok(Some(info)) => Ok(info),
-                Ok(None) => Err("No withdrawal info found".into()),
-                Err(e) => Err(e.into()),
-            }
+            client
+                .get_reimbursement_status(deposit_idx)
+                .await
+                .map_err(|e| e.into())
         })
         .await
-}
-
-/// Fetch all pending claim transaction IDs from bridge operators.
-///
-/// Uses the RPC client manager with retry logic to query all operators for their
-/// list of claim transactions. Returns the first non-empty result, or an empty vector
-/// if all operators have no claims or all fail.
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-///
-/// # Returns
-///
-/// Vector of claim transaction IDs. Empty if no claims found or all operators failed.
-pub(crate) async fn get_claims(rpc_manager: &RpcClientManager) -> Vec<Txid> {
-    let result = rpc_manager
-        .query_clients_with_retry(|client| async move {
-            client.get_claims().await.map_err(|e| e.into())
+        .ok_or_else(|| {
+            anyhow!("failed to fetch reimbursement status for deposit_idx {deposit_idx}")
         })
-        .await;
-
-    result.unwrap_or_else(|| {
-        warn!("no claims found from any operator");
-        Vec::new()
-    })
-}
-
-/// Fetch claim information from bridge operators.
-pub(crate) async fn get_claim_info(
-    rpc_manager: &RpcClientManager,
-    txid: Txid,
-) -> Option<RpcClaimInfo> {
-    rpc_manager
-        .query_clients_with_retry(|client| async move {
-            match client.get_claim_info(txid).await {
-                Ok(Some(info)) => Ok(info),
-                Ok(None) => Err("No claim info found".into()),
-                Err(e) => Err(e.into()),
-            }
-        })
-        .await
 }

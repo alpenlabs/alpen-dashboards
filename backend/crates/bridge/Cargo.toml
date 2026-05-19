@@ -7,14 +7,15 @@
   path = "src/lib.rs"
 
 [dependencies]
-  alpen-reth-primitives.workspace = true
-  anyhow.workspace                = true
-  status-config.workspace         = true
-  status-utils.workspace          = true
-  strata-bridge-rpc.workspace     = true
-  strata-primitives.workspace     = true
-  strata-tasks.workspace          = true
-  typed-sled.workspace            = true
+  alpen-reth-primitives.workspace    = true
+  anyhow.workspace                   = true
+  status-config.workspace            = true
+  status-utils.workspace             = true
+  strata-bridge-primitives.workspace = true
+  strata-bridge-rpc.workspace        = true
+  strata-primitives.workspace        = true
+  strata-tasks.workspace             = true
+  typed-sled.workspace               = true
 
   alloy-primitives.workspace = true
   alloy-sol-types.workspace  = true
