@@ -75,10 +75,10 @@ pub async fn fetch_statuses_task(
 ) -> Result<()> {
     info!("fetching network statuses");
     let mut interval = interval(Duration::from_secs(
-        context.config.status_refetch_interval(),
+        context.config().status_refetch_interval(),
     ));
-    let sequencer_client = create_rpc_client(context.config.sequencer_url());
-    let rpc_client = create_rpc_client(context.config.rpc_url());
+    let sequencer_client = create_rpc_client(context.config().sequencer_url());
+    let rpc_client = create_rpc_client(context.config().rpc_url());
     let http_client = reqwest::Client::new();
 
     loop {
@@ -88,30 +88,16 @@ pub async fn fetch_statuses_task(
         }
 
         let sequencer =
-            call_rpc_status(&sequencer_client, context.config.sequencer_retry_policy()).await;
-        let rpc_endpoint = call_rpc_status(&rpc_client, context.config.rpc_retry_policy()).await;
-        let bundler_endpoint = check_bundler_health(&http_client, &context.config).await;
+            call_rpc_status(&sequencer_client, context.config().sequencer_retry_policy()).await;
+        let rpc_endpoint = call_rpc_status(&rpc_client, context.config().rpc_retry_policy()).await;
+        let bundler_endpoint = check_bundler_health(&http_client, context.config()).await;
 
-        let new_status = NetworkStatus {
-            sequencer,
-            rpc_endpoint,
-            bundler_endpoint,
-        };
+        let new_status = NetworkStatus::new(sequencer, rpc_endpoint, bundler_endpoint);
 
         info!(?new_status, "updated network status");
 
-        let mut locked_status = context.network_status.write().await;
-        *locked_status = new_status;
-
-        if !context
-            .status_available
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            context
-                .status_available
-                .store(true, std::sync::atomic::Ordering::Release);
-            context.initial_status_query_complete.notify_waiters();
-        }
+        context.set_status(new_status).await;
+        context.mark_status_available();
     }
 
     Ok(())
@@ -119,15 +105,7 @@ pub async fn fetch_statuses_task(
 
 /// Handler to get the current network status
 pub async fn get_network_status(context: Arc<NetworkMonitoringContext>) -> Json<NetworkStatus> {
-    // Wait for initial status query to complete if not yet available
-    if !context
-        .status_available
-        .load(std::sync::atomic::Ordering::Acquire)
-    {
-        info!("waiting for initial network status query to complete");
-        context.initial_status_query_complete.notified().await;
-    }
+    context.wait_until_status_available().await;
 
-    let data = context.network_status.read().await.clone();
-    Json(data)
+    Json(context.status().await)
 }
