@@ -5,14 +5,16 @@ use std::sync::Arc;
 use strata_bridge_rpc::types::{RpcDepositStatus, RpcReimbursementStatus, RpcWithdrawalStatus};
 
 use strata_primitives::buf::Buf32;
+use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
 
 use super::{
     bridge_rpc::{self, RpcClientManager},
     context::BridgeMonitoringContext,
+    esplora,
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, TxStatus, WithdrawalInfo, WithdrawalStatus,
+        ReimbursementStatus, WithdrawalInfo, WithdrawalStatus,
     },
 };
 
@@ -21,37 +23,12 @@ use tracing::{error, info, warn};
 
 use status_config::BridgeMonitoringConfig;
 
-/// Get transaction confirmations from esplora
-async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u64) -> Option<u64> {
-    let url = format!("{}/tx/{}/status", esplora_url.trim_end_matches('/'), txid);
-
-    let status_resp = reqwest::get(&url).await;
-
-    let status: TxStatus = match status_resp {
-        Ok(resp) => match resp.json().await {
-            Ok(status) => status,
-            Err(e) => {
-                error!(%txid, error = %e, "failed to parse tx status JSON from esplora");
-                return None;
-            }
-        },
-        Err(e) => {
-            error!(%txid, error = %e, "failed to fetch tx status from esplora");
-            return None;
-        }
-    };
-
-    status
-        .block_height
-        .filter(|_| status.confirmed)
-        .map(|h| chain_tip_height.saturating_sub(h) + 1)
-}
-
 /// Determine which cached deposit entries should be purged
 async fn determine_deposits_to_purge(
     final_deposits: Vec<(Txid, DepositInfo)>,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
 ) -> Vec<Txid> {
     let max_confirmations = config.max_tx_confirmations();
     let mut deposits_to_purge = Vec::new();
@@ -66,7 +43,7 @@ async fn determine_deposits_to_purge(
         };
 
         let current_confirmations =
-            get_tx_confirmations(config.esplora_url(), check_txid, chain_tip_height).await;
+            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
 
         if let Some(confirmations) = current_confirmations {
             if confirmations >= max_confirmations {
@@ -82,7 +59,8 @@ async fn determine_deposits_to_purge(
 async fn determine_withdrawals_to_purge(
     final_withdrawals: Vec<(Buf32, WithdrawalInfo)>,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
 ) -> Vec<Buf32> {
     let max_confirmations = config.max_tx_confirmations();
     let mut withdrawals_to_purge = Vec::new();
@@ -90,7 +68,7 @@ async fn determine_withdrawals_to_purge(
     for (request_id, withdrawal_info) in final_withdrawals {
         if let Some(fulfillment_txid) = withdrawal_info.fulfillment_txid {
             let current_confirmations =
-                get_tx_confirmations(config.esplora_url(), fulfillment_txid, chain_tip_height)
+                esplora::get_tx_confirmations(esplora_client, fulfillment_txid, chain_tip_height)
                     .await;
 
             if let Some(confirmations) = current_confirmations {
@@ -108,7 +86,8 @@ async fn determine_withdrawals_to_purge(
 async fn determine_reimbursements_to_purge(
     final_reimbursements: Vec<(Txid, ReimbursementInfo)>,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
 ) -> Vec<Txid> {
     let max_confirmations = config.max_tx_confirmations();
     let mut reimbursements_to_purge = Vec::new();
@@ -125,7 +104,7 @@ async fn determine_reimbursements_to_purge(
         };
 
         let current_confirmations =
-            get_tx_confirmations(config.esplora_url(), check_txid, chain_tip_height).await;
+            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
 
         if let Some(confirmations) = current_confirmations {
             if confirmations >= max_confirmations {
@@ -148,6 +127,10 @@ pub async fn bridge_monitoring_task(
 
     // Create RPC client manager once and reuse it
     let rpc_manager = RpcClientManager::new(context.config());
+    let esplora_client = esplora::EsploraClient::new(
+        context.config().esplora_url(),
+        context.config().esplora_request_timeout_s(),
+    );
 
     loop {
         tokio::select! {
@@ -175,14 +158,13 @@ pub async fn bridge_monitoring_task(
             })
             .await;
 
-        let chain_tip_height =
-            match get_bitcoin_chain_tip_height(context.config().esplora_url()).await {
-                Ok(height) => height,
-                Err(e) => {
-                    error!(error = %e, "failed to get Bitcoin chain tip");
-                    continue;
-                }
-            };
+        let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(&esplora_client).await {
+            Ok(height) => height,
+            Err(e) => {
+                error!(error = %e, "failed to get Bitcoin chain tip");
+                continue;
+            }
+        };
         info!(%chain_tip_height, "bitcoin chain tip");
 
         // Get existing active entries from cache to avoid unnecessary RPC calls
@@ -216,6 +198,7 @@ pub async fn bridge_monitoring_task(
         let deposit_updates: Vec<(Txid, DepositInfo, u64)> = get_deposits(
             &rpc_manager,
             context.config(),
+            &esplora_client,
             chain_tip_height,
             &active_deposits,
         )
@@ -234,8 +217,13 @@ pub async fn bridge_monitoring_task(
                 })
             })
             .await;
-        let deposits_to_purge =
-            determine_deposits_to_purge(final_deposits, context.config(), chain_tip_height).await;
+        let deposits_to_purge = determine_deposits_to_purge(
+            final_deposits,
+            context.config(),
+            &esplora_client,
+            chain_tip_height,
+        )
+        .await;
         context
             .with_state_mut(|cache| {
                 cache.purge_deposits(deposits_to_purge);
@@ -246,6 +234,7 @@ pub async fn bridge_monitoring_task(
         let withdrawal_updates: Vec<(Buf32, WithdrawalInfo, u64)> = get_withdrawals(
             &rpc_manager,
             context.config(),
+            &esplora_client,
             chain_tip_height,
             &active_withdrawals,
         )
@@ -262,9 +251,13 @@ pub async fn bridge_monitoring_task(
                 cache.filter_withdrawals(|s| matches!(s, WithdrawalStatus::Complete))
             })
             .await;
-        let withdrawals_to_purge =
-            determine_withdrawals_to_purge(final_withdrawals, context.config(), chain_tip_height)
-                .await;
+        let withdrawals_to_purge = determine_withdrawals_to_purge(
+            final_withdrawals,
+            context.config(),
+            &esplora_client,
+            chain_tip_height,
+        )
+        .await;
         context
             .with_state_mut(|cache| {
                 cache.purge_withdrawals(withdrawals_to_purge);
@@ -275,6 +268,7 @@ pub async fn bridge_monitoring_task(
         let reimbursement_updates: Vec<(Txid, ReimbursementInfo, u64)> = get_reimbursements(
             &rpc_manager,
             context.config(),
+            &esplora_client,
             chain_tip_height,
             &active_reimbursements,
         )
@@ -299,6 +293,7 @@ pub async fn bridge_monitoring_task(
         let reimbursements_to_purge = determine_reimbursements_to_purge(
             final_reimbursements,
             context.config(),
+            &esplora_client,
             chain_tip_height,
         )
         .await;
@@ -313,18 +308,6 @@ pub async fn bridge_monitoring_task(
     }
 
     Ok(())
-}
-
-/// Fetch bitcoin chain tip height
-async fn get_bitcoin_chain_tip_height(
-    esplora_url: &str,
-) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-    let endpoint = format!("{}/blocks/tip/height", esplora_url.trim_end_matches('/'));
-    let resp = reqwest::Client::new().get(&endpoint).send().await?;
-
-    let text = resp.text().await?;
-    let height = text.trim().parse::<u64>()?;
-    Ok(height)
 }
 
 /// Fetch detailed information for all deposit requests
@@ -351,7 +334,8 @@ async fn get_bitcoin_chain_tip_height(
 async fn get_deposits(
     rpc_manager: &RpcClientManager,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
     active_deposit_txids: &[Txid],
 ) -> Vec<(DepositInfo, u64)> {
     let new_deposit_requests = bridge_rpc::get_deposit_requests(rpc_manager).await;
@@ -396,7 +380,7 @@ async fn get_deposits(
                 };
 
                 let confirmations =
-                    get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
+                    esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await;
                 if let Some(confirmations) = confirmations {
                     if confirmations < config.max_tx_confirmations() {
                         deposit_infos.push((DepositInfo::from(&dep_info), confirmations));
@@ -435,7 +419,8 @@ async fn get_deposits(
 async fn get_withdrawals(
     rpc_manager: &RpcClientManager,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
     active_withdrawal_request_ids: &[Buf32],
 ) -> Vec<(WithdrawalInfo, u64)> {
     let new_withdrawal_requests = bridge_rpc::get_withdrawal_requests(rpc_manager).await;
@@ -473,9 +458,12 @@ async fn get_withdrawals(
                 withdrawal_infos.push((WithdrawalInfo::from(&wd_info), 0));
             }
             RpcWithdrawalStatus::Complete { fulfillment_txid } => {
-                let confirmations =
-                    get_tx_confirmations(config.esplora_url(), *fulfillment_txid, chain_tip_height)
-                        .await;
+                let confirmations = esplora::get_tx_confirmations(
+                    esplora_client,
+                    *fulfillment_txid,
+                    chain_tip_height,
+                )
+                .await;
                 if let Some(confirmations) = confirmations {
                     if confirmations < config.max_tx_confirmations() {
                         withdrawal_infos.push((WithdrawalInfo::from(&wd_info), confirmations));
@@ -515,7 +503,8 @@ async fn get_withdrawals(
 async fn get_reimbursements(
     rpc_manager: &RpcClientManager,
     config: &BridgeMonitoringConfig,
-    chain_tip_height: u64,
+    esplora_client: &esplora::EsploraClient,
+    chain_tip_height: L1Height,
     active_reimbursement_txids: &[Txid],
 ) -> Vec<(ReimbursementInfo, u64)> {
     let new_claims = bridge_rpc::get_claims(rpc_manager).await;
@@ -566,7 +555,7 @@ async fn get_reimbursements(
                     | RpcReimbursementStatus::Challenged { .. } => unreachable!(), // Already matched
                 };
                 let confirmations =
-                    get_tx_confirmations(config.esplora_url(), txid, chain_tip_height).await;
+                    esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await;
                 if let Some(confirmations) = confirmations {
                     if confirmations < config.max_tx_confirmations() {
                         reimbursement_infos
