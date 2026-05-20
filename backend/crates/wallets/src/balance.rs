@@ -13,7 +13,7 @@ pub async fn balance_monitoring_task(
     context: Arc<BalanceContext>,
     shutdown: ShutdownGuard,
 ) -> Result<()> {
-    info!("Starting wallet balance monitoring task");
+    info!("starting wallet balance monitoring task");
     let refresh_interval = Duration::from_secs(context.config().refresh_interval_s());
     let mut interval = interval(refresh_interval);
 
@@ -45,7 +45,7 @@ pub async fn balance_monitoring_task(
         context.set_balances(new_balances).await;
         context.mark_balances_available();
 
-        info!("Updated wallet balances using trait-based APIs");
+        info!("updated wallet balances");
     }
 
     Ok(())

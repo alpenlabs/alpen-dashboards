@@ -63,7 +63,7 @@ where
                         max_retries = retry_policy.max_retries(),
                         delay_secs = delay,
                         error = %e,
-                        "Operation failed, retrying..."
+                        "operation failed; retrying"
                     );
                     sleep(Duration::from_secs(delay)).await;
                 }
