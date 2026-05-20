@@ -1,15 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::debug;
 
-use super::{cache::BridgeStatusCache, types::BridgeStatus};
+use super::{state::BridgeMonitoringState, types::BridgeStatus};
 use status_config::BridgeMonitoringConfig;
 
 /// Bridge monitoring task context.
 pub struct BridgeMonitoringContext {
     config: BridgeMonitoringConfig,
-    state: RwLock<BridgeStatusCache>,
+    state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
 }
@@ -18,7 +18,7 @@ impl BridgeMonitoringContext {
     pub fn new(config: BridgeMonitoringConfig) -> Self {
         Self {
             config,
-            state: RwLock::new(BridgeStatusCache::default()),
+            state: BridgeMonitoringState::default(),
             status_available: AtomicBool::new(false),
             initial_status_query_complete: Notify::new(),
         }
@@ -28,18 +28,8 @@ impl BridgeMonitoringContext {
         &self.config
     }
 
-    #[expect(
-        dead_code,
-        reason = "read-only state access is used by later status lifecycle commits"
-    )]
-    pub(crate) async fn with_state<T>(&self, f: impl FnOnce(&BridgeStatusCache) -> T) -> T {
-        let state = self.state.read().await;
-        f(&state)
-    }
-
-    pub(crate) async fn with_state_mut<T>(&self, f: impl FnOnce(&mut BridgeStatusCache) -> T) -> T {
-        let mut state = self.state.write().await;
-        f(&mut state)
+    pub(crate) fn state(&self) -> &BridgeMonitoringState {
+        &self.state
     }
 
     pub(crate) fn mark_status_available(&self) {
@@ -60,26 +50,7 @@ impl BridgeMonitoringContext {
     }
 
     pub(crate) async fn bridge_status(&self) -> BridgeStatus {
-        let cache = self.state.read().await;
-
-        BridgeStatus {
-            operators: cache.get_operators(),
-            deposits: cache
-                .filter_deposits(|_| true)
-                .into_iter()
-                .map(|(_, info)| info)
-                .collect(),
-            withdrawals: cache
-                .filter_withdrawals(|_| true)
-                .into_iter()
-                .map(|(_, info)| info)
-                .collect(),
-            reimbursements: cache
-                .filter_reimbursements(|_| true)
-                .into_iter()
-                .map(|(_, info)| info)
-                .collect(),
-        }
+        self.state.bridge_status().await
     }
 }
 
@@ -111,17 +82,16 @@ mod tests {
                 .expect("valid txid");
 
         context
-            .with_state_mut(|state| {
-                state.update_deposit(
-                    0,
-                    DepositInfo {
-                        deposit_request_txid,
-                        deposit_txid: Some(deposit_txid),
-                        status: DepositStatus::Complete,
-                    },
-                    1,
-                );
-            })
+            .state()
+            .apply_deposit_updates(vec![(
+                0,
+                DepositInfo {
+                    deposit_request_txid,
+                    deposit_txid: Some(deposit_txid),
+                    status: DepositStatus::Complete,
+                },
+                1,
+            )])
             .await;
 
         let status = context.bridge_status().await;

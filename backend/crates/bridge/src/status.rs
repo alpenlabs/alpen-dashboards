@@ -120,11 +120,7 @@ pub async fn bridge_monitoring_task(
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
-        context
-            .with_state_mut(|cache| {
-                cache.update_operators(operator_statuses);
-            })
-            .await;
+        context.state().update_operators(operator_statuses).await;
 
         let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(&esplora_client).await {
             Ok(height) => height,
@@ -152,15 +148,7 @@ pub async fn bridge_monitoring_task(
         )
         .await;
 
-        let final_deposits = context
-            .with_state_mut(|cache| {
-                cache.apply_deposit_updates(deposit_infos);
-
-                cache.filter_deposits(|s| {
-                    matches!(s, DepositStatus::Complete | DepositStatus::Failed)
-                })
-            })
-            .await;
+        let final_deposits = context.state().apply_deposit_updates(deposit_infos).await;
         let deposits_to_purge = determine_deposits_to_purge(
             final_deposits,
             context.config(),
@@ -168,17 +156,12 @@ pub async fn bridge_monitoring_task(
             chain_tip_height,
         )
         .await;
-        context
-            .with_state_mut(|cache| {
-                cache.purge_deposits(deposits_to_purge);
-            })
-            .await;
+        context.state().purge_deposits(deposits_to_purge).await;
 
         let withdrawal_updates = get_withdrawals().await;
         context
-            .with_state_mut(|cache| {
-                cache.apply_withdrawal_updates(withdrawal_updates);
-            })
+            .state()
+            .apply_withdrawal_updates(withdrawal_updates)
             .await;
 
         // Reimbursements are only possible after withdrawal fulfillment. This
@@ -195,18 +178,8 @@ pub async fn bridge_monitoring_task(
         .await;
 
         let final_reimbursements = context
-            .with_state_mut(|cache| {
-                cache.apply_reimbursement_updates(reimbursement_infos);
-
-                cache.filter_reimbursements(|s| {
-                    matches!(
-                        s,
-                        ReimbursementStatus::Complete
-                            | ReimbursementStatus::Slashed
-                            | ReimbursementStatus::Aborted
-                    )
-                })
-            })
+            .state()
+            .apply_reimbursement_updates(reimbursement_infos)
             .await;
         let reimbursements_to_purge = determine_reimbursements_to_purge(
             final_reimbursements,
@@ -216,9 +189,8 @@ pub async fn bridge_monitoring_task(
         )
         .await;
         context
-            .with_state_mut(|cache| {
-                cache.purge_reimbursements(reimbursements_to_purge);
-            })
+            .state()
+            .purge_reimbursements(reimbursements_to_purge)
             .await;
 
         context.mark_status_available();

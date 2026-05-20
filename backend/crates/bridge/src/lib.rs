@@ -3,6 +3,7 @@ mod cache;
 mod context;
 mod db;
 mod esplora;
+mod state;
 mod status;
 mod types;
 mod withdrawal_indexer;
