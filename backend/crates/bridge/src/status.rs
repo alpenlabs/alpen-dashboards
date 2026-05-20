@@ -4,7 +4,7 @@ use bitcoin::{secp256k1::PublicKey, Txid};
 
 use jsonrpsee::http_client::HttpClient;
 use std::collections::BTreeMap;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::Arc;
 use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
 use strata_bridge_rpc::types::{
     RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus, RpcWithdrawalStatus,
@@ -14,10 +14,10 @@ use strata_primitives::buf::Buf32;
 use strata_tasks::ShutdownGuard;
 
 use super::{
-    cache::BridgeStatusCache,
+    context::BridgeMonitoringContext,
     types::{
-        BridgeMonitoringContext, BridgeStatus, DepositInfo, DepositStatus, OperatorStatus,
-        ReimbursementInfo, ReimbursementStatus, TxStatus, WithdrawalInfo, WithdrawalStatus,
+        BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
+        ReimbursementStatus, TxStatus, WithdrawalInfo, WithdrawalStatus,
     },
 };
 
@@ -185,15 +185,12 @@ async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u
 
 /// Determine which cached deposit entries should be purged
 async fn determine_deposits_to_purge(
-    cache: &BridgeStatusCache,
+    final_deposits: Vec<(Txid, DepositInfo)>,
     config: &BridgeMonitoringConfig,
     chain_tip_height: u64,
 ) -> Vec<Txid> {
     let max_confirmations = config.max_tx_confirmations();
     let mut deposits_to_purge = Vec::new();
-
-    let final_deposits =
-        cache.filter_deposits(|s| matches!(s, DepositStatus::Complete | DepositStatus::Failed));
 
     for (txid, deposit_info) in final_deposits {
         let check_txid = match deposit_info.status {
@@ -219,14 +216,12 @@ async fn determine_deposits_to_purge(
 
 /// Determine which cached withdrawal entries should be purged
 async fn determine_withdrawals_to_purge(
-    cache: &BridgeStatusCache,
+    final_withdrawals: Vec<(Buf32, WithdrawalInfo)>,
     config: &BridgeMonitoringConfig,
     chain_tip_height: u64,
 ) -> Vec<Buf32> {
     let max_confirmations = config.max_tx_confirmations();
     let mut withdrawals_to_purge = Vec::new();
-
-    let final_withdrawals = cache.filter_withdrawals(|s| matches!(s, WithdrawalStatus::Complete));
 
     for (request_id, withdrawal_info) in final_withdrawals {
         if let Some(fulfillment_txid) = withdrawal_info.fulfillment_txid {
@@ -247,19 +242,12 @@ async fn determine_withdrawals_to_purge(
 
 /// Determine which cached reimbursement entries should be purged
 async fn determine_reimbursements_to_purge(
-    cache: &BridgeStatusCache,
+    final_reimbursements: Vec<(Txid, ReimbursementInfo)>,
     config: &BridgeMonitoringConfig,
     chain_tip_height: u64,
 ) -> Vec<Txid> {
     let max_confirmations = config.max_tx_confirmations();
     let mut reimbursements_to_purge = Vec::new();
-
-    let final_reimbursements = cache.filter_reimbursements(|s| {
-        matches!(
-            s,
-            ReimbursementStatus::Complete | ReimbursementStatus::Cancelled
-        )
-    });
 
     for (txid, reimbursement_info) in final_reimbursements {
         let check_txid = match reimbursement_info.status {
@@ -291,11 +279,11 @@ pub async fn bridge_monitoring_task(
     shutdown: ShutdownGuard,
 ) -> Result<()> {
     let mut interval = interval(Duration::from_secs(
-        context.config.status_refetch_interval(),
+        context.config().status_refetch_interval(),
     ));
 
     // Create RPC client manager once and reuse it
-    let rpc_manager = RpcClientManager::new(&context.config);
+    let rpc_manager = RpcClientManager::new(context.config());
 
     loop {
         tokio::select! {
@@ -308,7 +296,7 @@ pub async fn bridge_monitoring_task(
         // Bridge operator status
         let mut operator_statuses = Vec::new();
 
-        for (index, operator) in context.config.operators().iter().enumerate() {
+        for (index, operator) in context.config().operators().iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
@@ -317,13 +305,14 @@ pub async fn bridge_monitoring_task(
         }
 
         // Update operators incrementally
-        {
-            let mut cache = context.status_cache.write().await;
-            cache.update_operators(operator_statuses);
-        }
+        context
+            .with_state_mut(|cache| {
+                cache.update_operators(operator_statuses);
+            })
+            .await;
 
         let chain_tip_height =
-            match get_bitcoin_chain_tip_height(context.config.esplora_url()).await {
+            match get_bitcoin_chain_tip_height(context.config().esplora_url()).await {
                 Ok(height) => height,
                 Err(e) => {
                     error!(error = %e, "failed to get Bitcoin chain tip");
@@ -333,35 +322,36 @@ pub async fn bridge_monitoring_task(
         info!(%chain_tip_height, "bitcoin chain tip");
 
         // Get existing active entries from cache to avoid unnecessary RPC calls
-        let (active_deposits, active_withdrawals, active_reimbursements) = {
-            let cache = context.status_cache.read().await;
-            let deposits: Vec<Txid> = cache
-                .filter_deposits(|s| matches!(s, DepositStatus::InProgress))
-                .iter()
-                .map(|(txid, _)| *txid)
-                .collect();
-            let withdrawals: Vec<Buf32> = cache
-                .filter_withdrawals(|s| matches!(s, WithdrawalStatus::InProgress))
-                .iter()
-                .map(|(request_id, _)| *request_id)
-                .collect();
-            let reimbursements: Vec<Txid> = cache
-                .filter_reimbursements(|s| {
-                    matches!(
-                        s,
-                        ReimbursementStatus::InProgress | ReimbursementStatus::Challenged
-                    )
-                })
-                .iter()
-                .map(|(txid, _)| *txid)
-                .collect();
-            (deposits, withdrawals, reimbursements)
-        };
+        let (active_deposits, active_withdrawals, active_reimbursements) = context
+            .with_state(|cache| {
+                let deposits: Vec<Txid> = cache
+                    .filter_deposits(|s| matches!(s, DepositStatus::InProgress))
+                    .iter()
+                    .map(|(txid, _)| *txid)
+                    .collect();
+                let withdrawals: Vec<Buf32> = cache
+                    .filter_withdrawals(|s| matches!(s, WithdrawalStatus::InProgress))
+                    .iter()
+                    .map(|(request_id, _)| *request_id)
+                    .collect();
+                let reimbursements: Vec<Txid> = cache
+                    .filter_reimbursements(|s| {
+                        matches!(
+                            s,
+                            ReimbursementStatus::InProgress | ReimbursementStatus::Challenged
+                        )
+                    })
+                    .iter()
+                    .map(|(txid, _)| *txid)
+                    .collect();
+                (deposits, withdrawals, reimbursements)
+            })
+            .await;
 
         // Update deposits incrementally
         let deposit_updates: Vec<(Txid, DepositInfo, u64)> = get_deposits(
             &rpc_manager,
-            &context.config,
+            context.config(),
             chain_tip_height,
             &active_deposits,
         )
@@ -370,20 +360,28 @@ pub async fn bridge_monitoring_task(
         .map(|(info, confirmations)| (info.deposit_request_txid, *info, *confirmations))
         .collect();
 
-        {
-            let mut cache = context.status_cache.write().await;
-            cache.apply_deposit_updates(deposit_updates);
+        let final_deposits = context
+            .with_state_mut(|cache| {
+                cache.apply_deposit_updates(deposit_updates);
 
-            // Determine deposits to purge after applying updates
-            let deposits_to_purge =
-                determine_deposits_to_purge(&cache, &context.config, chain_tip_height).await;
-            cache.purge_deposits(deposits_to_purge);
-        }
+                // Determine deposits to purge after applying updates.
+                cache.filter_deposits(|s| {
+                    matches!(s, DepositStatus::Complete | DepositStatus::Failed)
+                })
+            })
+            .await;
+        let deposits_to_purge =
+            determine_deposits_to_purge(final_deposits, context.config(), chain_tip_height).await;
+        context
+            .with_state_mut(|cache| {
+                cache.purge_deposits(deposits_to_purge);
+            })
+            .await;
 
         // Update withdrawals incrementally
         let withdrawal_updates: Vec<(Buf32, WithdrawalInfo, u64)> = get_withdrawals(
             &rpc_manager,
-            &context.config,
+            context.config(),
             chain_tip_height,
             &active_withdrawals,
         )
@@ -392,20 +390,27 @@ pub async fn bridge_monitoring_task(
         .map(|(info, confirmations)| (info.withdrawal_request_txid, *info, *confirmations))
         .collect();
 
-        {
-            let mut cache = context.status_cache.write().await;
-            cache.apply_withdrawal_updates(withdrawal_updates);
+        let final_withdrawals = context
+            .with_state_mut(|cache| {
+                cache.apply_withdrawal_updates(withdrawal_updates);
 
-            // Determine withdrawals to purge after applying updates
-            let withdrawals_to_purge =
-                determine_withdrawals_to_purge(&cache, &context.config, chain_tip_height).await;
-            cache.purge_withdrawals(withdrawals_to_purge);
-        }
+                // Determine withdrawals to purge after applying updates.
+                cache.filter_withdrawals(|s| matches!(s, WithdrawalStatus::Complete))
+            })
+            .await;
+        let withdrawals_to_purge =
+            determine_withdrawals_to_purge(final_withdrawals, context.config(), chain_tip_height)
+                .await;
+        context
+            .with_state_mut(|cache| {
+                cache.purge_withdrawals(withdrawals_to_purge);
+            })
+            .await;
 
         // Update reimbursements incrementally
         let reimbursement_updates: Vec<(Txid, ReimbursementInfo, u64)> = get_reimbursements(
             &rpc_manager,
-            &context.config,
+            context.config(),
             chain_tip_height,
             &active_reimbursements,
         )
@@ -414,21 +419,33 @@ pub async fn bridge_monitoring_task(
         .map(|(info, confirmations)| (info.claim_txid, *info, *confirmations))
         .collect();
 
-        {
-            let mut cache = context.status_cache.write().await;
-            cache.apply_reimbursement_updates(reimbursement_updates);
+        let final_reimbursements = context
+            .with_state_mut(|cache| {
+                cache.apply_reimbursement_updates(reimbursement_updates);
 
-            // Determine reimbursements to purge after applying updates
-            let reimbursements_to_purge =
-                determine_reimbursements_to_purge(&cache, &context.config, chain_tip_height).await;
-            cache.purge_reimbursements(reimbursements_to_purge);
-        }
+                // Determine reimbursements to purge after applying updates.
+                cache.filter_reimbursements(|s| {
+                    matches!(
+                        s,
+                        ReimbursementStatus::Complete | ReimbursementStatus::Cancelled
+                    )
+                })
+            })
+            .await;
+        let reimbursements_to_purge = determine_reimbursements_to_purge(
+            final_reimbursements,
+            context.config(),
+            chain_tip_height,
+        )
+        .await;
+        context
+            .with_state_mut(|cache| {
+                cache.purge_reimbursements(reimbursements_to_purge);
+            })
+            .await;
 
         // Mark initial status query as complete and notify waiters
-        if !context.status_available.load(Ordering::Acquire) {
-            context.status_available.store(true, Ordering::Release);
-            context.initial_status_query_complete.notify_waiters();
-        }
+        context.mark_status_available();
     }
 
     Ok(())
@@ -818,32 +835,7 @@ async fn get_reimbursements(
 
 /// Return latest bridge status extracted from cache
 pub async fn get_bridge_status(context: Arc<BridgeMonitoringContext>) -> Json<BridgeStatus> {
-    // Wait for initial status query to complete if not yet available
-    if !context.status_available.load(Ordering::Acquire) {
-        info!("waiting for initial bridge status query to complete");
-        context.initial_status_query_complete.notified().await;
-    }
+    context.wait_until_status_available().await;
 
-    let cache = context.status_cache.read().await;
-
-    let bridge_status = BridgeStatus {
-        operators: cache.get_operators(),
-        deposits: cache
-            .filter_deposits(|_| true)
-            .into_iter()
-            .map(|(_, info)| info)
-            .collect(),
-        withdrawals: cache
-            .filter_withdrawals(|_| true)
-            .into_iter()
-            .map(|(_, info)| info)
-            .collect(),
-        reimbursements: cache
-            .filter_reimbursements(|_| true)
-            .into_iter()
-            .map(|(_, info)| info)
-            .collect(),
-    };
-
-    Json(bridge_status)
+    Json(context.bridge_status().await)
 }
