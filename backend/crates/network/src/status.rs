@@ -20,7 +20,7 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
             client.request("strata_syncStatus", Vec::<()>::new()).await;
         match response {
             Ok(json) => {
-                info!(?json, "RPC Response");
+                info!(?json, method = "strata_syncStatus", "rpc response");
                 if json.get("tip_height").is_some() {
                     return Status::Online;
                 } else {
@@ -31,12 +31,21 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
                 if retry_count < retry_policy.max_retries() {
                     let delay_seconds = retry_policy.get_delay(retry_count);
                     if delay_seconds > 0 {
-                        info!(?delay_seconds, "Retrying `strata_syncStatus` after");
+                        info!(
+                            delay_seconds,
+                            retry_count,
+                            method = "strata_syncStatus",
+                            "retrying rpc status request"
+                        );
                         sleep(Duration::from_secs(delay_seconds)).await;
                     }
                     retry_count += 1;
                 } else {
-                    error!(error = %e, "Could not get status");
+                    error!(
+                        error = %e,
+                        method = "strata_syncStatus",
+                        "could not get network status"
+                    );
                     return Status::Offline;
                 }
             }
@@ -64,7 +73,7 @@ pub async fn fetch_statuses_task(
     context: Arc<NetworkMonitoringContext>,
     shutdown: ShutdownGuard,
 ) -> Result<()> {
-    info!("Fetching statuses...");
+    info!("fetching network statuses");
     let mut interval = interval(Duration::from_secs(
         context.config.status_refetch_interval(),
     ));
@@ -89,7 +98,7 @@ pub async fn fetch_statuses_task(
             bundler_endpoint,
         };
 
-        info!(?new_status, "Updated Status");
+        info!(?new_status, "updated network status");
 
         let mut locked_status = context.network_status.write().await;
         *locked_status = new_status;
@@ -115,7 +124,7 @@ pub async fn get_network_status(context: Arc<NetworkMonitoringContext>) -> Json<
         .status_available
         .load(std::sync::atomic::Ordering::Acquire)
     {
-        info!("Waiting for initial network status query to complete");
+        info!("waiting for initial network status query to complete");
         context.initial_status_query_complete.notified().await;
     }
 
