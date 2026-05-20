@@ -68,8 +68,8 @@ async fn check_bundler_health(
     Status::Offline
 }
 
-/// Periodically fetches real statuses
-pub async fn fetch_statuses_task(
+/// Periodically polls configured network service endpoints and updates status state.
+pub async fn network_monitoring_task(
     context: Arc<NetworkMonitoringContext>,
     shutdown: ShutdownGuard,
 ) -> Result<()> {

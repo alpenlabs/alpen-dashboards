@@ -6,7 +6,7 @@ use status_bridge::{
     bridge_monitoring_task, get_bridge_status, run_withdrawal_indexer, BridgeMonitoringContext,
 };
 use status_config::Config;
-use status_network::{fetch_statuses_task, get_network_status, NetworkMonitoringContext};
+use status_network::{get_network_status, network_monitoring_task, NetworkMonitoringContext};
 use strata_tasks::TaskManager;
 use tokio::{net::TcpListener, runtime};
 use tower_http::cors::{Any, CorsLayer};
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
 
     executor.spawn_critical_async_with_shutdown("network-monitoring", {
         let network_context = Arc::clone(&network_context);
-        move |shutdown| async move { fetch_statuses_task(network_context, shutdown).await }
+        move |shutdown| async move { network_monitoring_task(network_context, shutdown).await }
     });
 
     executor.spawn_critical_async_with_shutdown("bridge-monitoring", {
