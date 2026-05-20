@@ -1,3 +1,4 @@
+mod bridge_rpc;
 mod cache;
 mod context;
 mod db;
