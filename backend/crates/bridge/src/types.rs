@@ -28,12 +28,6 @@ impl OperatorStatus {
     }
 }
 
-#[derive(Deserialize)]
-pub(crate) struct TxStatus {
-    pub(crate) confirmed: bool,
-    pub(crate) block_height: Option<u64>,
-}
-
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub(crate) enum DepositStatus {
     #[serde(rename = "In progress")]

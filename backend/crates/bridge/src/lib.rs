@@ -1,6 +1,8 @@
+mod bridge_rpc;
 mod cache;
 mod context;
 mod db;
+mod esplora;
 mod status;
 mod types;
 mod withdrawal_indexer;
