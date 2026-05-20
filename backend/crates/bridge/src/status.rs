@@ -127,7 +127,7 @@ impl RpcClientManager {
         // BTreeMap maintains sorted order automatically
         for (key, client) in self.clients.iter() {
             let client_clone = client.clone();
-            let operation_name = format!("RPC request to operator {key}");
+            let operation_name = format!("RPC request to operator public key {key}");
 
             match execute_with_retries(
                 || {
@@ -139,13 +139,14 @@ impl RpcClientManager {
             .await
             {
                 Ok(result) => {
-                    debug!("RPC request succeeded for operator: {}", key);
+                    debug!(operator_pk = %key, "rpc request succeeded");
                     return Some(result);
                 }
                 Err(e) => {
                     warn!(
-                        "RPC request failed for operator {} after retries: {}",
-                        key, e
+                        operator_pk = %key,
+                        error = %e,
+                        "rpc request failed after retries"
                     );
                     // Continue to next operator
                 }
@@ -166,12 +167,12 @@ async fn get_tx_confirmations(esplora_url: &str, txid: Txid, chain_tip_height: u
         Ok(resp) => match resp.json().await {
             Ok(status) => status,
             Err(e) => {
-                error!(%txid, %e, "Failed to parse tx status JSON from esplora");
+                error!(%txid, error = %e, "failed to parse tx status JSON from esplora");
                 return None;
             }
         },
         Err(e) => {
-            error!(%txid, %e, "Failed to fetch tx status from esplora");
+            error!(%txid, error = %e, "failed to fetch tx status from esplora");
             return None;
         }
     };
@@ -325,7 +326,7 @@ pub async fn bridge_monitoring_task(
             match get_bitcoin_chain_tip_height(context.config.esplora_url()).await {
                 Ok(height) => height,
                 Err(e) => {
-                    error!(error = %e, "Failed to get Bitcoin chain tip");
+                    error!(error = %e, "failed to get Bitcoin chain tip");
                     continue;
                 }
             };
@@ -441,7 +442,7 @@ async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
     if rpc_client.get_uptime().await.is_ok() {
         RpcOperatorStatus::Online
     } else {
-        warn!("Failed to fetch bridge operator uptime");
+        warn!("failed to fetch bridge operator uptime");
         RpcOperatorStatus::Offline
     }
 }
@@ -479,7 +480,7 @@ async fn get_deposit_requests(rpc_manager: &RpcClientManager) -> Vec<Txid> {
         .await;
 
     result.unwrap_or_else(|| {
-        warn!("No deposit requests found from any operator");
+        warn!("no deposit requests found from any operator");
         Vec::new()
     })
 }
@@ -523,10 +524,10 @@ async fn get_deposits(
     }
 
     info!(
-        "Checking {} deposit requests ({} new, {} existing active)",
-        deposit_requests.len(),
-        new_count,
-        active_deposit_txids.len()
+        deposit_request_count = deposit_requests.len(),
+        new_deposit_request_count = new_count,
+        active_deposit_count = active_deposit_txids.len(),
+        "checking deposit requests"
     );
 
     let mut deposit_infos: Vec<(DepositInfo, u64)> = Vec::new();
@@ -542,7 +543,7 @@ async fn get_deposits(
             .await;
 
         let Some(dep_info) = rpc_info else {
-            error!(%deposit_request_txid, "Failed to fetch deposit info after retries");
+            error!(%deposit_request_txid, "failed to fetch deposit info after retries");
             continue;
         };
 
@@ -571,7 +572,7 @@ async fn get_deposits(
     }
 
     if deposit_infos.is_empty() {
-        warn!("No deposit infos found");
+        warn!("no deposit infos found");
     }
     deposit_infos
 }
@@ -597,7 +598,7 @@ async fn get_withdrawal_requests(rpc_manager: &RpcClientManager) -> Vec<Buf32> {
         .await;
 
     result.unwrap_or_else(|| {
-        warn!("No withdrawal requests found from any operator");
+        warn!("no withdrawal requests found from any operator");
         Vec::new()
     })
 }
@@ -640,10 +641,10 @@ async fn get_withdrawals(
     }
 
     info!(
-        "Checking {} withdrawal requests ({} new, {} existing active)",
-        withdrawal_requests.len(),
-        new_count,
-        active_withdrawal_request_ids.len()
+        withdrawal_request_count = withdrawal_requests.len(),
+        new_withdrawal_request_count = new_count,
+        active_withdrawal_count = active_withdrawal_request_ids.len(),
+        "checking withdrawal requests"
     );
 
     let mut withdrawal_infos: Vec<(WithdrawalInfo, u64)> = Vec::new();
@@ -660,7 +661,7 @@ async fn get_withdrawals(
             .await;
 
         let Some(wd_info) = rpc_info else {
-            error!(%withdrawal_request_txid, "Failed to fetch withdrawal info after retries");
+            error!(%withdrawal_request_txid, "failed to fetch withdrawal info after retries");
             continue;
         };
 
@@ -684,7 +685,7 @@ async fn get_withdrawals(
     }
 
     if withdrawal_infos.is_empty() {
-        warn!("No withdrawal infos found");
+        warn!("no withdrawal infos found");
     }
     withdrawal_infos
 }
@@ -710,7 +711,7 @@ async fn get_claims(rpc_manager: &RpcClientManager) -> Vec<Txid> {
         .await;
 
     result.unwrap_or_else(|| {
-        warn!("No claims found from any operator");
+        warn!("no claims found from any operator");
         Vec::new()
     })
 }
@@ -754,10 +755,10 @@ async fn get_reimbursements(
     }
 
     info!(
-        "Checking {} claims ({} new, {} existing active)",
-        claims.len(),
-        new_count,
-        active_reimbursement_txids.len()
+        claim_count = claims.len(),
+        new_claim_count = new_count,
+        active_reimbursement_count = active_reimbursement_txids.len(),
+        "checking claims"
     );
 
     let mut reimbursement_infos = Vec::new();
@@ -774,7 +775,7 @@ async fn get_reimbursements(
             .await;
 
         let Some(claim_info) = rpc_info else {
-            error!(%claim_txid, "Failed to fetch claim info after retries");
+            error!(%claim_txid, "failed to fetch claim info after retries");
             continue;
         };
 
@@ -810,7 +811,7 @@ async fn get_reimbursements(
     }
 
     if reimbursement_infos.is_empty() {
-        warn!("No reimbursement infos found");
+        warn!("no reimbursement infos found");
     }
     reimbursement_infos
 }
@@ -819,7 +820,7 @@ async fn get_reimbursements(
 pub async fn get_bridge_status(context: Arc<BridgeMonitoringContext>) -> Json<BridgeStatus> {
     // Wait for initial status query to complete if not yet available
     if !context.status_available.load(Ordering::Acquire) {
-        info!("Waiting for initial bridge status query to complete");
+        info!("waiting for initial bridge status query to complete");
         context.initial_status_query_complete.notified().await;
     }
 
