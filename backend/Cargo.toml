@@ -29,14 +29,14 @@
       "client",
     ], rev = "851a681200658a19d88493a70f3bed66e515a08b" }
     strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "565fafccf2fe181d2f93003f9135ceed126a01ad" }
-    strata-tasks      = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.1.0-alpha-rc16" }
-    typed-sled        = { git = "https://github.com/alpenlabs/typed-sled" }
+    strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.1.0-alpha-rc16" }
+    typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 
     # External
-    anyhow = { version = "1" }
     alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
-    alloy-sol-types  = { version = "1.4.1" }
-    async-trait      = { version = "0.1" }
+    alloy-sol-types = { version = "1.4.1" }
+    anyhow = { version = "1" }
+    async-trait = { version = "0.1" }
     axum = { version = "0.8" }
     bitcoin = { version = "0.32.8", features = [ "serde" ] }
     hex = { version = "0.4" }
@@ -47,7 +47,7 @@
       "alloc",
       "raw_value",
     ] }
-    sled      = { version = "0.34" }
+    sled = { version = "0.34" }
     thiserror = { version = "1" }
     tokio = { version = "1.52.1", features = [ "macros", "rt-multi-thread" ] }
     toml = { version = "1.1.2" }

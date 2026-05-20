@@ -46,6 +46,13 @@ impl ApiServerConfig {
 /// Default retry policy base for exponential backoff
 const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 
+/// Default timeout for Esplora HTTP requests in seconds.
+const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
+
+fn default_esplora_request_timeout_s() -> u64 {
+    DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkMonitoringConfig {
@@ -109,6 +116,10 @@ impl NetworkMonitoringConfig {
 pub struct BridgeMonitoringConfig {
     /// Esplora URL
     esplora_url: String,
+
+    /// Timeout for Esplora HTTP requests in seconds.
+    #[serde(default = "default_esplora_request_timeout_s")]
+    esplora_request_timeout_s: u64,
 
     /// Maximum confirmations
     max_tx_confirmations: u64,
@@ -226,6 +237,10 @@ impl BridgeOperator {
 impl BridgeMonitoringConfig {
     pub fn esplora_url(&self) -> &str {
         &self.esplora_url
+    }
+
+    pub fn esplora_request_timeout_s(&self) -> u64 {
+        self.esplora_request_timeout_s
     }
 
     pub fn max_tx_confirmations(&self) -> u64 {
@@ -399,6 +414,7 @@ retry_policy_total_time_s = 60
 status_refetch_interval_s = 10
 
 [bridge]
+esplora_request_timeout_s = 5
 esplora_url = "https://esplora.testnet.alpenlabs.io"
 max_tx_confirmations = 6
 status_refetch_interval_s = 120
@@ -533,6 +549,7 @@ retry_policy_total_time_s = 30
 status_refetch_interval_s = 5
 
 [bridge]
+esplora_request_timeout_s = 9
 esplora_url = "https://esplora.example.com"
 max_tx_confirmations = 12
 status_refetch_interval_s = 60
@@ -585,6 +602,7 @@ withdrawal_denomination_sats = 100000000
         );
         assert_eq!(config.network.status_refetch_interval(), 5);
         assert_eq!(config.bridge.esplora_url(), "https://esplora.example.com");
+        assert_eq!(config.bridge.esplora_request_timeout_s(), 9);
         assert_eq!(config.bridge.max_tx_confirmations(), 12);
         assert_eq!(config.bridge.status_refetch_interval(), 60);
         assert_eq!(config.bridge.operators().len(), 2);
@@ -648,7 +666,7 @@ withdrawal_denomination_sats = 100000000
     }
 
     #[test]
-    fn test_withdrawal_indexer_defaults() {
+    fn test_monitoring_defaults() {
         let toml_doc = r#"
 datadir = "data"
 
@@ -687,6 +705,10 @@ eth_rpc_url = "https://rpc.example.com"
 "#;
 
         let config = toml::from_str::<Config>(toml_doc).expect("parse");
+        assert_eq!(
+            config.bridge().esplora_request_timeout_s(),
+            DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+        );
         let indexer = config.withdrawal_indexer();
         assert_eq!(indexer.batch_size(), DEFAULT_ETH_LOGS_BATCH_SIZE);
         assert_eq!(indexer.finality_lag(), DEFAULT_ETH_LOGS_FINALITY_LAG);

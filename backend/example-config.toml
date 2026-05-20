@@ -17,6 +17,7 @@ datadir = "data"
 
 # Bridge monitoring configuration
 [bridge]
+  esplora_request_timeout_s = 5
   esplora_url               = "https://esplora.testnet.alpenlabs.io"
   max_tx_confirmations      = 6
   status_refetch_interval_s = 120
@@ -87,9 +88,9 @@ datadir = "data"
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
-  eth_rpc_url                  = "https://rpc.testnet.alpenlabs.io"
   batch_size                   = 1_000
+  eth_rpc_url                  = "https://rpc.testnet.alpenlabs.io"
   finality_lag                 = 12
-  start_block                  = 0
   poll_interval_s              = 10
+  start_block                  = 0
   withdrawal_denomination_sats = 100_000_000
