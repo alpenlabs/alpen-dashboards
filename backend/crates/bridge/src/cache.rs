@@ -43,12 +43,21 @@ impl<T> CacheEntry<T> {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
     deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
+    deposit_info_cursor: DepositIdx,
     withdrawals: HashMap<Buf32, CacheEntry<WithdrawalInfo>>,
     reimbursements: HashMap<DepositIdx, CacheEntry<ReimbursementInfo>>,
     operators: Vec<OperatorStatus>,
 }
 
 impl BridgeStatusCache {
+    pub(crate) fn deposit_info_cursor(&self) -> DepositIdx {
+        self.deposit_info_cursor
+    }
+
+    pub(crate) fn set_deposit_info_cursor(&mut self, cursor: DepositIdx) {
+        self.deposit_info_cursor = cursor;
+    }
+
     /// Update deposit cache entry
     pub(crate) fn update_deposit(
         &mut self,

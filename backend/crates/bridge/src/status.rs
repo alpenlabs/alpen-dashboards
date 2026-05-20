@@ -3,7 +3,6 @@ use axum::Json;
 use bitcoin::secp256k1::PublicKey;
 use std::sync::Arc;
 use strata_bridge_primitives::types::DepositIdx;
-use strata_bridge_rpc::types::RpcDepositStatus;
 use strata_primitives::buf::Buf32;
 use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
@@ -11,7 +10,8 @@ use strata_tasks::ShutdownGuard;
 use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
-    esplora,
+    esplora::{self, get_bitcoin_chain_tip_height, EsploraClient},
+    state::DepositInfoUpdate,
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus, WithdrawalInfo,
@@ -23,43 +23,11 @@ use tracing::{error, info, warn};
 
 use status_config::BridgeMonitoringConfig;
 
-/// Determine which cached deposit entries should be purged.
-async fn determine_deposits_to_purge(
-    final_deposits: Vec<(DepositIdx, DepositInfo)>,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-) -> Vec<DepositIdx> {
-    let max_confirmations = config.max_tx_confirmations();
-    let mut deposits_to_purge = Vec::new();
-
-    for (deposit_idx, deposit_info) in final_deposits {
-        let check_txid = match deposit_info.status {
-            DepositStatus::Failed => deposit_info.deposit_request_txid,
-            DepositStatus::Complete => deposit_info
-                .deposit_txid
-                .unwrap_or(deposit_info.deposit_request_txid),
-            DepositStatus::InProgress => continue,
-        };
-
-        let current_confirmations =
-            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
-
-        if let Some(confirmations) = current_confirmations {
-            if confirmations >= max_confirmations {
-                deposits_to_purge.push(deposit_idx);
-            }
-        }
-    }
-
-    deposits_to_purge
-}
-
 /// Determine which cached reimbursement entries should be purged.
 async fn determine_reimbursements_to_purge(
     final_reimbursements: Vec<(DepositIdx, ReimbursementInfo)>,
     config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
+    esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
 ) -> Vec<DepositIdx> {
     let max_confirmations = config.max_tx_confirmations();
@@ -117,8 +85,7 @@ pub async fn bridge_monitoring_task(
 
         context.state().update_operators(operator_statuses).await;
 
-        let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(context.esplora()).await
-        {
+        let chain_tip_height = match get_bitcoin_chain_tip_height(context.esplora()).await {
             Ok(height) => height,
             Err(e) => {
                 error!(error = %e, "failed to get Bitcoin chain tip");
@@ -135,24 +102,20 @@ pub async fn bridge_monitoring_task(
             }
         };
 
-        let deposit_infos = get_deposits(
-            context.bridge_rpc(),
-            context.config(),
-            context.esplora(),
-            chain_tip_height,
-            &deposit_indices,
-        )
-        .await;
-
-        let final_deposits = context.state().apply_deposit_updates(deposit_infos).await;
-        let deposits_to_purge = determine_deposits_to_purge(
-            final_deposits,
-            context.config(),
-            context.esplora(),
-            chain_tip_height,
-        )
-        .await;
-        context.state().purge_deposits(deposits_to_purge).await;
+        let deposit_candidates = context
+            .state()
+            .select_deposit_info_candidates(&deposit_indices)
+            .await;
+        let deposit_infos = get_deposits(context.bridge_rpc(), &deposit_candidates).await;
+        let deposit_info_updates =
+            get_deposit_info_updates(context.esplora(), chain_tip_height, deposit_infos).await;
+        context
+            .state()
+            .apply_deposit_info_updates(
+                deposit_info_updates,
+                context.config().max_tx_confirmations(),
+            )
+            .await;
 
         let withdrawal_updates = get_withdrawals().await;
         context
@@ -198,11 +161,8 @@ pub async fn bridge_monitoring_task(
 /// Fetch detailed information for all deposits.
 async fn get_deposits(
     rpc_manager: &bridge_rpc::RpcClientManager,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
     deposit_indices: &[DepositIdx],
-) -> Vec<(DepositIdx, DepositInfo, u64)> {
+) -> Vec<(DepositIdx, DepositInfo)> {
     info!(
         deposit_count = deposit_indices.len(),
         "fetching deposit details"
@@ -218,36 +178,48 @@ async fn get_deposits(
             }
         };
 
-        match &dep_info.status {
-            RpcDepositStatus::InProgress => {
-                deposit_infos.push((dep_info.deposit_idx, DepositInfo::from(&dep_info), 0));
-            }
-            RpcDepositStatus::Failed { .. } | RpcDepositStatus::Complete { .. } => {
-                let txid = match &dep_info.status {
-                    RpcDepositStatus::Failed { .. } => dep_info.deposit_request_txid,
-                    RpcDepositStatus::Complete { deposit_txid } => *deposit_txid,
-                    RpcDepositStatus::InProgress => continue,
-                };
-
-                let confirmations =
-                    esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        deposit_infos.push((
-                            dep_info.deposit_idx,
-                            DepositInfo::from(&dep_info),
-                            confirmations,
-                        ));
-                    }
-                }
-            }
-        }
+        deposit_infos.push((dep_info.deposit_idx, DepositInfo::from(&dep_info)));
     }
 
     if deposit_infos.is_empty() {
         warn!("no deposit infos found");
     }
     deposit_infos
+}
+
+async fn get_deposit_info_updates(
+    esplora_client: &EsploraClient,
+    chain_tip_height: L1Height,
+    deposit_infos: Vec<(DepositIdx, DepositInfo)>,
+) -> Vec<DepositInfoUpdate> {
+    let mut updates = Vec::new();
+
+    for (deposit_idx, deposit_info) in deposit_infos {
+        let check_txid = match deposit_info.status {
+            DepositStatus::InProgress => {
+                updates.push(DepositInfoUpdate {
+                    deposit_idx,
+                    info: deposit_info,
+                    confirmations: None,
+                });
+                continue;
+            }
+            DepositStatus::Failed => deposit_info.deposit_request_txid,
+            DepositStatus::Complete => deposit_info
+                .deposit_txid
+                .unwrap_or(deposit_info.deposit_request_txid),
+        };
+
+        let current_confirmations =
+            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
+        updates.push(DepositInfoUpdate {
+            deposit_idx,
+            info: deposit_info,
+            confirmations: current_confirmations,
+        });
+    }
+
+    updates
 }
 
 /// Return withdrawal updates for this stage of the deposit-indexed API migration.
@@ -270,7 +242,7 @@ async fn get_withdrawals() -> Vec<(Buf32, WithdrawalInfo, u64)> {
 async fn get_reimbursements(
     rpc_manager: &bridge_rpc::RpcClientManager,
     config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
+    esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
     deposit_indices: &[DepositIdx],
 ) -> Vec<(DepositIdx, ReimbursementInfo, u64)> {

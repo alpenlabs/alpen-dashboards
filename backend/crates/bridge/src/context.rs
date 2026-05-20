@@ -79,7 +79,10 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use crate::types::{DepositInfo, DepositStatus};
+    use crate::{
+        state::DepositInfoUpdate,
+        types::{DepositInfo, DepositStatus},
+    };
 
     #[tokio::test]
     async fn bridge_status_reflects_cached_state() {
@@ -102,15 +105,18 @@ mod tests {
 
         context
             .state()
-            .apply_deposit_updates(vec![(
-                0,
-                DepositInfo {
-                    deposit_request_txid,
-                    deposit_txid: Some(deposit_txid),
-                    status: DepositStatus::Complete,
-                },
-                1,
-            )])
+            .apply_deposit_info_updates(
+                vec![DepositInfoUpdate {
+                    deposit_idx: 0,
+                    info: DepositInfo {
+                        deposit_request_txid,
+                        deposit_txid: Some(deposit_txid),
+                        status: DepositStatus::Complete,
+                    },
+                    confirmations: Some(1),
+                }],
+                6,
+            )
             .await;
 
         let status = context.bridge_status().await;
