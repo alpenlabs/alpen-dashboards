@@ -293,14 +293,9 @@ withdrawal_denomination_sats = 100000000
         )]);
         tick(&db, &rpc, &cfg()).await.expect("tick");
         assert_eq!(db.max_withdrawal_seq().expect("max"), Some(1));
-        let row0 = db
-            .get_withdrawal_request(0)
-            .expect("row 0")
-            .expect("present");
-        let row1 = db
-            .get_withdrawal_request(1)
-            .expect("row 1")
-            .expect("present");
+        let rows = db.fetch_withdrawal_requests_from(0, 2).expect("fetch rows");
+        let row0 = &rows[0].request;
+        let row1 = &rows[1].request;
         assert_eq!(row0.sub_idx, 0);
         assert_eq!(row1.sub_idx, 1);
         let state = db
@@ -354,18 +349,10 @@ withdrawal_denomination_sats = 100000000
 
         tick(&db, &rpc, &cfg()).await.expect("tick");
 
-        let seq0 = db
-            .get_withdrawal_request(0)
-            .expect("seq 0")
-            .expect("present");
-        let seq1 = db
-            .get_withdrawal_request(1)
-            .expect("seq 1")
-            .expect("present");
-        let seq2 = db
-            .get_withdrawal_request(2)
-            .expect("seq 2")
-            .expect("present");
+        let rows = db.fetch_withdrawal_requests_from(0, 3).expect("fetch rows");
+        let seq0 = &rows[0].request;
+        let seq1 = &rows[1].request;
+        let seq2 = &rows[2].request;
 
         assert_eq!(seq0.tx_hash.0, [0xBB; 32]);
         assert_eq!(seq0.block_number, 5);

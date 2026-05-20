@@ -40,27 +40,6 @@ impl Schema for WithdrawalEventIndexSchema {
     type Value = DbWithdrawalEventIndex;
 }
 
-/// FIFO seq → assigned deposit_idx (set when the indexer pairs a withdrawal
-/// to a bridge deposit).
-#[derive(Debug)]
-pub(crate) struct WithdrawalAssignmentSchema;
-
-impl Schema for WithdrawalAssignmentSchema {
-    const TREE_NAME: TreeName = TreeName("withdrawal_assignment");
-    type Key = u64;
-    type Value = u32;
-}
-
-/// Reverse pairing: deposit_idx → FIFO seq.
-#[derive(Debug)]
-pub(crate) struct WithdrawalSeqByDepositIdxSchema;
-
-impl Schema for WithdrawalSeqByDepositIdxSchema {
-    const TREE_NAME: TreeName = TreeName("withdrawal_seq_by_deposit_idx");
-    type Key = u32;
-    type Value = u64;
-}
-
 // ---- Key codecs ----
 
 impl KeyCodec<IndexerStateSchema> for String {
@@ -135,5 +114,3 @@ macro_rules! impl_json_value_codec {
 impl_json_value_codec!(IndexerStateSchema, DbIndexerState);
 impl_json_value_codec!(WithdrawalRequestSchema, DbWithdrawalRequest);
 impl_json_value_codec!(WithdrawalEventIndexSchema, DbWithdrawalEventIndex);
-impl_json_value_codec!(WithdrawalAssignmentSchema, u32);
-impl_json_value_codec!(WithdrawalSeqByDepositIdxSchema, u64);
