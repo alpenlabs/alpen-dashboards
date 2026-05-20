@@ -9,7 +9,7 @@ use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
 
 use super::{
-    bridge_rpc::{self, RpcClientManager},
+    bridge_rpc,
     context::BridgeMonitoringContext,
     esplora,
     types::{
@@ -98,12 +98,6 @@ pub async fn bridge_monitoring_task(
         context.config().status_refetch_interval(),
     ));
 
-    let rpc_manager = RpcClientManager::new(context.config());
-    let esplora_client = esplora::EsploraClient::new(
-        context.config().esplora_url(),
-        context.config().esplora_request_timeout_s(),
-    );
-
     loop {
         tokio::select! {
             _ = shutdown.wait_for_shutdown() => break,
@@ -116,13 +110,15 @@ pub async fn bridge_monitoring_task(
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let status = bridge_rpc::get_operator_status(operator.rpc_url()).await;
+            let status =
+                bridge_rpc::get_operator_status(context.bridge_rpc(), operator.public_key()).await;
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
         context.state().update_operators(operator_statuses).await;
 
-        let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(&esplora_client).await {
+        let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(context.esplora()).await
+        {
             Ok(height) => height,
             Err(e) => {
                 error!(error = %e, "failed to get Bitcoin chain tip");
@@ -131,7 +127,7 @@ pub async fn bridge_monitoring_task(
         };
         info!(%chain_tip_height, "bitcoin chain tip");
 
-        let deposit_indices = match bridge_rpc::get_deposit_indices(&rpc_manager).await {
+        let deposit_indices = match bridge_rpc::get_deposit_indices(context.bridge_rpc()).await {
             Ok(indices) => indices,
             Err(e) => {
                 error!(error = %e, "failed to fetch bridge deposit indices");
@@ -140,9 +136,9 @@ pub async fn bridge_monitoring_task(
         };
 
         let deposit_infos = get_deposits(
-            &rpc_manager,
+            context.bridge_rpc(),
             context.config(),
-            &esplora_client,
+            context.esplora(),
             chain_tip_height,
             &deposit_indices,
         )
@@ -152,7 +148,7 @@ pub async fn bridge_monitoring_task(
         let deposits_to_purge = determine_deposits_to_purge(
             final_deposits,
             context.config(),
-            &esplora_client,
+            context.esplora(),
             chain_tip_height,
         )
         .await;
@@ -169,9 +165,9 @@ pub async fn bridge_monitoring_task(
         // there are no sound reimbursement candidates to query.
         let reimbursement_deposit_indices = Vec::new();
         let reimbursement_infos = get_reimbursements(
-            &rpc_manager,
+            context.bridge_rpc(),
             context.config(),
-            &esplora_client,
+            context.esplora(),
             chain_tip_height,
             &reimbursement_deposit_indices,
         )
@@ -184,7 +180,7 @@ pub async fn bridge_monitoring_task(
         let reimbursements_to_purge = determine_reimbursements_to_purge(
             final_reimbursements,
             context.config(),
-            &esplora_client,
+            context.esplora(),
             chain_tip_height,
         )
         .await;
@@ -201,7 +197,7 @@ pub async fn bridge_monitoring_task(
 
 /// Fetch detailed information for all deposits.
 async fn get_deposits(
-    rpc_manager: &RpcClientManager,
+    rpc_manager: &bridge_rpc::RpcClientManager,
     config: &BridgeMonitoringConfig,
     esplora_client: &esplora::EsploraClient,
     chain_tip_height: L1Height,
@@ -272,7 +268,7 @@ async fn get_withdrawals() -> Vec<(Buf32, WithdrawalInfo, u64)> {
 /// implementation lands. The caller passes deposit indices whose withdrawals
 /// are known complete.
 async fn get_reimbursements(
-    rpc_manager: &RpcClientManager,
+    rpc_manager: &bridge_rpc::RpcClientManager,
     config: &BridgeMonitoringConfig,
     esplora_client: &esplora::EsploraClient,
     chain_tip_height: L1Height,

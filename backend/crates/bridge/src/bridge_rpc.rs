@@ -9,37 +9,38 @@ use tracing::{debug, warn};
 use status_config::BridgeMonitoringConfig;
 use status_utils::{create_rpc_client, execute_with_retries};
 
-/// RPC client manager with connection pooling and retry logic
+/// RPC client manager with connection pooling and retry logic.
 ///
-/// This manager maintains a pool of reusable HTTP clients for each bridge operator,
+/// This manager maintains a pool of reusable HTTP clients for each bridge RPC endpoint,
 /// preventing connection exhaustion by reusing clients across requests. It implements
 /// automatic retry logic with exponential backoff to handle transient network failures.
 ///
 /// # Design
 ///
-/// - **Connection Pooling**: Creates one HTTP client per operator and reuses it for all requests
+/// - **Connection Pooling**: Creates one HTTP client per configured endpoint and reuses it
 /// - **Retry Logic**: Implements exponential backoff (3 retries over 10 seconds with 1.5x multiplier)
-/// - **Failover**: Tries all available operators in deterministic order (sorted by public key)
-/// - **Graceful Degradation**: Returns `None` if all operators fail after retries
+/// - **Failover**: Tries all available clients in deterministic key order
+/// - **Graceful Degradation**: Returns `None` if all clients fail after retries
 ///
 /// # Example Flow
 ///
 /// For each RPC request:
 ///
-/// 1. Try operator 1 with up to 3 retries (exponential backoff between retries)
-/// 2. If operator 1 fails after retries, try operator 2 with up to 3 retries
-/// 3. Continue until an operator succeeds or all fail
+/// 1. Try client 1 with up to 3 retries (exponential backoff between retries)
+/// 2. If client 1 fails after retries, try client 2 with up to 3 retries
+/// 3. Continue until a client succeeds or all fail
 /// 4. Return the first successful result or [`None`] if all fail
 pub(crate) struct RpcClientManager {
-    /// HTTP clients for each operator, keyed by operator public key ([`String`])
-    /// [`BTreeMap`] ensures deterministic ordering (sorted by key)
+    /// HTTP clients keyed by configured client key.
+    ///
+    /// [`BTreeMap`] ensures deterministic ordering.
     clients: BTreeMap<String, HttpClient>,
 }
 
 impl RpcClientManager {
-    /// Create a new RPC client manager for the configured bridge operators
+    /// Create a new RPC client manager for the configured bridge RPC endpoints.
     ///
-    /// This initializes one HTTP client per operator with:
+    /// This initializes one HTTP client per configured endpoint with:
     ///
     /// - 30-second request timeout
     /// - 10MB max request size
@@ -47,7 +48,7 @@ impl RpcClientManager {
     ///
     /// # Arguments
     ///
-    /// * `config` - Bridge monitoring configuration containing operator RPC URLs
+    /// * `config` - Bridge monitoring configuration containing RPC endpoints
     pub(crate) fn new(config: &BridgeMonitoringConfig) -> Self {
         let mut clients = BTreeMap::new();
         for operator in config.operators() {
@@ -62,8 +63,8 @@ impl RpcClientManager {
 
     /// Execute an async operation across all available clients with retry logic
     ///
-    /// This method tries the given operation on each operator sequentially (in sorted order
-    /// by public key). For each operator, it retries up to 3 times with exponential
+    /// This method tries the given operation on each client sequentially in sorted key
+    /// order. For each client, it retries up to 3 times with exponential
     /// backoff between attempts using [`execute_with_retries`]. The first successful result
     /// is returned immediately.
     ///
@@ -79,18 +80,18 @@ impl RpcClientManager {
     ///
     /// # Returns
     ///
-    /// * [`Some(T)`](Some) - If any operator succeeds (possibly after retries)
-    /// * [`None`] - If all operators fail after exhausting their retries
+    /// * [`Some(T)`](Some) - If any client succeeds (possibly after retries)
+    /// * [`None`] - If all clients fail after exhausting their retries
     ///
     /// # Retry Behavior
     ///
-    /// Uses [`execute_with_retries`] for each operator with exponential backoff:
+    /// Uses [`execute_with_retries`] for each client with exponential backoff:
     ///
     /// - **Attempt 0**: Immediate (no delay)
     /// - **Attempt 1**: After ~2s delay
     /// - **Attempt 2**: After ~3s delay
     /// - **Attempt 3**: After ~5s delay
-    /// - Total: ~10 seconds per operator
+    /// - Total: ~10 seconds per client
     ///
     /// # Example
     ///
@@ -106,10 +107,10 @@ impl RpcClientManager {
         F: Fn(HttpClient) -> Fut,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
-        // BTreeMap maintains sorted order automatically
-        for (key, client) in self.clients.iter() {
+        // BTreeMap maintains sorted order automatically.
+        for (client_key, client) in self.clients.iter() {
             let client_clone = client.clone();
-            let operation_name = format!("RPC request to operator public key {key}");
+            let operation_name = format!("RPC request to bridge client {client_key}");
 
             match execute_with_retries(
                 || {
@@ -121,34 +122,52 @@ impl RpcClientManager {
             .await
             {
                 Ok(result) => {
-                    debug!(operator_pk = %key, "rpc request succeeded");
+                    debug!(client_key = %client_key, "rpc request succeeded");
                     return Some(result);
                 }
                 Err(e) => {
                     warn!(
-                        operator_pk = %key,
+                        client_key = %client_key,
                         error = %e,
                         "rpc request failed after retries"
                     );
-                    // Continue to next operator
+                    // Continue to next client.
                 }
             }
         }
 
         None
     }
+
+    /// Return the pooled client for a configured client key.
+    pub(crate) fn client(&self, client_key: &str) -> Option<&HttpClient> {
+        self.clients.get(client_key)
+    }
 }
 
 /// Fetch operator status.
-pub(crate) async fn get_operator_status(rpc_url: &str) -> RpcOperatorStatus {
-    let rpc_client = create_rpc_client(rpc_url);
+pub(crate) async fn get_operator_status(
+    rpc_manager: &RpcClientManager,
+    operator_public_key: &str,
+) -> RpcOperatorStatus {
+    let Some(client) = rpc_manager.client(operator_public_key) else {
+        warn!(
+            operator_pk = %operator_public_key,
+            "missing bridge operator RPC client"
+        );
+        return RpcOperatorStatus::Offline;
+    };
 
-    // Directly use `get_uptime`
-    if rpc_client.get_uptime().await.is_ok() {
-        RpcOperatorStatus::Online
-    } else {
-        warn!("failed to fetch bridge operator uptime");
-        RpcOperatorStatus::Offline
+    match client.get_uptime().await {
+        Ok(_) => RpcOperatorStatus::Online,
+        Err(e) => {
+            warn!(
+                operator_pk = %operator_public_key,
+                error = %e,
+                "failed to fetch bridge operator uptime"
+            );
+            RpcOperatorStatus::Offline
+        }
     }
 }
 

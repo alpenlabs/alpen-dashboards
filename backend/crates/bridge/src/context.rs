@@ -3,12 +3,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Notify;
 use tracing::debug;
 
-use super::{state::BridgeMonitoringState, types::BridgeStatus};
+use super::{
+    bridge_rpc::RpcClientManager, esplora::EsploraClient, state::BridgeMonitoringState,
+    types::BridgeStatus,
+};
 use status_config::BridgeMonitoringConfig;
 
 /// Bridge monitoring task context.
 pub struct BridgeMonitoringContext {
     config: BridgeMonitoringConfig,
+    bridge_rpc: RpcClientManager,
+    esplora_client: EsploraClient,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
@@ -16,8 +21,14 @@ pub struct BridgeMonitoringContext {
 
 impl BridgeMonitoringContext {
     pub fn new(config: BridgeMonitoringConfig) -> Self {
+        let bridge_rpc = RpcClientManager::new(&config);
+        let esplora_client =
+            EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
+
         Self {
             config,
+            bridge_rpc,
+            esplora_client,
             state: BridgeMonitoringState::default(),
             status_available: AtomicBool::new(false),
             initial_status_query_complete: Notify::new(),
@@ -26,6 +37,14 @@ impl BridgeMonitoringContext {
 
     pub(crate) fn config(&self) -> &BridgeMonitoringConfig {
         &self.config
+    }
+
+    pub(crate) fn bridge_rpc(&self) -> &RpcClientManager {
+        &self.bridge_rpc
+    }
+
+    pub(crate) fn esplora(&self) -> &EsploraClient {
+        &self.esplora_client
     }
 
     pub(crate) fn state(&self) -> &BridgeMonitoringState {
