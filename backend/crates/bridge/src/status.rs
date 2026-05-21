@@ -1,122 +1,29 @@
 use anyhow::Result;
+use axum::http::StatusCode;
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
-use std::sync::Arc;
-use strata_bridge_rpc::types::{RpcDepositStatus, RpcReimbursementStatus, RpcWithdrawalStatus};
-
-use strata_primitives::buf::Buf32;
+use std::{collections::BTreeSet, sync::Arc};
+use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
 
 use super::{
-    bridge_rpc::{self, RpcClientManager},
+    bridge_rpc,
     context::BridgeMonitoringContext,
-    esplora,
+    esplora::{self, get_bitcoin_chain_tip_height, EsploraClient},
+    state::{DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, WithdrawalInfo, WithdrawalStatus,
+        ReimbursementStatus,
     },
+    withdrawal_requests::fetch_withdrawal_requests,
+    withdrawal_status::get_withdrawal_updates,
 };
 
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tracing::{error, info, warn};
 
-use status_config::BridgeMonitoringConfig;
-
-/// Determine which cached deposit entries should be purged
-async fn determine_deposits_to_purge(
-    final_deposits: Vec<(Txid, DepositInfo)>,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-) -> Vec<Txid> {
-    let max_confirmations = config.max_tx_confirmations();
-    let mut deposits_to_purge = Vec::new();
-
-    for (txid, deposit_info) in final_deposits {
-        let check_txid = match deposit_info.status {
-            DepositStatus::Failed => deposit_info.deposit_request_txid,
-            DepositStatus::Complete => deposit_info
-                .deposit_txid
-                .unwrap_or(deposit_info.deposit_request_txid),
-            DepositStatus::InProgress => unreachable!(),
-        };
-
-        let current_confirmations =
-            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
-
-        if let Some(confirmations) = current_confirmations {
-            if confirmations >= max_confirmations {
-                deposits_to_purge.push(txid);
-            }
-        }
-    }
-
-    deposits_to_purge
-}
-
-/// Determine which cached withdrawal entries should be purged
-async fn determine_withdrawals_to_purge(
-    final_withdrawals: Vec<(Buf32, WithdrawalInfo)>,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-) -> Vec<Buf32> {
-    let max_confirmations = config.max_tx_confirmations();
-    let mut withdrawals_to_purge = Vec::new();
-
-    for (request_id, withdrawal_info) in final_withdrawals {
-        if let Some(fulfillment_txid) = withdrawal_info.fulfillment_txid {
-            let current_confirmations =
-                esplora::get_tx_confirmations(esplora_client, fulfillment_txid, chain_tip_height)
-                    .await;
-
-            if let Some(confirmations) = current_confirmations {
-                if confirmations >= max_confirmations {
-                    withdrawals_to_purge.push(request_id);
-                }
-            }
-        }
-    }
-
-    withdrawals_to_purge
-}
-
-/// Determine which cached reimbursement entries should be purged
-async fn determine_reimbursements_to_purge(
-    final_reimbursements: Vec<(Txid, ReimbursementInfo)>,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-) -> Vec<Txid> {
-    let max_confirmations = config.max_tx_confirmations();
-    let mut reimbursements_to_purge = Vec::new();
-
-    for (txid, reimbursement_info) in final_reimbursements {
-        let check_txid = match reimbursement_info.status {
-            ReimbursementStatus::Cancelled => reimbursement_info.claim_txid,
-            ReimbursementStatus::Complete => reimbursement_info
-                .payout_txid
-                .unwrap_or(reimbursement_info.claim_txid),
-            ReimbursementStatus::Challenged
-            | ReimbursementStatus::InProgress
-            | ReimbursementStatus::NotStarted => unreachable!(),
-        };
-
-        let current_confirmations =
-            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
-
-        if let Some(confirmations) = current_confirmations {
-            if confirmations >= max_confirmations {
-                reimbursements_to_purge.push(txid);
-            }
-        }
-    }
-
-    reimbursements_to_purge
-}
-
-/// Periodically fetch bridge status and update bridge cache
+/// Periodically fetch bridge status and update bridge cache.
 pub async fn bridge_monitoring_task(
     context: Arc<BridgeMonitoringContext>,
     shutdown: ShutdownGuard,
@@ -125,40 +32,26 @@ pub async fn bridge_monitoring_task(
         context.config().status_refetch_interval(),
     ));
 
-    // Create RPC client manager once and reuse it
-    let rpc_manager = RpcClientManager::new(context.config());
-    let esplora_client = esplora::EsploraClient::new(
-        context.config().esplora_url(),
-        context.config().esplora_request_timeout_s(),
-    );
-
     loop {
         tokio::select! {
             _ = shutdown.wait_for_shutdown() => break,
             _ = interval.tick() => {}
         }
 
-        // Fetch all data without holding lock
-
-        // Bridge operator status
         let mut operator_statuses = Vec::new();
 
         for (index, operator) in context.config().operators().iter().enumerate() {
             let operator_id = format!("Alpen Labs #{}", index + 1);
             let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
             let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let status = bridge_rpc::get_operator_status(operator.rpc_url()).await;
+            let status =
+                bridge_rpc::get_operator_status(context.bridge_rpc(), operator.public_key()).await;
             operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
         }
 
-        // Update operators incrementally
-        context
-            .with_state_mut(|cache| {
-                cache.update_operators(operator_statuses);
-            })
-            .await;
+        context.state().update_operators(operator_statuses).await;
 
-        let chain_tip_height = match esplora::get_bitcoin_chain_tip_height(&esplora_client).await {
+        let chain_tip_height = match get_bitcoin_chain_tip_height(context.esplora()).await {
             Ok(height) => height,
             Err(e) => {
                 error!(error = %e, "failed to get Bitcoin chain tip");
@@ -167,227 +60,132 @@ pub async fn bridge_monitoring_task(
         };
         info!(%chain_tip_height, "bitcoin chain tip");
 
-        // Get existing active entries from cache to avoid unnecessary RPC calls
-        let (active_deposits, active_withdrawals, active_reimbursements) = context
-            .with_state(|cache| {
-                let deposits: Vec<Txid> = cache
-                    .filter_deposits(|s| matches!(s, DepositStatus::InProgress))
-                    .iter()
-                    .map(|(txid, _)| *txid)
-                    .collect();
-                let withdrawals: Vec<Buf32> = cache
-                    .filter_withdrawals(|s| matches!(s, WithdrawalStatus::InProgress))
-                    .iter()
-                    .map(|(request_id, _)| *request_id)
-                    .collect();
-                let reimbursements: Vec<Txid> = cache
-                    .filter_reimbursements(|s| {
-                        matches!(
-                            s,
-                            ReimbursementStatus::InProgress | ReimbursementStatus::Challenged
-                        )
-                    })
-                    .iter()
-                    .map(|(txid, _)| *txid)
-                    .collect();
-                (deposits, withdrawals, reimbursements)
-            })
+        let deposit_indices = match bridge_rpc::get_deposit_indices(context.bridge_rpc()).await {
+            Ok(indices) => indices,
+            Err(e) => {
+                error!(error = %e, "failed to fetch bridge deposit indices");
+                continue;
+            }
+        };
+
+        let deposit_candidates = context
+            .state()
+            .select_deposit_info_candidates(&deposit_indices)
+            .await;
+        let deposit_infos = get_deposits(context.bridge_rpc(), &deposit_candidates).await;
+        let deposit_info_updates =
+            get_deposit_info_updates(context.esplora(), chain_tip_height, deposit_infos).await;
+        context
+            .state()
+            .apply_deposit_info_updates(
+                deposit_info_updates,
+                context.config().max_tx_confirmations(),
+            )
             .await;
 
-        // Update deposits incrementally
-        let deposit_updates: Vec<(Txid, DepositInfo, u64)> = get_deposits(
-            &rpc_manager,
-            context.config(),
-            &esplora_client,
-            chain_tip_height,
-            &active_deposits,
-        )
-        .await
-        .iter()
-        .map(|(info, confirmations)| (info.deposit_request_txid, *info, *confirmations))
-        .collect();
-
-        let final_deposits = context
-            .with_state_mut(|cache| {
-                cache.apply_deposit_updates(deposit_updates);
-
-                // Determine deposits to purge after applying updates.
-                cache.filter_deposits(|s| {
-                    matches!(s, DepositStatus::Complete | DepositStatus::Failed)
-                })
-            })
+        let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
+        let new_deposit_indices_count =
+            count_deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx);
+        let withdrawal_requests = fetch_withdrawal_requests(
+            context.withdrawal_index(),
+            pairing_cursor.next_withdrawal_seq,
+            new_deposit_indices_count,
+            context.config().withdrawal_pairing_batch_size(),
+        );
+        let new_pairings = context
+            .state()
+            .apply_withdrawal_pairings(&deposit_indices, &withdrawal_requests)
             .await;
-        let deposits_to_purge = determine_deposits_to_purge(
-            final_deposits,
-            context.config(),
-            &esplora_client,
+        if !new_pairings.is_empty() {
+            info!(
+                pairing_count = new_pairings.len(),
+                "paired indexed withdrawals with deposits"
+            );
+        }
+
+        let withdrawal_candidates = context.state().select_withdrawal_status_candidates().await;
+        let withdrawal_updates = get_withdrawal_updates(
+            context.bridge_rpc(),
+            context.withdrawal_index(),
+            context.esplora(),
             chain_tip_height,
+            &withdrawal_candidates,
+            context.config().withdrawal_pairing_batch_size(),
         )
         .await;
         context
-            .with_state_mut(|cache| {
-                cache.purge_deposits(deposits_to_purge);
-            })
+            .state()
+            .apply_withdrawal_updates(withdrawal_updates, context.config().max_tx_confirmations())
             .await;
 
-        // Update withdrawals incrementally
-        let withdrawal_updates: Vec<(Buf32, WithdrawalInfo, u64)> = get_withdrawals(
-            &rpc_manager,
-            context.config(),
-            &esplora_client,
-            chain_tip_height,
-            &active_withdrawals,
-        )
-        .await
-        .iter()
-        .map(|(info, confirmations)| (info.withdrawal_request_txid, *info, *confirmations))
-        .collect();
-
-        let final_withdrawals = context
-            .with_state_mut(|cache| {
-                cache.apply_withdrawal_updates(withdrawal_updates);
-
-                // Determine withdrawals to purge after applying updates.
-                cache.filter_withdrawals(|s| matches!(s, WithdrawalStatus::Complete))
-            })
+        let reimbursement_candidates = context
+            .state()
+            .select_reimbursement_status_candidates()
             .await;
-        let withdrawals_to_purge = determine_withdrawals_to_purge(
-            final_withdrawals,
-            context.config(),
-            &esplora_client,
+        let reimbursement_updates = get_reimbursement_updates(
+            context.bridge_rpc(),
+            context.esplora(),
             chain_tip_height,
+            &reimbursement_candidates,
         )
         .await;
         context
-            .with_state_mut(|cache| {
-                cache.purge_withdrawals(withdrawals_to_purge);
-            })
+            .state()
+            .apply_reimbursement_updates(
+                reimbursement_updates,
+                context.config().max_tx_confirmations(),
+            )
             .await;
 
-        // Update reimbursements incrementally
-        let reimbursement_updates: Vec<(Txid, ReimbursementInfo, u64)> = get_reimbursements(
-            &rpc_manager,
-            context.config(),
-            &esplora_client,
-            chain_tip_height,
-            &active_reimbursements,
-        )
-        .await
-        .iter()
-        .map(|(info, confirmations)| (info.claim_txid, *info, *confirmations))
-        .collect();
-
-        let final_reimbursements = context
-            .with_state_mut(|cache| {
-                cache.apply_reimbursement_updates(reimbursement_updates);
-
-                // Determine reimbursements to purge after applying updates.
-                cache.filter_reimbursements(|s| {
-                    matches!(
-                        s,
-                        ReimbursementStatus::Complete | ReimbursementStatus::Cancelled
-                    )
-                })
-            })
-            .await;
-        let reimbursements_to_purge = determine_reimbursements_to_purge(
-            final_reimbursements,
-            context.config(),
-            &esplora_client,
-            chain_tip_height,
-        )
-        .await;
-        context
-            .with_state_mut(|cache| {
-                cache.purge_reimbursements(reimbursements_to_purge);
-            })
-            .await;
-
-        // Mark initial status query as complete and notify waiters
         context.mark_status_available();
     }
 
     Ok(())
 }
 
-/// Fetch detailed information for all deposit requests
-///
-/// Queries bridge operators for deposit details, including both new deposit requests
-/// and existing active deposits that need status updates. Filters results based on
-/// confirmation count to only include deposits below the maximum confirmation threshold.
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-/// * `config` - Bridge monitoring configuration (contains max confirmations threshold)
-/// * `chain_tip_height` - Current Bitcoin blockchain height
-/// * `active_deposit_txids` - List of deposit txids already being tracked (for status updates)
-///
-/// # Returns
-///
-/// Vector of tuples containing:
-///
-/// - [`DepositInfo`] - Detailed deposit information
-/// - [`u64`] - Number of confirmations (0 for in-progress deposits)
-///
-/// Deposits are filtered to only include those with confirmations < [`BridgeMonitoringConfig::max_tx_confirmations`].
-async fn get_deposits(
-    rpc_manager: &RpcClientManager,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-    active_deposit_txids: &[Txid],
-) -> Vec<(DepositInfo, u64)> {
-    let new_deposit_requests = bridge_rpc::get_deposit_requests(rpc_manager).await;
-    let new_count = new_deposit_requests.len();
-    let mut deposit_requests = new_deposit_requests;
+fn count_deposit_indices_from(
+    deposit_indices: &[DepositIdx],
+    next_deposit_idx: DepositIdx,
+) -> usize {
+    // This mirrors the state pairing planner's contiguous-prefix rule. The
+    // status tick uses this count to size DB reads; state still enforces the
+    // pairing invariant when it applies the fetched rows.
+    let deposit_indices = deposit_indices.iter().copied().collect::<BTreeSet<_>>();
+    let mut next_deposit_idx = next_deposit_idx;
+    let mut count = 0;
 
-    // Add existing active deposits that we need to check for status updates
-    for txid in active_deposit_txids {
-        if !deposit_requests.contains(txid) {
-            deposit_requests.push(*txid);
-        }
+    while deposit_indices.contains(&next_deposit_idx) {
+        count += 1;
+        let Some(next) = next_deposit_idx.checked_add(1) else {
+            break;
+        };
+        next_deposit_idx = next;
     }
 
+    count
+}
+
+/// Fetch detailed information for all deposits.
+async fn get_deposits(
+    rpc_manager: &bridge_rpc::RpcClientManager,
+    deposit_indices: &[DepositIdx],
+) -> Vec<(DepositIdx, DepositInfo)> {
     info!(
-        deposit_request_count = deposit_requests.len(),
-        new_deposit_request_count = new_count,
-        active_deposit_count = active_deposit_txids.len(),
-        "checking deposit requests"
+        deposit_count = deposit_indices.len(),
+        "fetching deposit details"
     );
 
-    let mut deposit_infos: Vec<(DepositInfo, u64)> = Vec::new();
-    for deposit_request_txid in deposit_requests.iter() {
-        let txid = *deposit_request_txid;
-        let rpc_info = bridge_rpc::get_deposit_request_info(rpc_manager, txid).await;
-
-        let Some(dep_info) = rpc_info else {
-            error!(%deposit_request_txid, "failed to fetch deposit info after retries");
-            continue;
+    let mut deposit_infos = Vec::new();
+    for deposit_idx in deposit_indices.iter().copied() {
+        let dep_info = match bridge_rpc::get_deposit_info(rpc_manager, deposit_idx).await {
+            Ok(info) => info,
+            Err(e) => {
+                error!(deposit_idx, error = %e, "failed to fetch deposit info");
+                continue;
+            }
         };
 
-        // Filter based on number of confirmations
-        match &dep_info.status {
-            RpcDepositStatus::InProgress => {
-                // Always include in-progress deposits - no need to check confirmations
-                deposit_infos.push((DepositInfo::from(&dep_info), 0));
-            }
-            RpcDepositStatus::Failed { .. } | RpcDepositStatus::Complete { .. } => {
-                let txid = match &dep_info.status {
-                    RpcDepositStatus::Failed { .. } => dep_info.deposit_request_txid,
-                    RpcDepositStatus::Complete { deposit_txid } => *deposit_txid,
-                    RpcDepositStatus::InProgress => unreachable!(), // Already matched
-                };
-
-                let confirmations =
-                    esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        deposit_infos.push((DepositInfo::from(&dep_info), confirmations));
-                    }
-                }
-            }
-        }
+        deposit_infos.push((dep_info.deposit_idx, DepositInfo::from(&dep_info)));
     }
 
     if deposit_infos.is_empty() {
@@ -396,185 +194,130 @@ async fn get_deposits(
     deposit_infos
 }
 
-/// Fetch detailed information for all withdrawal requests and fulfillments
-///
-/// Queries bridge operators for withdrawal details, including both new withdrawal requests
-/// and existing active withdrawals that need status updates. Filters results based on
-/// confirmation count to only include withdrawals below the maximum confirmation threshold.
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-/// * `config` - Bridge monitoring configuration (contains max confirmations threshold)
-/// * `chain_tip_height` - Current Bitcoin blockchain height
-/// * `active_withdrawal_request_ids` - List of withdrawal request IDs already being tracked
-///
-/// # Returns
-///
-/// Vector of tuples containing:
-/// - `WithdrawalInfo` - Detailed withdrawal information
-/// - `u64` - Number of confirmations (0 for in-progress withdrawals)
-///
-/// Withdrawals are filtered to only include those with confirmations < max_tx_confirmations.
-async fn get_withdrawals(
-    rpc_manager: &RpcClientManager,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
+async fn get_deposit_info_updates(
+    esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
-    active_withdrawal_request_ids: &[Buf32],
-) -> Vec<(WithdrawalInfo, u64)> {
-    let new_withdrawal_requests = bridge_rpc::get_withdrawal_requests(rpc_manager).await;
-    let new_count = new_withdrawal_requests.len();
-    let mut withdrawal_requests = new_withdrawal_requests;
+    deposit_infos: Vec<(DepositIdx, DepositInfo)>,
+) -> Vec<DepositInfoUpdate> {
+    let mut updates = Vec::new();
 
-    // Add existing active withdrawals that we need to check for status updates
-    for request_id in active_withdrawal_request_ids {
-        if !withdrawal_requests.contains(request_id) {
-            withdrawal_requests.push(*request_id);
-        }
-    }
-
-    info!(
-        withdrawal_request_count = withdrawal_requests.len(),
-        new_withdrawal_request_count = new_count,
-        active_withdrawal_count = active_withdrawal_request_ids.len(),
-        "checking withdrawal requests"
-    );
-
-    let mut withdrawal_infos: Vec<(WithdrawalInfo, u64)> = Vec::new();
-    for withdrawal_request_txid in withdrawal_requests.iter() {
-        let request_id = *withdrawal_request_txid;
-        let rpc_info = bridge_rpc::get_withdrawal_info(rpc_manager, request_id).await;
-
-        let Some(wd_info) = rpc_info else {
-            error!(%withdrawal_request_txid, "failed to fetch withdrawal info after retries");
-            continue;
-        };
-
-        // Filter based on number of confirmations
-        match &wd_info.status {
-            RpcWithdrawalStatus::InProgress => {
-                // Always include in-progress withdrawals
-                withdrawal_infos.push((WithdrawalInfo::from(&wd_info), 0));
-            }
-            RpcWithdrawalStatus::Complete { fulfillment_txid } => {
-                let confirmations = esplora::get_tx_confirmations(
-                    esplora_client,
-                    *fulfillment_txid,
-                    chain_tip_height,
-                )
-                .await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        withdrawal_infos.push((WithdrawalInfo::from(&wd_info), confirmations));
-                    }
-                }
-            }
-        }
-    }
-
-    if withdrawal_infos.is_empty() {
-        warn!("no withdrawal infos found");
-    }
-    withdrawal_infos
-}
-
-/// Fetch detailed information for all claim and reimbursement transactions
-///
-/// Queries bridge operators for claim/reimbursement details, including both new claims
-/// and existing active reimbursements that need status updates. Filters results based on
-/// confirmation count and status (skips NotStarted claims).
-///
-/// # Arguments
-///
-/// * `rpc_manager` - RPC client manager with retry/failover logic
-/// * `config` - Bridge monitoring configuration (contains max confirmations threshold)
-/// * `chain_tip_height` - Current Bitcoin blockchain height
-/// * `active_reimbursement_txids` - List of claim txids already being tracked
-///
-/// # Returns
-///
-/// Vector of tuples containing:
-/// - `ReimbursementInfo` - Detailed claim/reimbursement information
-/// - `u64` - Number of confirmations (0 for in-progress/challenged claims)
-///
-/// Claims with status `NotStarted` are excluded. Completed/cancelled claims are filtered
-/// to only include those with confirmations < max_tx_confirmations.
-async fn get_reimbursements(
-    rpc_manager: &RpcClientManager,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &esplora::EsploraClient,
-    chain_tip_height: L1Height,
-    active_reimbursement_txids: &[Txid],
-) -> Vec<(ReimbursementInfo, u64)> {
-    let new_claims = bridge_rpc::get_claims(rpc_manager).await;
-    let new_count = new_claims.len();
-    let mut claims = new_claims;
-
-    // Add existing active reimbursements that we need to check for status updates
-    for txid in active_reimbursement_txids {
-        if !claims.contains(txid) {
-            claims.push(*txid);
-        }
-    }
-
-    info!(
-        claim_count = claims.len(),
-        new_claim_count = new_count,
-        active_reimbursement_count = active_reimbursement_txids.len(),
-        "checking claims"
-    );
-
-    let mut reimbursement_infos = Vec::new();
-    for claim_txid in claims.iter() {
-        let txid = *claim_txid;
-        let rpc_info = bridge_rpc::get_claim_info(rpc_manager, txid).await;
-
-        let Some(claim_info) = rpc_info else {
-            error!(%claim_txid, "failed to fetch claim info after retries");
-            continue;
-        };
-
-        // Filter based on number of confirmations
-        match &claim_info.status {
-            // Skip if not started
-            RpcReimbursementStatus::NotStarted => {
+    for (deposit_idx, deposit_info) in deposit_infos {
+        let check_txid = match deposit_info.status {
+            DepositStatus::InProgress => {
+                updates.push(DepositInfoUpdate {
+                    deposit_idx,
+                    info: deposit_info,
+                    confirmations: None,
+                });
                 continue;
             }
-            RpcReimbursementStatus::InProgress { .. }
-            | RpcReimbursementStatus::Challenged { .. } => {
-                // Always include in-progress or challenged claims - no need to check confirmations
-                reimbursement_infos.push((ReimbursementInfo::from(&claim_info), 0));
-            }
-            RpcReimbursementStatus::Cancelled | RpcReimbursementStatus::Complete { .. } => {
-                let txid = match &claim_info.status {
-                    RpcReimbursementStatus::Cancelled => claim_info.claim_txid,
-                    RpcReimbursementStatus::Complete { payout_txid } => *payout_txid,
-                    RpcReimbursementStatus::NotStarted
-                    | RpcReimbursementStatus::InProgress { .. }
-                    | RpcReimbursementStatus::Challenged { .. } => unreachable!(), // Already matched
-                };
-                let confirmations =
-                    esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        reimbursement_infos
-                            .push((ReimbursementInfo::from(&claim_info), confirmations));
-                    }
-                }
-            }
-        }
+            DepositStatus::Failed => deposit_info.deposit_request_txid,
+            DepositStatus::Complete => deposit_info
+                .deposit_txid
+                .unwrap_or(deposit_info.deposit_request_txid),
+        };
+
+        let current_confirmations =
+            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
+        updates.push(DepositInfoUpdate {
+            deposit_idx,
+            info: deposit_info,
+            confirmations: current_confirmations,
+        });
     }
 
-    if reimbursement_infos.is_empty() {
-        warn!("no reimbursement infos found");
-    }
-    reimbursement_infos
+    updates
 }
 
-/// Return latest bridge status extracted from cache
-pub async fn get_bridge_status(context: Arc<BridgeMonitoringContext>) -> Json<BridgeStatus> {
-    context.wait_until_status_available().await;
+/// Fetch reimbursement cache updates for paired deposits.
+async fn get_reimbursement_updates(
+    rpc_manager: &bridge_rpc::RpcClientManager,
+    esplora_client: &EsploraClient,
+    chain_tip_height: L1Height,
+    candidates: &[DepositIdx],
+) -> Vec<ReimbursementInfoUpdate> {
+    let mut updates = Vec::new();
 
-    Json(context.bridge_status().await)
+    for deposit_idx in candidates.iter().copied() {
+        let status = match bridge_rpc::get_reimbursement_status(rpc_manager, deposit_idx).await {
+            Ok(Some(status)) => status,
+            Ok(None) => continue,
+            Err(e) => {
+                warn!(deposit_idx, error = %e, "failed to fetch reimbursement status");
+                continue;
+            }
+        };
+
+        let Some(info) = ReimbursementInfo::from_status(&status) else {
+            continue;
+        };
+
+        let confirmations = match info.status {
+            ReimbursementStatus::NotStarted => continue,
+            ReimbursementStatus::InProgress => None,
+            ReimbursementStatus::Slashed
+            | ReimbursementStatus::Aborted
+            | ReimbursementStatus::Complete => {
+                let Some(txid) = terminal_reimbursement_txid(&info) else {
+                    continue;
+                };
+                esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await
+            }
+        };
+
+        updates.push(ReimbursementInfoUpdate {
+            deposit_idx,
+            info,
+            confirmations,
+        });
+    }
+
+    updates
+}
+
+fn terminal_reimbursement_txid(info: &ReimbursementInfo) -> Option<Txid> {
+    match info.status {
+        ReimbursementStatus::Slashed | ReimbursementStatus::Aborted => Some(info.claim_txid),
+        ReimbursementStatus::Complete => info.payout_txid,
+        ReimbursementStatus::InProgress | ReimbursementStatus::NotStarted => None,
+    }
+}
+
+/// Return latest bridge status extracted from cache.
+pub async fn get_bridge_status(
+    context: Arc<BridgeMonitoringContext>,
+) -> std::result::Result<Json<BridgeStatus>, StatusCode> {
+    let initial_status_wait_timeout = context.initial_status_wait_timeout();
+    if timeout(
+        initial_status_wait_timeout,
+        context.wait_until_initial_status(),
+    )
+    .await
+    .is_err()
+    {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    Ok(Json(context.bridge_status().await))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_deposit_indices_from_cursor() {
+        let cases = [
+            (&[0, 1, 3][..], 0, 2),
+            (&[0, 1, 2, 3][..], 0, 4),
+            (&[0, 1, 3][..], 2, 0),
+        ];
+
+        for (deposit_indices, next_deposit_idx, expected) in cases {
+            assert_eq!(
+                count_deposit_indices_from(deposit_indices, next_deposit_idx),
+                expected
+            );
+        }
+    }
 }

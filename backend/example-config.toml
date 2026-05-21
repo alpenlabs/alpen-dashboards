@@ -8,19 +8,22 @@ datadir = "data"
 
 # Network monitoring configuration
 [network]
-  bundler_url               = "https://bundler.testnet.alpenlabs.io/health"
-  retry_policy_max_retries  = 5
-  retry_policy_total_time_s = 60
-  rpc_url                   = "https://rpc.testnet.alpenlabs.io"
-  sequencer_url             = "https://rpc.testnet.alpenlabs.io"
-  status_refetch_interval_s = 10
+  bundler_url                   = "https://bundler.testnet.alpenlabs.io/health"
+  initial_status_wait_timeout_s = 30
+  retry_policy_max_retries      = 5
+  retry_policy_total_time_s     = 60
+  rpc_url                       = "https://rpc.testnet.alpenlabs.io"
+  sequencer_url                 = "https://rpc.testnet.alpenlabs.io"
+  status_refetch_interval_s     = 10
 
 # Bridge monitoring configuration
 [bridge]
-  esplora_request_timeout_s = 5
-  esplora_url               = "https://esplora.testnet.alpenlabs.io"
-  max_tx_confirmations      = 6
-  status_refetch_interval_s = 120
+  esplora_request_timeout_s     = 5
+  esplora_url                   = "https://esplora.testnet.alpenlabs.io"
+  initial_status_wait_timeout_s = 5
+  max_tx_confirmations          = 6
+  status_refetch_interval_s     = 120
+  withdrawal_pairing_batch_size = 1_000
 
   # Bridge operators configuration
   [[bridge.operators]]

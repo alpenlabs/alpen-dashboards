@@ -49,8 +49,26 @@ const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
+/// Default time a network status request waits for the first poll result.
+const DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 5;
+
+/// Default time a bridge status request waits for the first poll result.
+const DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 30;
+
+/// Default indexed WRT rows to read per withdrawal-index DB request.
+const DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE: usize = 1_000;
+
 fn default_esplora_request_timeout_s() -> u64 {
     DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+fn default_network_initial_status_wait_timeout_s() -> u64 {
+    DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S
+}
+fn default_bridge_initial_status_wait_timeout_s() -> u64 {
+    DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S
+}
+fn default_withdrawal_pairing_batch_size() -> usize {
+    DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
 }
 
 /// Configuration for network monitoring services
@@ -73,6 +91,10 @@ pub struct NetworkMonitoringConfig {
 
     /// Network status refetch interval in seconds
     status_refetch_interval_s: u64,
+
+    /// Timeout for HTTP status requests waiting on the first poll result.
+    #[serde(default = "default_network_initial_status_wait_timeout_s")]
+    initial_status_wait_timeout_s: u64,
 }
 
 impl NetworkMonitoringConfig {
@@ -90,6 +112,10 @@ impl NetworkMonitoringConfig {
 
     pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+
+    pub fn initial_status_wait_timeout_s(&self) -> u64 {
+        self.initial_status_wait_timeout_s
     }
 
     /// Retry policy for sequencer status queries
@@ -126,6 +152,14 @@ pub struct BridgeMonitoringConfig {
 
     /// Bridge status refetch interval in seconds
     status_refetch_interval_s: u64,
+
+    /// Timeout for HTTP status requests waiting on the first poll result.
+    #[serde(default = "default_bridge_initial_status_wait_timeout_s")]
+    initial_status_wait_timeout_s: u64,
+
+    /// Indexed WRT rows to read per withdrawal-index DB request.
+    #[serde(default = "default_withdrawal_pairing_batch_size")]
+    withdrawal_pairing_batch_size: usize,
 
     /// Bridge operators
     operators: Vec<BridgeOperator>,
@@ -249,6 +283,14 @@ impl BridgeMonitoringConfig {
 
     pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+
+    pub fn initial_status_wait_timeout_s(&self) -> u64 {
+        self.initial_status_wait_timeout_s
+    }
+
+    pub fn withdrawal_pairing_batch_size(&self) -> usize {
+        self.withdrawal_pairing_batch_size
     }
 
     pub fn operators(&self) -> &Vec<BridgeOperator> {
@@ -412,12 +454,14 @@ bundler_url = "https://bundler.testnet.alpenlabs.io/health"
 retry_policy_max_retries = 5
 retry_policy_total_time_s = 60
 status_refetch_interval_s = 10
+initial_status_wait_timeout_s = 5
 
 [bridge]
 esplora_request_timeout_s = 5
 esplora_url = "https://esplora.testnet.alpenlabs.io"
 max_tx_confirmations = 6
 status_refetch_interval_s = 120
+initial_status_wait_timeout_s = 5
 
 [[bridge.operators]]
 public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -547,12 +591,15 @@ bundler_url = "https://bundler.example.com/health"
 retry_policy_max_retries = 3
 retry_policy_total_time_s = 30
 status_refetch_interval_s = 5
+initial_status_wait_timeout_s = 4
 
 [bridge]
 esplora_request_timeout_s = 9
 esplora_url = "https://esplora.example.com"
 max_tx_confirmations = 12
 status_refetch_interval_s = 60
+initial_status_wait_timeout_s = 7
+withdrawal_pairing_batch_size = 500
 
 [[bridge.operators]]
 public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -601,10 +648,13 @@ withdrawal_denomination_sats = 100000000
             "https://sequencer.example.com"
         );
         assert_eq!(config.network.status_refetch_interval(), 5);
+        assert_eq!(config.network.initial_status_wait_timeout_s(), 4);
         assert_eq!(config.bridge.esplora_url(), "https://esplora.example.com");
         assert_eq!(config.bridge.esplora_request_timeout_s(), 9);
         assert_eq!(config.bridge.max_tx_confirmations(), 12);
         assert_eq!(config.bridge.status_refetch_interval(), 60);
+        assert_eq!(config.bridge.initial_status_wait_timeout_s(), 7);
+        assert_eq!(config.bridge.withdrawal_pairing_batch_size(), 500);
         assert_eq!(config.bridge.operators().len(), 2);
         assert_eq!(
             config.bridge.operators()[0].public_key(),
@@ -708,6 +758,18 @@ eth_rpc_url = "https://rpc.example.com"
         assert_eq!(
             config.bridge().esplora_request_timeout_s(),
             DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+        );
+        assert_eq!(
+            config.bridge().withdrawal_pairing_batch_size(),
+            DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
+        );
+        assert_eq!(
+            config.network().initial_status_wait_timeout_s(),
+            DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S
+        );
+        assert_eq!(
+            config.bridge().initial_status_wait_timeout_s(),
+            DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S
         );
         let indexer = config.withdrawal_indexer();
         assert_eq!(indexer.batch_size(), DEFAULT_ETH_LOGS_BATCH_SIZE);
