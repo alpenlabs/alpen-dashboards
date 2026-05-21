@@ -5,7 +5,8 @@ use strata_primitives::buf::Buf32;
 use tokio::sync::RwLock;
 
 use super::{
-    cache::BridgeStatusCache,
+    cache::{BridgeStatusCache, WithdrawalPairingCursor},
+    db::types::DbWithdrawalRequestRow,
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus, WithdrawalInfo,
@@ -78,6 +79,31 @@ impl BridgeMonitoringState {
         cache.apply_deposit_updates(cache_updates);
         cache.purge_deposits(terminal_deposit_indices_to_purge);
         cache.set_deposit_info_cursor(next_cursor);
+    }
+
+    pub(crate) async fn withdrawal_pairing_cursor(&self) -> WithdrawalPairingCursor {
+        let cache = self.cache.read().await;
+        cache.withdrawal_pairing_cursor()
+    }
+
+    pub(crate) async fn apply_withdrawal_pairings(
+        &self,
+        deposit_indices: &[DepositIdx],
+        withdrawal_requests: &[DbWithdrawalRequestRow],
+    ) -> Vec<(DepositIdx, u64)> {
+        let withdrawal_seqs = withdrawal_requests
+            .iter()
+            .map(|row| row.seq)
+            .collect::<Vec<_>>();
+        let mut cache = self.cache.write().await;
+        let (pairings, next_cursor) = plan_withdrawal_pairings(
+            cache.withdrawal_pairing_cursor(),
+            deposit_indices,
+            &withdrawal_seqs,
+        );
+
+        cache.update_withdrawal_pairings(&pairings, next_cursor);
+        pairings
     }
 
     pub(crate) async fn update_operators(&self, operators: Vec<OperatorStatus>) {
@@ -158,6 +184,45 @@ fn next_deposit_info_cursor(
     next_cursor
 }
 
+fn plan_withdrawal_pairings(
+    cursor: WithdrawalPairingCursor,
+    discovered_deposit_indices: &[DepositIdx],
+    indexed_withdrawal_seqs: &[u64],
+) -> (Vec<(DepositIdx, u64)>, WithdrawalPairingCursor) {
+    let discovered_deposit_indices = discovered_deposit_indices
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let indexed_withdrawal_seqs = indexed_withdrawal_seqs
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut next_cursor = cursor;
+    let mut pairings = Vec::new();
+
+    while discovered_deposit_indices.contains(&next_cursor.next_deposit_idx)
+        && indexed_withdrawal_seqs.contains(&next_cursor.next_withdrawal_seq)
+    {
+        pairings.push((
+            next_cursor.next_deposit_idx,
+            next_cursor.next_withdrawal_seq,
+        ));
+
+        let Some(next_deposit_idx) = next_cursor.next_deposit_idx.checked_add(1) else {
+            break;
+        };
+        let Some(next_withdrawal_seq) = next_cursor.next_withdrawal_seq.checked_add(1) else {
+            break;
+        };
+        next_cursor = WithdrawalPairingCursor {
+            next_deposit_idx,
+            next_withdrawal_seq,
+        };
+    }
+
+    (pairings, next_cursor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +232,67 @@ mod tests {
         assert_eq!(next_deposit_info_cursor(0, &[0, 1, 3]), 2);
         assert_eq!(next_deposit_info_cursor(2, &[3, 4]), 2);
         assert_eq!(next_deposit_info_cursor(2, &[2, 3, 4]), 5);
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_stops_at_deposit_gap() {
+        let (pairings, cursor) =
+            plan_withdrawal_pairings(WithdrawalPairingCursor::default(), &[0, 1, 3], &[0, 1, 2]);
+
+        assert_eq!(pairings, vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            cursor,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 2,
+                next_withdrawal_seq: 2
+            }
+        );
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_stops_without_indexed_wrt() {
+        let (pairings, cursor) =
+            plan_withdrawal_pairings(WithdrawalPairingCursor::default(), &[0], &[]);
+
+        assert!(pairings.is_empty());
+        assert_eq!(cursor, WithdrawalPairingCursor::default());
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_does_not_repair_old_indices() {
+        let cursor = WithdrawalPairingCursor {
+            next_deposit_idx: 2,
+            next_withdrawal_seq: 2,
+        };
+        let (pairings, next_cursor) = plan_withdrawal_pairings(cursor, &[0, 1], &[0, 1]);
+
+        assert!(pairings.is_empty());
+        assert_eq!(next_cursor, cursor);
+    }
+
+    #[tokio::test]
+    async fn withdrawal_pairings_apply_atomically_with_cursor() {
+        let state = BridgeMonitoringState::default();
+        let requests = vec![
+            DbWithdrawalRequestRow {
+                seq: 0,
+                request: crate::db::withdrawal_index::test_utils::make_withdrawal_request(1),
+            },
+            DbWithdrawalRequestRow {
+                seq: 1,
+                request: crate::db::withdrawal_index::test_utils::make_withdrawal_request(2),
+            },
+        ];
+
+        let pairings = state.apply_withdrawal_pairings(&[0, 1], &requests).await;
+
+        assert_eq!(pairings, vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            state.withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 2,
+                next_withdrawal_seq: 2
+            }
+        );
     }
 }

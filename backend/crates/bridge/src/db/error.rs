@@ -1,9 +1,7 @@
-use std::path::PathBuf;
-
 use crate::db::types::DbWithdrawalEventKey;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum WithdrawalIndexConsistencyError {
+pub(crate) enum WithdrawalIndexConsistencyError {
     #[error("withdrawal sequence overflow at {0}")]
     SeqOverflow(u64),
 
@@ -15,10 +13,7 @@ pub enum WithdrawalIndexConsistencyError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DbError {
-    #[error("create data dir {0:?}: {1}")]
-    CreateDataDir(PathBuf, #[source] std::io::Error),
-
+pub(crate) enum DbError {
     #[error("withdrawal event contains no requests")]
     EmptyWithdrawalEvent,
 
@@ -44,4 +39,4 @@ impl From<sled::Error> for DbError {
     }
 }
 
-pub type DbResult<T> = Result<T, DbError>;
+pub(crate) type DbResult<T> = Result<T, DbError>;

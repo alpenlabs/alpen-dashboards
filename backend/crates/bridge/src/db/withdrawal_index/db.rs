@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use anyhow::Context;
 use sled::transaction::TransactionError;
 use typed_sled::{error::Error as TSledError, transaction::SledTransactional, SledDb, SledTree};
 
@@ -42,7 +43,7 @@ fn map_tx_result<T>(result: sled::transaction::TransactionResult<T, TSledError>)
 /// Sled-backed withdrawal-indexer database. Owns one [`SledDb`] handle and one
 /// typed tree per concern (indexer state, FIFO request sequence, event index).
 #[derive(Debug)]
-pub(crate) struct WithdrawalIndexerDbSled {
+pub struct WithdrawalIndexerDbSled {
     _db: SledDb,
     state: SledTree<IndexerStateSchema>,
     requests: SledTree<WithdrawalRequestSchema>,
@@ -53,19 +54,27 @@ impl WithdrawalIndexerDbSled {
     /// Open the indexer database under `{datadir}/withdrawal_index`. Creates
     /// intermediate directories if they don't exist; sled itself only creates
     /// the leaf, so a fresh datadir without intermediate parents would fail.
-    pub(crate) fn open(datadir: impl AsRef<Path>) -> DbResult<Self> {
+    pub fn open(datadir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = datadir.as_ref().join("withdrawal_index");
         std::fs::create_dir_all(&path)
-            .map_err(|source| DbError::CreateDataDir(path.clone(), source))?;
-        let sled_db = sled::open(path)?;
+            .with_context(|| format!("create withdrawal index dir {}", path.display()))?;
+        let sled_db = sled::open(&path)
+            .with_context(|| format!("open withdrawal index sled db at {}", path.display()))?;
+        // typed-sled codec errors are not Send + Sync, so anyhow::Context cannot preserve them.
         Self::from_sled_db(sled_db)
+            .map_err(|e| anyhow::anyhow!("initialize withdrawal index trees: {e}"))
     }
 
     /// Open a temporary in-memory-like sled database deleted on drop.
     #[cfg(test)]
-    pub fn open_temporary() -> DbResult<Self> {
-        let sled_db = sled::Config::new().temporary(true).open()?;
+    pub fn open_temporary() -> anyhow::Result<Self> {
+        let sled_db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .context("open temporary withdrawal index sled db")?;
+        // typed-sled codec errors are not Send + Sync, so anyhow::Context cannot preserve them.
         Self::from_sled_db(sled_db)
+            .map_err(|e| anyhow::anyhow!("initialize temporary withdrawal index trees: {e}"))
     }
 
     fn from_sled_db(sled_db: sled::Db) -> DbResult<Self> {

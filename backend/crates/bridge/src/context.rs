@@ -1,11 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use tokio::sync::Notify;
 use tracing::debug;
 
 use super::{
-    bridge_rpc::RpcClientManager, esplora::EsploraClient, state::BridgeMonitoringState,
-    types::BridgeStatus,
+    bridge_rpc::RpcClientManager, db::WithdrawalIndexerDbSled, esplora::EsploraClient,
+    state::BridgeMonitoringState, types::BridgeStatus,
 };
 use status_config::BridgeMonitoringConfig;
 
@@ -14,13 +17,17 @@ pub struct BridgeMonitoringContext {
     config: BridgeMonitoringConfig,
     bridge_rpc: RpcClientManager,
     esplora_client: EsploraClient,
+    withdrawal_index: Arc<WithdrawalIndexerDbSled>,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
 }
 
 impl BridgeMonitoringContext {
-    pub fn new(config: BridgeMonitoringConfig) -> Self {
+    pub fn new(
+        config: BridgeMonitoringConfig,
+        withdrawal_index: Arc<WithdrawalIndexerDbSled>,
+    ) -> Self {
         let bridge_rpc = RpcClientManager::new(&config);
         let esplora_client =
             EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
@@ -29,6 +36,7 @@ impl BridgeMonitoringContext {
             config,
             bridge_rpc,
             esplora_client,
+            withdrawal_index,
             state: BridgeMonitoringState::default(),
             status_available: AtomicBool::new(false),
             initial_status_query_complete: Notify::new(),
@@ -45,6 +53,10 @@ impl BridgeMonitoringContext {
 
     pub(crate) fn esplora(&self) -> &EsploraClient {
         &self.esplora_client
+    }
+
+    pub(crate) fn withdrawal_index(&self) -> &WithdrawalIndexerDbSled {
+        self.withdrawal_index.as_ref()
     }
 
     pub(crate) fn state(&self) -> &BridgeMonitoringState {
@@ -95,7 +107,9 @@ mod tests {
             "#,
         )
         .expect("test config should deserialize");
-        let context = BridgeMonitoringContext::new(config);
+        let withdrawal_index =
+            Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
+        let context = BridgeMonitoringContext::new(config, withdrawal_index);
         let deposit_request_txid =
             Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
                 .expect("valid txid");

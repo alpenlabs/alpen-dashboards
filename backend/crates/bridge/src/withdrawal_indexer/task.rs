@@ -1,6 +1,6 @@
 //! Withdrawal indexer run loop.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use alloy_sol_types::SolEvent;
 use alpen_reth_primitives::WithdrawalIntentEvent;
@@ -57,14 +57,10 @@ pub(crate) enum TickOutcome {
 /// Startup failures (DB open, RPC client) return an error so the caller
 /// can treat the task as critical. Tick errors are logged and retried.
 pub async fn run_withdrawal_indexer(
-    datadir: &Path,
+    db: Arc<WithdrawalIndexerDbSled>,
     cfg: WithdrawalIndexerConfig,
     shutdown: ShutdownGuard,
 ) -> Result<()> {
-    let db = Arc::new(
-        WithdrawalIndexerDbSled::open(datadir)
-            .map_err(|e| anyhow!("open withdrawal index DB under {}: {e}", datadir.display()))?,
-    );
     let rpc = JsonRpcEthClient::new(cfg.eth_rpc_url())
         .map_err(|e| anyhow!("construct EVM RPC client: {e}"))?;
     run_with_rpc(db, rpc, cfg, shutdown).await

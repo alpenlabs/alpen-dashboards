@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::buf::Buf32;
@@ -39,11 +39,26 @@ impl<T> CacheEntry<T> {
     }
 }
 
+/// In-memory cursor for withdrawal-to-deposit pairing progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct WithdrawalPairingCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
+    pub(crate) next_withdrawal_seq: u64,
+}
+
+/// In-memory withdrawal-to-deposit pairings and their FIFO cursor.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct WithdrawalPairing {
+    pairings: BTreeMap<DepositIdx, u64>,
+    cursor: WithdrawalPairingCursor,
+}
+
 /// In-memory cache for bridge monitoring data
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
     deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
     deposit_info_cursor: DepositIdx,
+    withdrawal_pairing: WithdrawalPairing,
     withdrawals: HashMap<Buf32, CacheEntry<WithdrawalInfo>>,
     reimbursements: HashMap<DepositIdx, CacheEntry<ReimbursementInfo>>,
     operators: Vec<OperatorStatus>,
@@ -56,6 +71,36 @@ impl BridgeStatusCache {
 
     pub(crate) fn set_deposit_info_cursor(&mut self, cursor: DepositIdx) {
         self.deposit_info_cursor = cursor;
+    }
+
+    pub(crate) fn withdrawal_pairing_cursor(&self) -> WithdrawalPairingCursor {
+        self.withdrawal_pairing.cursor
+    }
+
+    #[expect(
+        dead_code,
+        reason = "used when withdrawal status candidates are selected in the next commit"
+    )]
+    pub(crate) fn withdrawal_pairings_from(
+        &self,
+        deposit_idx: DepositIdx,
+    ) -> Vec<(DepositIdx, u64)> {
+        self.withdrawal_pairing
+            .pairings
+            .range(deposit_idx..)
+            .map(|(deposit_idx, withdrawal_seq)| (*deposit_idx, *withdrawal_seq))
+            .collect()
+    }
+
+    pub(crate) fn update_withdrawal_pairings(
+        &mut self,
+        pairings: &[(DepositIdx, u64)],
+        cursor: WithdrawalPairingCursor,
+    ) {
+        self.withdrawal_pairing
+            .pairings
+            .extend(pairings.iter().copied());
+        self.withdrawal_pairing.cursor = cursor;
     }
 
     /// Update deposit cache entry

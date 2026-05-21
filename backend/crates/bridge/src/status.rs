@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::Json;
 use bitcoin::secp256k1::PublicKey;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::buf::Buf32;
 use strata_primitives::L1Height;
@@ -16,6 +16,7 @@ use super::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus, WithdrawalInfo,
     },
+    withdrawal_requests,
 };
 
 use tokio::time::{interval, Duration};
@@ -117,6 +118,26 @@ pub async fn bridge_monitoring_task(
             )
             .await;
 
+        let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
+        let new_deposit_indices_count =
+            count_deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx);
+        let withdrawal_requests = withdrawal_requests::fetch_withdrawal_requests(
+            context.withdrawal_index(),
+            pairing_cursor.next_withdrawal_seq,
+            new_deposit_indices_count,
+            context.config().withdrawal_pairing_batch_size(),
+        );
+        let new_pairings = context
+            .state()
+            .apply_withdrawal_pairings(&deposit_indices, &withdrawal_requests)
+            .await;
+        if !new_pairings.is_empty() {
+            info!(
+                pairing_count = new_pairings.len(),
+                "paired indexed withdrawals with deposits"
+            );
+        }
+
         let withdrawal_updates = get_withdrawals().await;
         context
             .state()
@@ -156,6 +177,28 @@ pub async fn bridge_monitoring_task(
     }
 
     Ok(())
+}
+
+fn count_deposit_indices_from(
+    deposit_indices: &[DepositIdx],
+    next_deposit_idx: DepositIdx,
+) -> usize {
+    // This mirrors the state pairing planner's contiguous-prefix rule. The
+    // status tick uses this count to size DB reads; state still enforces the
+    // pairing invariant when it applies the fetched rows.
+    let deposit_indices = deposit_indices.iter().copied().collect::<BTreeSet<_>>();
+    let mut next_deposit_idx = next_deposit_idx;
+    let mut count = 0;
+
+    while deposit_indices.contains(&next_deposit_idx) {
+        count += 1;
+        let Some(next) = next_deposit_idx.checked_add(1) else {
+            break;
+        };
+        next_deposit_idx = next;
+    }
+
+    count
 }
 
 /// Fetch detailed information for all deposits.
@@ -308,4 +351,25 @@ pub async fn get_bridge_status(context: Arc<BridgeMonitoringContext>) -> Json<Br
     context.wait_until_status_available().await;
 
     Json(context.bridge_status().await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_deposit_indices_from_cursor() {
+        let cases = [
+            (&[0, 1, 3][..], 0, 2),
+            (&[0, 1, 2, 3][..], 0, 4),
+            (&[0, 1, 3][..], 2, 0),
+        ];
+
+        for (deposit_indices, next_deposit_idx, expected) in cases {
+            assert_eq!(
+                count_deposit_indices_from(deposit_indices, next_deposit_idx),
+                expected
+            );
+        }
+    }
 }

@@ -47,8 +47,14 @@ const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
+/// Default indexed WRT rows to read per withdrawal-index DB request.
+const DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE: usize = 1_000;
+
 fn default_esplora_request_timeout_s() -> u64 {
     DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+fn default_withdrawal_pairing_batch_size() -> usize {
+    DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
 }
 
 /// Configuration for network monitoring services
@@ -124,6 +130,10 @@ pub struct BridgeMonitoringConfig {
 
     /// Bridge status refetch interval in seconds
     status_refetch_interval_s: u64,
+
+    /// Indexed WRT rows to read per withdrawal-index DB request.
+    #[serde(default = "default_withdrawal_pairing_batch_size")]
+    withdrawal_pairing_batch_size: usize,
 
     /// Bridge operators
     operators: Vec<BridgeOperator>,
@@ -247,6 +257,10 @@ impl BridgeMonitoringConfig {
 
     pub fn status_refetch_interval(&self) -> u64 {
         self.status_refetch_interval_s
+    }
+
+    pub fn withdrawal_pairing_batch_size(&self) -> usize {
+        self.withdrawal_pairing_batch_size
     }
 
     pub fn operators(&self) -> &Vec<BridgeOperator> {
@@ -442,6 +456,7 @@ esplora_request_timeout_s = 9
 esplora_url = "https://esplora.example.com"
 max_tx_confirmations = 12
 status_refetch_interval_s = 60
+withdrawal_pairing_batch_size = 500
 
 [[bridge.operators]]
 public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -476,6 +491,7 @@ withdrawal_denomination_sats = 100000000
         assert_eq!(config.bridge.esplora_request_timeout_s(), 9);
         assert_eq!(config.bridge.max_tx_confirmations(), 12);
         assert_eq!(config.bridge.status_refetch_interval(), 60);
+        assert_eq!(config.bridge.withdrawal_pairing_batch_size(), 500);
         assert_eq!(config.bridge.operators().len(), 2);
         assert_eq!(
             config.bridge.operators()[0].public_key(),
@@ -538,6 +554,10 @@ eth_rpc_url = "https://rpc.example.com"
         assert_eq!(
             config.bridge().esplora_request_timeout_s(),
             DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+        );
+        assert_eq!(
+            config.bridge().withdrawal_pairing_batch_size(),
+            DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
         );
         let indexer = config.withdrawal_indexer();
         assert_eq!(indexer.batch_size(), DEFAULT_ETH_LOGS_BATCH_SIZE);

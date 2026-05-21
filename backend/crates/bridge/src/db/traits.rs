@@ -27,13 +27,6 @@ pub(crate) trait WithdrawalIndexerDb: Send + Sync {
     /// Fetches indexed withdrawal requests in ascending FIFO order.
     ///
     /// The result starts at `start_seq` and contains at most `limit` rows.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used when bridge status consumes indexed withdrawals"
-        )
-    )]
     fn fetch_withdrawal_requests_from(
         &self,
         start_seq: u64,

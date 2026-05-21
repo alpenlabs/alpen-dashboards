@@ -4,6 +4,7 @@ use anyhow::Result;
 use axum::{routing::get, Router};
 use status_bridge::{
     bridge_monitoring_task, get_bridge_status, run_withdrawal_indexer, BridgeMonitoringContext,
+    WithdrawalIndexerDbSled,
 };
 use status_config::Config;
 use status_network::{get_network_status, network_monitoring_task, NetworkMonitoringContext};
@@ -30,8 +31,12 @@ fn main() -> Result<()> {
     let task_manager = TaskManager::new(runtime.handle().clone());
     let executor = task_manager.create_executor();
 
+    let withdrawal_index_db = Arc::new(WithdrawalIndexerDbSled::open(config.datadir())?);
     let network_context = Arc::new(NetworkMonitoringContext::new(config.network().clone()));
-    let bridge_context = Arc::new(BridgeMonitoringContext::new(config.bridge().clone()));
+    let bridge_context = Arc::new(BridgeMonitoringContext::new(
+        config.bridge().clone(),
+        Arc::clone(&withdrawal_index_db),
+    ));
 
     let cors = CorsLayer::new().allow_origin(Any);
     let app = Router::new()
@@ -61,15 +66,15 @@ fn main() -> Result<()> {
         move |shutdown| async move { network_monitoring_task(network_context, shutdown).await }
     });
 
+    executor.spawn_critical_async_with_shutdown("withdrawal-indexer", {
+        let withdrawal_index_db = Arc::clone(&withdrawal_index_db);
+        let cfg = config.withdrawal_indexer().clone();
+        move |shutdown| async move { run_withdrawal_indexer(withdrawal_index_db, cfg, shutdown).await }
+    });
+
     executor.spawn_critical_async_with_shutdown("bridge-monitoring", {
         let bridge_context = Arc::clone(&bridge_context);
         move |shutdown| async move { bridge_monitoring_task(bridge_context, shutdown).await }
-    });
-
-    executor.spawn_critical_async_with_shutdown("withdrawal-indexer", {
-        let datadir = config.datadir().to_path_buf();
-        let cfg = config.withdrawal_indexer().clone();
-        move |shutdown| async move { run_withdrawal_indexer(&datadir, cfg, shutdown).await }
     });
 
     executor.spawn_critical_async_with_shutdown("http-server", {
