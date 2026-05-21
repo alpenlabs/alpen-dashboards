@@ -2,6 +2,7 @@ use bitcoin::{secp256k1::PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use strata_bridge_rpc::types::{
     RpcClaimPhase, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
+    RpcWithdrawalStatus,
 };
 use strata_primitives::buf::Buf32;
 
@@ -82,6 +83,26 @@ pub(crate) struct WithdrawalInfo {
     pub(crate) withdrawal_request_txid: Buf32,
     pub(crate) fulfillment_txid: Option<Txid>,
     pub(crate) status: WithdrawalStatus,
+}
+
+impl WithdrawalInfo {
+    pub(crate) fn from_status(
+        withdrawal_request_txid: Buf32,
+        status: &RpcWithdrawalStatus,
+    ) -> Self {
+        match status {
+            RpcWithdrawalStatus::InProgress => Self {
+                withdrawal_request_txid,
+                fulfillment_txid: None,
+                status: WithdrawalStatus::InProgress,
+            },
+            RpcWithdrawalStatus::Complete { fulfillment_txid } => Self {
+                withdrawal_request_txid,
+                fulfillment_txid: Some(*fulfillment_txid),
+                status: WithdrawalStatus::Complete,
+            },
+        }
+    }
 }
 
 /// Reimbursement status

@@ -8,6 +8,7 @@ mod status;
 mod types;
 mod withdrawal_indexer;
 mod withdrawal_requests;
+mod withdrawal_status;
 
 pub use context::BridgeMonitoringContext;
 pub use db::WithdrawalIndexerDbSled;

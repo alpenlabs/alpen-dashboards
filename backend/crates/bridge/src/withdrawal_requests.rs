@@ -39,3 +39,37 @@ pub(crate) fn fetch_withdrawal_requests(
 
     requests
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{
+        types::DbWithdrawalRequest,
+        withdrawal_index::{mock::MockWithdrawalIndexerDb, test_utils::make_withdrawal_request},
+    };
+
+    #[test]
+    fn fetches_withdrawal_requests_in_batches() {
+        let db = MockWithdrawalIndexerDb::default();
+        let request = make_withdrawal_request(1);
+        db.insert_withdrawal_event(&[
+            request.clone(),
+            DbWithdrawalRequest {
+                sub_idx: 1,
+                ..request.clone()
+            },
+            DbWithdrawalRequest {
+                sub_idx: 2,
+                ..request
+            },
+        ])
+        .expect("insert requests");
+
+        let rows = fetch_withdrawal_requests(&db, 0, 3, 2);
+
+        assert_eq!(
+            rows.into_iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+}

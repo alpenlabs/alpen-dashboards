@@ -3,7 +3,6 @@ use axum::Json;
 use bitcoin::secp256k1::PublicKey;
 use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
-use strata_primitives::buf::Buf32;
 use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
 
@@ -14,9 +13,10 @@ use super::{
     state::DepositInfoUpdate,
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, WithdrawalInfo,
+        ReimbursementStatus,
     },
-    withdrawal_requests,
+    withdrawal_requests::fetch_withdrawal_requests,
+    withdrawal_status::get_withdrawal_updates,
 };
 
 use tokio::time::{interval, Duration};
@@ -121,7 +121,7 @@ pub async fn bridge_monitoring_task(
         let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
         let new_deposit_indices_count =
             count_deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx);
-        let withdrawal_requests = withdrawal_requests::fetch_withdrawal_requests(
+        let withdrawal_requests = fetch_withdrawal_requests(
             context.withdrawal_index(),
             pairing_cursor.next_withdrawal_seq,
             new_deposit_indices_count,
@@ -138,15 +138,23 @@ pub async fn bridge_monitoring_task(
             );
         }
 
-        let withdrawal_updates = get_withdrawals().await;
+        let withdrawal_candidates = context.state().select_withdrawal_status_candidates().await;
+        let withdrawal_updates = get_withdrawal_updates(
+            context.bridge_rpc(),
+            context.withdrawal_index(),
+            context.esplora(),
+            chain_tip_height,
+            &withdrawal_candidates,
+            context.config().withdrawal_pairing_batch_size(),
+        )
+        .await;
         context
             .state()
-            .apply_withdrawal_updates(withdrawal_updates)
+            .apply_withdrawal_updates(withdrawal_updates, context.config().max_tx_confirmations())
             .await;
 
-        // Reimbursements are only possible after withdrawal fulfillment. This
-        // commit does not yet join deposit_idx to indexed withdrawal status, so
-        // there are no sound reimbursement candidates to query.
+        // Reimbursement rendering is deferred until the next step wires a
+        // reimbursement scan cursor over completed withdrawal deposit indices.
         let reimbursement_deposit_indices = Vec::new();
         let reimbursement_infos = get_reimbursements(
             context.bridge_rpc(),
@@ -263,16 +271,6 @@ async fn get_deposit_info_updates(
     }
 
     updates
-}
-
-/// Return withdrawal updates for this stage of the deposit-indexed API migration.
-///
-/// The bridge RPC is now keyed by `deposit_idx`, but the dashboard's frontend
-/// withdrawal row still requires the EE withdrawal request txid. Until the
-/// indexed WRT-to-deposit pairing is wired in, there are no sound withdrawal
-/// rows to emit.
-async fn get_withdrawals() -> Vec<(Buf32, WithdrawalInfo, u64)> {
-    Vec::new()
 }
 
 /// Fetch bridge reimbursement status for completed withdrawals.

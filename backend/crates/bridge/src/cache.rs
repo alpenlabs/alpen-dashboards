@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
-use strata_primitives::buf::Buf32;
 
 use super::types::{
     DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo, ReimbursementStatus,
@@ -53,13 +52,20 @@ pub(crate) struct WithdrawalPairing {
     cursor: WithdrawalPairingCursor,
 }
 
+/// In-memory cursor for bridge withdrawal status polling progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct WithdrawalStatusCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
+}
+
 /// In-memory cache for bridge monitoring data
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
     deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
     deposit_info_cursor: DepositIdx,
     withdrawal_pairing: WithdrawalPairing,
-    withdrawals: HashMap<Buf32, CacheEntry<WithdrawalInfo>>,
+    withdrawal_status_cursor: WithdrawalStatusCursor,
+    withdrawals: HashMap<DepositIdx, CacheEntry<WithdrawalInfo>>,
     reimbursements: HashMap<DepositIdx, CacheEntry<ReimbursementInfo>>,
     operators: Vec<OperatorStatus>,
 }
@@ -77,10 +83,6 @@ impl BridgeStatusCache {
         self.withdrawal_pairing.cursor
     }
 
-    #[expect(
-        dead_code,
-        reason = "used when withdrawal status candidates are selected in the next commit"
-    )]
     pub(crate) fn withdrawal_pairings_from(
         &self,
         deposit_idx: DepositIdx,
@@ -103,6 +105,14 @@ impl BridgeStatusCache {
         self.withdrawal_pairing.cursor = cursor;
     }
 
+    pub(crate) fn withdrawal_status_cursor(&self) -> WithdrawalStatusCursor {
+        self.withdrawal_status_cursor
+    }
+
+    pub(crate) fn set_withdrawal_status_cursor(&mut self, cursor: WithdrawalStatusCursor) {
+        self.withdrawal_status_cursor = cursor;
+    }
+
     /// Update deposit cache entry
     pub(crate) fn update_deposit(
         &mut self,
@@ -121,15 +131,15 @@ impl BridgeStatusCache {
     /// Update withdrawal cache entry
     pub(crate) fn update_withdrawal(
         &mut self,
-        request_id: Buf32,
+        deposit_idx: DepositIdx,
         info: WithdrawalInfo,
         confirmations: u64,
     ) {
-        if let Some(entry) = self.withdrawals.get_mut(&request_id) {
+        if let Some(entry) = self.withdrawals.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
         } else {
             self.withdrawals
-                .insert(request_id, CacheEntry::new(info, confirmations));
+                .insert(deposit_idx, CacheEntry::new(info, confirmations));
         }
     }
 
@@ -166,9 +176,12 @@ impl BridgeStatusCache {
     }
 
     /// Batch update withdrawals
-    pub(crate) fn apply_withdrawal_updates(&mut self, updates: Vec<(Buf32, WithdrawalInfo, u64)>) {
-        for (request_id, info, confirmations) in updates {
-            self.update_withdrawal(request_id, info, confirmations);
+    pub(crate) fn apply_withdrawal_updates(
+        &mut self,
+        updates: Vec<(DepositIdx, WithdrawalInfo, u64)>,
+    ) {
+        for (deposit_idx, info, confirmations) in updates {
+            self.update_withdrawal(deposit_idx, info, confirmations);
         }
     }
 
@@ -195,14 +208,14 @@ impl BridgeStatusCache {
     }
 
     /// Filter withdrawals based on status condition
-    pub(crate) fn filter_withdrawals<F>(&self, filter: F) -> Vec<(Buf32, WithdrawalInfo)>
+    pub(crate) fn filter_withdrawals<F>(&self, filter: F) -> Vec<(DepositIdx, WithdrawalInfo)>
     where
         F: Fn(&WithdrawalStatus) -> bool,
     {
         self.withdrawals
             .iter()
             .filter(|(_, entry)| filter(&entry.data.status))
-            .map(|(request_id, entry)| (*request_id, entry.data))
+            .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
@@ -226,13 +239,9 @@ impl BridgeStatusCache {
     }
 
     /// Purge specific withdrawal entries
-    #[expect(
-        dead_code,
-        reason = "withdrawal purge resumes when deposit-index pairing is wired in the next commit"
-    )]
-    pub(crate) fn purge_withdrawals(&mut self, withdrawals_to_purge: Vec<Buf32>) {
-        for request_id in withdrawals_to_purge {
-            self.withdrawals.remove(&request_id);
+    pub(crate) fn purge_withdrawals(&mut self, withdrawals_to_purge: Vec<DepositIdx>) {
+        for deposit_idx in withdrawals_to_purge {
+            self.withdrawals.remove(&deposit_idx);
         }
     }
 

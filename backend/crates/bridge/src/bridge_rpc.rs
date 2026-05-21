@@ -3,7 +3,9 @@ use jsonrpsee::http_client::HttpClient;
 use std::collections::BTreeMap;
 use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
-use strata_bridge_rpc::types::{RpcDepositInfo, RpcOperatorStatus, RpcReimbursementStatus};
+use strata_bridge_rpc::types::{
+    RpcDepositInfo, RpcOperatorStatus, RpcReimbursementStatus, RpcWithdrawalStatus,
+};
 use tracing::{debug, warn};
 
 use status_config::BridgeMonitoringConfig;
@@ -198,6 +200,22 @@ pub(crate) async fn get_deposit_info(
         })
         .await
         .ok_or_else(|| anyhow!("failed to fetch deposit info for deposit_idx {deposit_idx}"))
+}
+
+/// Fetch withdrawal status by bridge-side deposit index.
+pub(crate) async fn get_withdrawal_status(
+    rpc_manager: &RpcClientManager,
+    deposit_idx: DepositIdx,
+) -> Result<Option<RpcWithdrawalStatus>> {
+    rpc_manager
+        .query_clients_with_retry(|client| async move {
+            client
+                .get_withdrawal_status(deposit_idx)
+                .await
+                .map_err(|e| e.into())
+        })
+        .await
+        .ok_or_else(|| anyhow!("failed to fetch withdrawal status for deposit_idx {deposit_idx}"))
 }
 
 /// Fetch reimbursement status by bridge-side deposit index.
