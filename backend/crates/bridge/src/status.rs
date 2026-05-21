@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::Json;
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::{secp256k1::PublicKey, Txid};
 use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::L1Height;
@@ -10,7 +10,7 @@ use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
     esplora::{self, get_bitcoin_chain_tip_height, EsploraClient},
-    state::DepositInfoUpdate,
+    state::{DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus,
@@ -21,42 +21,6 @@ use super::{
 
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
-
-use status_config::BridgeMonitoringConfig;
-
-/// Determine which cached reimbursement entries should be purged.
-async fn determine_reimbursements_to_purge(
-    final_reimbursements: Vec<(DepositIdx, ReimbursementInfo)>,
-    config: &BridgeMonitoringConfig,
-    esplora_client: &EsploraClient,
-    chain_tip_height: L1Height,
-) -> Vec<DepositIdx> {
-    let max_confirmations = config.max_tx_confirmations();
-    let mut reimbursements_to_purge = Vec::new();
-
-    for (deposit_idx, reimbursement_info) in final_reimbursements {
-        let check_txid = match reimbursement_info.status {
-            ReimbursementStatus::Slashed | ReimbursementStatus::Aborted => {
-                reimbursement_info.claim_txid
-            }
-            ReimbursementStatus::Complete => reimbursement_info
-                .payout_txid
-                .unwrap_or(reimbursement_info.claim_txid),
-            ReimbursementStatus::InProgress | ReimbursementStatus::NotStarted => continue,
-        };
-
-        let current_confirmations =
-            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
-
-        if let Some(confirmations) = current_confirmations {
-            if confirmations >= max_confirmations {
-                reimbursements_to_purge.push(deposit_idx);
-            }
-        }
-    }
-
-    reimbursements_to_purge
-}
 
 /// Periodically fetch bridge status and update bridge cache.
 pub async fn bridge_monitoring_task(
@@ -153,32 +117,23 @@ pub async fn bridge_monitoring_task(
             .apply_withdrawal_updates(withdrawal_updates, context.config().max_tx_confirmations())
             .await;
 
-        // Reimbursement rendering is deferred until the next step wires a
-        // reimbursement scan cursor over completed withdrawal deposit indices.
-        let reimbursement_deposit_indices = Vec::new();
-        let reimbursement_infos = get_reimbursements(
-            context.bridge_rpc(),
-            context.config(),
-            context.esplora(),
-            chain_tip_height,
-            &reimbursement_deposit_indices,
-        )
-        .await;
-
-        let final_reimbursements = context
+        let reimbursement_candidates = context
             .state()
-            .apply_reimbursement_updates(reimbursement_infos)
+            .select_reimbursement_status_candidates()
             .await;
-        let reimbursements_to_purge = determine_reimbursements_to_purge(
-            final_reimbursements,
-            context.config(),
+        let reimbursement_updates = get_reimbursement_updates(
+            context.bridge_rpc(),
             context.esplora(),
             chain_tip_height,
+            &reimbursement_candidates,
         )
         .await;
         context
             .state()
-            .purge_reimbursements(reimbursements_to_purge)
+            .apply_reimbursement_updates(
+                reimbursement_updates,
+                context.config().max_tx_confirmations(),
+            )
             .await;
 
         context.mark_status_available();
@@ -273,75 +228,58 @@ async fn get_deposit_info_updates(
     updates
 }
 
-/// Fetch bridge reimbursement status for completed withdrawals.
-///
-/// At strata-bridge `0ecec67b67db89f6b761ffeaa09af8e7ad864bb1`, the server
-/// returns `Ok(None)` for every `deposit_idx`; this loop produces no
-/// reimbursement rows until the upstream `get_reimbursement_status`
-/// implementation lands. The caller passes deposit indices whose withdrawals
-/// are known complete.
-async fn get_reimbursements(
+/// Fetch reimbursement cache updates for paired deposits.
+async fn get_reimbursement_updates(
     rpc_manager: &bridge_rpc::RpcClientManager,
-    config: &BridgeMonitoringConfig,
     esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
-    deposit_indices: &[DepositIdx],
-) -> Vec<(DepositIdx, ReimbursementInfo, u64)> {
-    let mut reimbursement_infos = Vec::new();
+    candidates: &[DepositIdx],
+) -> Vec<ReimbursementInfoUpdate> {
+    let mut updates = Vec::new();
 
-    for deposit_idx in deposit_indices.iter().copied() {
+    for deposit_idx in candidates.iter().copied() {
         let status = match bridge_rpc::get_reimbursement_status(rpc_manager, deposit_idx).await {
-            Ok(status) => status,
+            Ok(Some(status)) => status,
+            Ok(None) => continue,
             Err(e) => {
                 warn!(deposit_idx, error = %e, "failed to fetch reimbursement status");
                 continue;
             }
-        };
-        let Some(status) = status else {
-            continue;
         };
 
         let Some(info) = ReimbursementInfo::from_status(&status) else {
             continue;
         };
 
-        match info.status {
-            ReimbursementStatus::InProgress => reimbursement_infos.push((deposit_idx, info, 0)),
-            ReimbursementStatus::Slashed | ReimbursementStatus::Aborted => {
-                let confirmations = esplora::get_tx_confirmations(
-                    esplora_client,
-                    info.claim_txid,
-                    chain_tip_height,
-                )
-                .await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        reimbursement_infos.push((deposit_idx, info, confirmations));
-                    }
-                }
-            }
-            ReimbursementStatus::Complete => {
-                let Some(payout_txid) = info.payout_txid else {
+        let confirmations = match info.status {
+            ReimbursementStatus::NotStarted => continue,
+            ReimbursementStatus::InProgress => None,
+            ReimbursementStatus::Slashed
+            | ReimbursementStatus::Aborted
+            | ReimbursementStatus::Complete => {
+                let Some(txid) = terminal_reimbursement_txid(&info) else {
                     continue;
                 };
-                let confirmations =
-                    esplora::get_tx_confirmations(esplora_client, payout_txid, chain_tip_height)
-                        .await;
-                if let Some(confirmations) = confirmations {
-                    if confirmations < config.max_tx_confirmations() {
-                        reimbursement_infos.push((deposit_idx, info, confirmations));
-                    }
-                }
+                esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await
             }
-            ReimbursementStatus::NotStarted => continue,
-        }
+        };
+
+        updates.push(ReimbursementInfoUpdate {
+            deposit_idx,
+            info,
+            confirmations,
+        });
     }
 
-    if reimbursement_infos.is_empty() {
-        warn!("no reimbursement infos found");
-    }
+    updates
+}
 
-    reimbursement_infos
+fn terminal_reimbursement_txid(info: &ReimbursementInfo) -> Option<Txid> {
+    match info.status {
+        ReimbursementStatus::Slashed | ReimbursementStatus::Aborted => Some(info.claim_txid),
+        ReimbursementStatus::Complete => info.payout_txid,
+        ReimbursementStatus::InProgress | ReimbursementStatus::NotStarted => None,
+    }
 }
 
 /// Return latest bridge status extracted from cache.

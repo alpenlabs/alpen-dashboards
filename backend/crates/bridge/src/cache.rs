@@ -58,6 +58,12 @@ pub(crate) struct WithdrawalStatusCursor {
     pub(crate) next_deposit_idx: DepositIdx,
 }
 
+/// In-memory cursor for bridge reimbursement status polling progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ReimbursementStatusCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
+}
+
 /// In-memory cache for bridge monitoring data
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
@@ -66,6 +72,7 @@ pub(crate) struct BridgeStatusCache {
     withdrawal_pairing: WithdrawalPairing,
     withdrawal_status_cursor: WithdrawalStatusCursor,
     withdrawals: HashMap<DepositIdx, CacheEntry<WithdrawalInfo>>,
+    reimbursement_status_cursor: ReimbursementStatusCursor,
     reimbursements: HashMap<DepositIdx, CacheEntry<ReimbursementInfo>>,
     operators: Vec<OperatorStatus>,
 }
@@ -111,6 +118,14 @@ impl BridgeStatusCache {
 
     pub(crate) fn set_withdrawal_status_cursor(&mut self, cursor: WithdrawalStatusCursor) {
         self.withdrawal_status_cursor = cursor;
+    }
+
+    pub(crate) fn reimbursement_status_cursor(&self) -> ReimbursementStatusCursor {
+        self.reimbursement_status_cursor
+    }
+
+    pub(crate) fn set_reimbursement_status_cursor(&mut self, cursor: ReimbursementStatusCursor) {
+        self.reimbursement_status_cursor = cursor;
     }
 
     /// Update deposit cache entry
