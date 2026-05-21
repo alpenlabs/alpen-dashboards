@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use tokio::sync::Notify;
-use tracing::debug;
+use tokio::time::Duration;
 
 use super::{
     bridge_rpc::RpcClientManager, db::WithdrawalIndexerDbSled, esplora::EsploraClient,
@@ -73,11 +73,24 @@ impl BridgeMonitoringContext {
         }
     }
 
-    pub(crate) async fn wait_until_status_available(&self) {
-        if !self.status_available.load(Ordering::Acquire) {
-            debug!("Waiting for initial bridge status query to complete");
-            self.initial_status_query_complete.notified().await;
+    pub(crate) fn initial_status_wait_timeout(&self) -> Duration {
+        Duration::from_secs(self.config.initial_status_wait_timeout_s().max(1))
+    }
+
+    pub(crate) async fn wait_until_initial_status(&self) {
+        if self.status_available.load(Ordering::Acquire) {
+            return;
         }
+
+        let notified = self.initial_status_query_complete.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        if self.status_available.load(Ordering::Acquire) {
+            return;
+        }
+
+        notified.await;
     }
 
     pub(crate) async fn bridge_status(&self) -> BridgeStatus {
@@ -96,9 +109,8 @@ mod tests {
         types::{DepositInfo, DepositStatus},
     };
 
-    #[tokio::test]
-    async fn bridge_status_reflects_cached_state() {
-        let config: BridgeMonitoringConfig = toml::from_str(
+    fn test_config() -> BridgeMonitoringConfig {
+        toml::from_str(
             r#"
             esplora_url = "http://localhost:3000"
             max_tx_confirmations = 6
@@ -106,10 +118,18 @@ mod tests {
             operators = []
             "#,
         )
-        .expect("test config should deserialize");
+        .expect("test config should deserialize")
+    }
+
+    fn test_context() -> BridgeMonitoringContext {
         let withdrawal_index =
             Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
-        let context = BridgeMonitoringContext::new(config, withdrawal_index);
+        BridgeMonitoringContext::new(test_config(), withdrawal_index)
+    }
+
+    #[tokio::test]
+    async fn bridge_status_reflects_cached_state() {
+        let context = test_context();
         let deposit_request_txid =
             Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
                 .expect("valid txid");
@@ -141,5 +161,31 @@ mod tests {
             deposit_request_txid
         );
         assert_eq!(status.deposits[0].deposit_txid, Some(deposit_txid));
+    }
+
+    #[tokio::test]
+    async fn wait_for_initial_status_times_out_when_unavailable() {
+        let context = test_context();
+
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            context.wait_until_initial_status()
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn wait_for_initial_status_returns_when_available() {
+        let context = test_context();
+
+        context.mark_status_available();
+
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            context.wait_until_initial_status()
+        )
+        .await
+        .is_ok());
     }
 }

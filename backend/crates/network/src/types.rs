@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Notify, RwLock};
-use tracing::debug;
+use tokio::time::Duration;
 
 use status_config::NetworkMonitoringConfig;
 
@@ -80,10 +80,68 @@ impl NetworkMonitoringContext {
         }
     }
 
-    pub(crate) async fn wait_until_status_available(&self) {
-        if !self.status_available.load(Ordering::Acquire) {
-            debug!("Waiting for initial network status query to complete");
-            self.initial_status_query_complete.notified().await;
+    pub(crate) fn initial_status_wait_timeout(&self) -> Duration {
+        Duration::from_secs(self.config.initial_status_wait_timeout_s().max(1))
+    }
+
+    pub(crate) async fn wait_until_initial_status(&self) {
+        if self.status_available.load(Ordering::Acquire) {
+            return;
         }
+
+        let notified = self.initial_status_query_complete.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        if self.status_available.load(Ordering::Acquire) {
+            return;
+        }
+
+        notified.await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> NetworkMonitoringConfig {
+        toml::from_str(
+            r#"
+            sequencer_url = "http://localhost:8545"
+            rpc_url = "http://localhost:8546"
+            bundler_url = "http://localhost:3000/health"
+            retry_policy_max_retries = 1
+            retry_policy_total_time_s = 1
+            status_refetch_interval_s = 1
+            "#,
+        )
+        .expect("test config should deserialize")
+    }
+
+    #[tokio::test]
+    async fn wait_for_initial_status_times_out_when_unavailable() {
+        let context = NetworkMonitoringContext::new(test_config());
+
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            context.wait_until_initial_status()
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn wait_for_initial_status_returns_when_available() {
+        let context = NetworkMonitoringContext::new(test_config());
+
+        context.mark_status_available();
+
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            context.wait_until_initial_status()
+        )
+        .await
+        .is_ok());
     }
 }

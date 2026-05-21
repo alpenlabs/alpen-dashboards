@@ -1,4 +1,5 @@
 use anyhow::Result;
+use axum::http::StatusCode;
 use axum::Json;
 use bitcoin::{secp256k1::PublicKey, Txid};
 use std::{collections::BTreeSet, sync::Arc};
@@ -19,7 +20,7 @@ use super::{
     withdrawal_status::get_withdrawal_updates,
 };
 
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tracing::{error, info, warn};
 
 /// Periodically fetch bridge status and update bridge cache.
@@ -283,10 +284,21 @@ fn terminal_reimbursement_txid(info: &ReimbursementInfo) -> Option<Txid> {
 }
 
 /// Return latest bridge status extracted from cache.
-pub async fn get_bridge_status(context: Arc<BridgeMonitoringContext>) -> Json<BridgeStatus> {
-    context.wait_until_status_available().await;
+pub async fn get_bridge_status(
+    context: Arc<BridgeMonitoringContext>,
+) -> std::result::Result<Json<BridgeStatus>, StatusCode> {
+    let initial_status_wait_timeout = context.initial_status_wait_timeout();
+    if timeout(
+        initial_status_wait_timeout,
+        context.wait_until_initial_status(),
+    )
+    .await
+    .is_err()
+    {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
 
-    Json(context.bridge_status().await)
+    Ok(Json(context.bridge_status().await))
 }
 
 #[cfg(test)]
