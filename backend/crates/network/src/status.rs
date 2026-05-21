@@ -1,10 +1,11 @@
 use anyhow::Result;
+use axum::http::StatusCode;
 use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
 use std::sync::Arc;
 use strata_tasks::ShutdownGuard;
-use tokio::time::{interval, sleep, Duration};
+use tokio::time::{interval, sleep, timeout, Duration};
 use tracing::{error, info};
 
 use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
@@ -104,8 +105,19 @@ pub async fn network_monitoring_task(
 }
 
 /// Handler to get the current network status
-pub async fn get_network_status(context: Arc<NetworkMonitoringContext>) -> Json<NetworkStatus> {
-    context.wait_until_status_available().await;
+pub async fn get_network_status(
+    context: Arc<NetworkMonitoringContext>,
+) -> std::result::Result<Json<NetworkStatus>, StatusCode> {
+    let initial_status_wait_timeout = context.initial_status_wait_timeout();
+    if timeout(
+        initial_status_wait_timeout,
+        context.wait_until_initial_status(),
+    )
+    .await
+    .is_err()
+    {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
 
-    Json(context.status().await)
+    Ok(Json(context.status().await))
 }

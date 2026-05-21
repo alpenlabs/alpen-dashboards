@@ -1,40 +1,38 @@
 use crate::db::{
     error::DbResult,
-    types::{DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalEventKey, DbWithdrawalRequest},
+    types::{DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest, DbWithdrawalRequestRow},
 };
 
-/// Storage contract for the EVM withdrawal-intent indexer.
+/// Storage contract for indexed EVM withdrawal-intent events.
 ///
-/// Two concerns share this trait:
-/// - the FIFO sequence of expanded `WithdrawalIntentEvent` requests (with
-///   idempotent insertion via the event-key reverse index and a
-///   `last_scanned_block` checkpoint), and
-/// - the seq ↔ deposit_idx pairing populated once a withdrawal is matched
-///   to a bridge deposit.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "pairing methods are consumed by the pairing task in a follow-up commit"
-    )
-)]
+/// This trait owns the FIFO sequence of expanded `WithdrawalIntentEvent`
+/// requests, idempotent insertion via the event-key reverse index, and the
+/// indexer's [`DbIndexerState`].
 pub(crate) trait WithdrawalIndexerDb: Send + Sync {
+    /// Returns the stored state for an indexer task.
     fn get_indexer_state(&self, task: &str) -> DbResult<Option<DbIndexerState>>;
+
+    /// Stores the state for an indexer task.
     fn put_indexer_state(&self, task: &str, state: &DbIndexerState) -> DbResult<()>;
 
+    /// Inserts one EVM withdrawal-intent event expanded into FIFO requests.
+    ///
+    /// Replaying the same event is idempotent and returns the existing
+    /// persisted sequence range.
     fn insert_withdrawal_event(
         &self,
         requests: &[DbWithdrawalRequest],
     ) -> DbResult<DbWithdrawalEventIndex>;
-    fn get_withdrawal_request(&self, seq: u64) -> DbResult<Option<DbWithdrawalRequest>>;
-    fn get_withdrawal_event_index(
-        &self,
-        key: &DbWithdrawalEventKey,
-    ) -> DbResult<Option<DbWithdrawalEventIndex>>;
-    fn max_withdrawal_seq(&self) -> DbResult<Option<u64>>;
 
-    fn insert_pairing(&self, seq: u64, deposit_idx: u32) -> DbResult<()>;
-    fn get_deposit_idx(&self, seq: u64) -> DbResult<Option<u32>>;
-    fn get_seq_by_deposit_idx(&self, deposit_idx: u32) -> DbResult<Option<u64>>;
-    fn list_unpaired_seqs(&self) -> DbResult<Vec<u64>>;
+    /// Fetches indexed withdrawal requests in ascending FIFO order.
+    ///
+    /// The result starts at `start_seq` and contains at most `limit` rows.
+    fn fetch_withdrawal_requests_from(
+        &self,
+        start_seq: u64,
+        limit: usize,
+    ) -> DbResult<Vec<DbWithdrawalRequestRow>>;
+
+    /// Returns the largest indexed withdrawal sequence number.
+    fn max_withdrawal_seq(&self) -> DbResult<Option<u64>>;
 }

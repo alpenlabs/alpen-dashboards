@@ -1,5 +1,5 @@
 //! Persistence for the EVM withdrawal-intent indexer: FIFO sequencing of
-//! withdrawal-request events, plus the seq ↔ deposit_idx pairing.
+//! withdrawal-request events and indexer scan state.
 
 pub(crate) mod db;
 pub(crate) mod schema;

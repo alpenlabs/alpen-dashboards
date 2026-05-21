@@ -61,3 +61,10 @@ pub(crate) struct DbWithdrawalRequest {
     /// EVM block number that contained the event.
     pub(crate) block_number: u64,
 }
+
+/// Indexed withdrawal request row returned from the withdrawal-index DB.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DbWithdrawalRequestRow {
+    pub(crate) seq: u64,
+    pub(crate) request: DbWithdrawalRequest,
+}
