@@ -94,6 +94,22 @@ impl BridgeStatusCache {
         self.withdrawal_pairing.cursor = cursor;
     }
 
+    pub(crate) fn purge_withdrawal_pairings_range(&mut self, start: DepositIdx, end: DepositIdx) {
+        if start >= end {
+            return;
+        }
+
+        let deposit_indices = self
+            .withdrawal_pairing
+            .pairings
+            .range(start..end)
+            .map(|(deposit_idx, _)| *deposit_idx)
+            .collect::<Vec<_>>();
+        for deposit_idx in deposit_indices {
+            self.withdrawal_pairing.pairings.remove(&deposit_idx);
+        }
+    }
+
     pub(crate) fn withdrawal_status_cursor(&self) -> WithdrawalStatusCursor {
         self.withdrawal_status_cursor
     }
@@ -239,6 +255,7 @@ impl BridgeStatusCache {
     }
 
     /// Purge specific withdrawal entries
+    #[expect(dead_code, reason = "wired into reimbursement persistence")]
     pub(crate) fn purge_withdrawals(&mut self, withdrawals_to_purge: Vec<DepositIdx>) {
         for deposit_idx in withdrawals_to_purge {
             self.withdrawals.remove(&deposit_idx);

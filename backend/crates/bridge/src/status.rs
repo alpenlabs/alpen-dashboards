@@ -124,10 +124,17 @@ pub async fn bridge_monitoring_task(
             context.config().withdrawal_pairing_batch_size(),
         )
         .await;
-        context
+        if let Err(e) = context
             .state()
-            .apply_withdrawal_updates(withdrawal_updates, context.config().max_tx_confirmations())
-            .await;
+            .apply_withdrawal_updates(
+                context.status_db(),
+                withdrawal_updates,
+                context.config().max_tx_confirmations(),
+            )
+            .await
+        {
+            warn!(error = %e, "failed to persist withdrawal status updates");
+        }
 
         let reimbursement_candidates = context
             .state()

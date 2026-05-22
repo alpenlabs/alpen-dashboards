@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use strata_bridge_primitives::types::DepositIdx;
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use super::{
     cache::BridgeStatusCache,
@@ -175,12 +176,13 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_withdrawal_updates(
         &self,
+        status_db: &impl BridgeStatusDb,
         updates: Vec<WithdrawalInfoUpdate>,
         max_confirmations: u64,
-    ) {
+    ) -> DbResult<()> {
         let mut cache_updates = Vec::new();
+        let mut withdrawal_infos_to_persist = Vec::new();
         let mut terminal_deposit_indices_to_purge = Vec::new();
-        let mut withdrawal_deposit_indices_to_purge = Vec::new();
 
         for update in updates {
             match update.info.status {
@@ -194,31 +196,50 @@ impl BridgeMonitoringState {
 
                     if confirmations >= max_confirmations {
                         terminal_deposit_indices_to_purge.push(update.deposit_idx);
-                        withdrawal_deposit_indices_to_purge.push(update.deposit_idx);
-                    } else {
-                        cache_updates.push((update.deposit_idx, update.info, Some(confirmations)));
                     }
+                    withdrawal_infos_to_persist.push((update.deposit_idx, update.info));
+                    cache_updates.push((update.deposit_idx, update.info, Some(confirmations)));
                 }
             }
         }
 
+        let current_cursor = {
+            let cache = self.cache.read().await;
+            cache.withdrawal_status_cursor()
+        };
+        let next_cursor =
+            next_withdrawal_status_cursor(current_cursor, &terminal_deposit_indices_to_purge);
+        for (deposit_idx, info) in &withdrawal_infos_to_persist {
+            status_db.put_withdrawal_info(*deposit_idx, info)?;
+        }
+        status_db.put_withdrawal_status_cursor(next_cursor)?;
+
+        let pairing_purge_frontier = next_cursor.next_deposit_idx;
+        let pairings_purged =
+            match status_db.del_withdrawal_pairings_range(0, pairing_purge_frontier) {
+                Ok(()) => true,
+                Err(e) => {
+                    warn!(error = %e, "failed to purge old withdrawal pairings");
+                    false
+                }
+            };
+
         let mut cache = self.cache.write().await;
-        let next_cursor = next_withdrawal_status_cursor(
-            cache.withdrawal_status_cursor(),
-            &terminal_deposit_indices_to_purge,
-        );
         cache.apply_withdrawal_updates(cache_updates);
-        cache.purge_withdrawals(withdrawal_deposit_indices_to_purge);
+        if pairings_purged {
+            cache.purge_withdrawal_pairings_range(0, pairing_purge_frontier);
+        }
         cache.set_withdrawal_status_cursor(next_cursor);
+        Ok(())
     }
 
     pub(crate) async fn select_reimbursement_status_candidates(&self) -> Vec<DepositIdx> {
         let cache = self.cache.read().await;
         let cursor = cache.reimbursement_status_cursor().next_deposit_idx;
         cache
-            .withdrawal_pairings_from(cursor)
+            .filter_withdrawals(|status| matches!(status, WithdrawalStatus::Complete))
             .into_iter()
-            .map(|(deposit_idx, _)| deposit_idx)
+            .filter_map(|(deposit_idx, _)| (deposit_idx >= cursor).then_some(deposit_idx))
             .collect()
     }
 
@@ -539,7 +560,7 @@ mod tests {
             .expect("put pairing cursor");
         status_db
             .put_withdrawal_status_cursor(WithdrawalStatusCursor {
-                next_deposit_idx: 2,
+                next_deposit_idx: 3,
             })
             .expect("put withdrawal cursor");
         status_db
@@ -566,10 +587,7 @@ mod tests {
         );
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
-            vec![WithdrawalStatusCandidate {
-                deposit_idx: 2,
-                withdrawal_seq: 7,
-            }]
+            Vec::<WithdrawalStatusCandidate>::new()
         );
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
@@ -713,6 +731,7 @@ mod tests {
 
         state
             .apply_withdrawal_updates(
+                &status_db,
                 vec![WithdrawalInfoUpdate {
                     deposit_idx: 0,
                     info: WithdrawalInfo {
@@ -724,8 +743,60 @@ mod tests {
                 }],
                 6,
             )
-            .await;
+            .await
+            .expect("persist withdrawal status");
 
+        assert_eq!(
+            state.select_withdrawal_status_candidates().await,
+            vec![WithdrawalStatusCandidate {
+                deposit_idx: 1,
+                withdrawal_seq: 1
+            }]
+        );
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.withdrawal_pairings,
+            vec![(1, 1)],
+            "confirmed withdrawal pairings below the cursor are purged"
+        );
+        assert_eq!(
+            snapshot.cursors.withdrawal_status,
+            WithdrawalStatusCursor {
+                next_deposit_idx: 1
+            }
+        );
+        assert_eq!(snapshot.withdrawals.len(), 1);
+        assert_eq!(snapshot.withdrawals[0].0, 0);
+    }
+
+    #[tokio::test]
+    async fn pairing_gc_retries_below_cursor() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        status_db
+            .put_withdrawal_pairings(&[(0, 0), (1, 1)])
+            .expect("put withdrawal pairings");
+        status_db
+            .put_withdrawal_status_cursor(WithdrawalStatusCursor {
+                next_deposit_idx: 1,
+            })
+            .expect("put withdrawal status cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        let state = BridgeMonitoringState::from_snapshot(snapshot);
+
+        state
+            .apply_withdrawal_updates(&status_db, Vec::new(), 6)
+            .await
+            .expect("persist withdrawal status");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(snapshot.withdrawal_pairings, vec![(1, 1)]);
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
             vec![WithdrawalStatusCandidate {
@@ -737,11 +808,13 @@ mod tests {
 
     #[tokio::test]
     async fn withdrawal_cache_allows_shared_request_tx_hash() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
         let withdrawal_request_txid = Buf32([9; 32]);
 
         state
             .apply_withdrawal_updates(
+                &status_db,
                 vec![
                     WithdrawalInfoUpdate {
                         deposit_idx: 0,
@@ -764,7 +837,8 @@ mod tests {
                 ],
                 6,
             )
-            .await;
+            .await
+            .expect("persist withdrawal status");
 
         let status = state.bridge_status().await;
 
@@ -773,10 +847,18 @@ mod tests {
             .withdrawals
             .iter()
             .all(|info| info.withdrawal_request_txid == withdrawal_request_txid));
+        assert!(
+            status_db
+                .get_status_snapshot()
+                .expect("load status snapshot")
+                .withdrawals
+                .is_empty(),
+            "in-progress withdrawal rows are cache-only"
+        );
     }
 
     #[tokio::test]
-    async fn reimbursement_status_candidates_follow_cursor() {
+    async fn reimbursement_candidates_use_complete_withdrawals() {
         let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
         let requests = vec![DbWithdrawalRequestRow {
@@ -793,6 +875,37 @@ mod tests {
             .apply_withdrawal_pairings(&status_db, &[0], &requests)
             .await
             .expect("persist withdrawal pairings");
+        assert_eq!(
+            state.select_reimbursement_status_candidates().await,
+            Vec::<DepositIdx>::new()
+        );
+
+        state
+            .apply_withdrawal_updates(
+                &status_db,
+                vec![WithdrawalInfoUpdate {
+                    deposit_idx: 0,
+                    info: WithdrawalInfo {
+                        withdrawal_request_txid: requests[0].request.tx_hash,
+                        fulfillment_txid: Some(Txid::from_byte_array([3; 32])),
+                        status: WithdrawalStatus::Complete,
+                    },
+                    confirmations: Some(1),
+                }],
+                6,
+            )
+            .await
+            .expect("persist withdrawal status");
+        assert_eq!(
+            status_db
+                .get_status_snapshot()
+                .expect("load status snapshot")
+                .cursors
+                .withdrawal_status,
+            WithdrawalStatusCursor {
+                next_deposit_idx: 0
+            }
+        );
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
             vec![0]
@@ -817,6 +930,45 @@ mod tests {
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
             Vec::<DepositIdx>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn reimbursement_candidates_skip_incomplete_withdrawals() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        let state = BridgeMonitoringState::default();
+
+        state
+            .apply_withdrawal_updates(
+                &status_db,
+                vec![
+                    WithdrawalInfoUpdate {
+                        deposit_idx: 0,
+                        info: WithdrawalInfo {
+                            withdrawal_request_txid: Buf32([10; 32]),
+                            fulfillment_txid: None,
+                            status: WithdrawalStatus::InProgress,
+                        },
+                        confirmations: None,
+                    },
+                    WithdrawalInfoUpdate {
+                        deposit_idx: 1,
+                        info: WithdrawalInfo {
+                            withdrawal_request_txid: Buf32([11; 32]),
+                            fulfillment_txid: Some(Txid::from_byte_array([12; 32])),
+                            status: WithdrawalStatus::Complete,
+                        },
+                        confirmations: Some(1),
+                    },
+                ],
+                6,
+            )
+            .await
+            .expect("persist withdrawal status");
+
+        assert_eq!(
+            state.select_reimbursement_status_candidates().await,
+            vec![1]
         );
     }
 }
