@@ -5,7 +5,7 @@ use strata_bridge_primitives::types::DepositIdx;
 use super::types::{
     DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo, ReimbursementStatus,
     ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
-    WithdrawalStatus, WithdrawalStatusCursor,
+    WithdrawalStatusCursor,
 };
 
 /// Cache entry with timestamp and confirmation tracking
@@ -223,14 +223,14 @@ impl BridgeStatusCache {
             .collect()
     }
 
-    /// Filter withdrawals based on status condition
+    /// Filter withdrawals based on deposit index and row value.
     pub(crate) fn filter_withdrawals<F>(&self, filter: F) -> Vec<(DepositIdx, WithdrawalInfo)>
     where
-        F: Fn(&WithdrawalStatus) -> bool,
+        F: Fn(DepositIdx, &WithdrawalInfo) -> bool,
     {
         self.withdrawals
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
@@ -255,7 +255,6 @@ impl BridgeStatusCache {
     }
 
     /// Purge specific withdrawal entries
-    #[expect(dead_code, reason = "wired into reimbursement persistence")]
     pub(crate) fn purge_withdrawals(&mut self, withdrawals_to_purge: Vec<DepositIdx>) {
         for deposit_idx in withdrawals_to_purge {
             self.withdrawals.remove(&deposit_idx);

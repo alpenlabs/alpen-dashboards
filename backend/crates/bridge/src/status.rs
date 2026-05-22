@@ -147,13 +147,17 @@ pub async fn bridge_monitoring_task(
             &reimbursement_candidates,
         )
         .await;
-        context
+        if let Err(e) = context
             .state()
             .apply_reimbursement_updates(
+                context.status_db(),
                 reimbursement_updates,
                 context.config().max_tx_confirmations(),
             )
-            .await;
+            .await
+        {
+            warn!(error = %e, "failed to persist reimbursement status updates");
+        }
 
         context.mark_status_available();
     }

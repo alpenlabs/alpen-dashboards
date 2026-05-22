@@ -235,19 +235,29 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn select_reimbursement_status_candidates(&self) -> Vec<DepositIdx> {
         let cache = self.cache.read().await;
-        let cursor = cache.reimbursement_status_cursor().next_deposit_idx;
-        cache
-            .filter_withdrawals(|status| matches!(status, WithdrawalStatus::Complete))
-            .into_iter()
-            .filter_map(|(deposit_idx, _)| (deposit_idx >= cursor).then_some(deposit_idx))
-            .collect()
+        let reimbursement_cursor = cache.reimbursement_status_cursor().next_deposit_idx;
+        let withdrawal_cursor = cache.withdrawal_status_cursor().next_deposit_idx;
+        let mut candidates = (reimbursement_cursor..withdrawal_cursor).collect::<BTreeSet<_>>();
+
+        candidates.extend(
+            cache
+                .filter_withdrawals(|deposit_idx, info| {
+                    deposit_idx >= reimbursement_cursor
+                        && matches!(info.status, WithdrawalStatus::Complete)
+                })
+                .into_iter()
+                .map(|(deposit_idx, _)| deposit_idx),
+        );
+
+        candidates.into_iter().collect()
     }
 
     pub(crate) async fn apply_reimbursement_updates(
         &self,
+        status_db: &impl BridgeStatusDb,
         updates: Vec<ReimbursementInfoUpdate>,
         max_confirmations: u64,
-    ) {
+    ) -> DbResult<()> {
         let mut cache_updates = Vec::new();
         let mut terminal_deposit_indices_to_purge = Vec::new();
 
@@ -273,14 +283,41 @@ impl BridgeMonitoringState {
             }
         }
 
+        let (next_cursor, withdrawal_deposit_indices_to_purge) = {
+            let cache = self.cache.read().await;
+            let current_cursor = cache.reimbursement_status_cursor();
+            let next_cursor = next_reimbursement_status_cursor(
+                current_cursor,
+                &terminal_deposit_indices_to_purge,
+            );
+            (
+                next_cursor,
+                cache
+                    .filter_withdrawals(|deposit_idx, _| deposit_idx < next_cursor.next_deposit_idx)
+                    .into_iter()
+                    .map(|(deposit_idx, _)| deposit_idx)
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        status_db.put_reimbursement_status_cursor(next_cursor)?;
+
+        let mut purged_withdrawal_deposit_indices = Vec::new();
+        for deposit_idx in withdrawal_deposit_indices_to_purge {
+            match status_db.del_withdrawal_info(deposit_idx) {
+                Ok(_) => purged_withdrawal_deposit_indices.push(deposit_idx),
+                Err(e) => {
+                    warn!(deposit_idx, error = %e, "failed to purge old withdrawal row");
+                }
+            }
+        }
+
         let mut cache = self.cache.write().await;
-        let next_cursor = next_reimbursement_status_cursor(
-            cache.reimbursement_status_cursor(),
-            &terminal_deposit_indices_to_purge,
-        );
         cache.apply_reimbursement_updates(cache_updates);
         cache.purge_reimbursements(terminal_deposit_indices_to_purge);
+        cache.purge_withdrawals(purged_withdrawal_deposit_indices);
         cache.set_reimbursement_status_cursor(next_cursor);
+        Ok(())
     }
 
     pub(crate) async fn bridge_status(&self) -> BridgeStatus {
@@ -294,7 +331,7 @@ impl BridgeMonitoringState {
                 .map(|(_, info)| info)
                 .collect(),
             withdrawals: cache
-                .filter_withdrawals(|_| true)
+                .filter_withdrawals(|_, _| true)
                 .into_iter()
                 .map(|(_, info)| info)
                 .collect(),
@@ -913,6 +950,33 @@ mod tests {
 
         state
             .apply_reimbursement_updates(
+                &status_db,
+                vec![ReimbursementInfoUpdate {
+                    deposit_idx: 0,
+                    info: ReimbursementInfo {
+                        claim_txid: Txid::from_byte_array([4; 32]),
+                        challenge_step: crate::types::ChallengeStep::Claimed,
+                        payout_txid: None,
+                        status: ReimbursementStatus::InProgress,
+                    },
+                    confirmations: None,
+                }],
+                6,
+            )
+            .await
+            .expect("persist active reimbursement status");
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.reimbursement_status,
+            ReimbursementStatusCursor::default()
+        );
+        assert_eq!(snapshot.withdrawals.len(), 1);
+
+        state
+            .apply_reimbursement_updates(
+                &status_db,
                 vec![ReimbursementInfoUpdate {
                     deposit_idx: 0,
                     info: ReimbursementInfo {
@@ -925,12 +989,24 @@ mod tests {
                 }],
                 6,
             )
-            .await;
+            .await
+            .expect("persist reimbursement status");
 
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
             Vec::<DepositIdx>::new()
         );
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.reimbursement_status,
+            ReimbursementStatusCursor {
+                next_deposit_idx: 1
+            }
+        );
+        assert!(snapshot.withdrawals.is_empty());
+        assert!(state.bridge_status().await.withdrawals.is_empty());
     }
 
     #[tokio::test]
@@ -969,6 +1045,31 @@ mod tests {
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
             vec![1]
+        );
+    }
+
+    #[tokio::test]
+    async fn reimbursement_candidates_include_withdrawal_cursor_lag() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        status_db
+            .put_withdrawal_status_cursor(WithdrawalStatusCursor {
+                next_deposit_idx: 3,
+            })
+            .expect("put withdrawal status cursor");
+        status_db
+            .put_reimbursement_status_cursor(ReimbursementStatusCursor {
+                next_deposit_idx: 1,
+            })
+            .expect("put reimbursement status cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        let state = BridgeMonitoringState::from_snapshot(snapshot);
+
+        assert_eq!(
+            state.select_reimbursement_status_candidates().await,
+            vec![1, 2]
         );
     }
 }
