@@ -127,22 +127,30 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_withdrawal_pairings(
         &self,
+        status_db: &impl BridgeStatusDb,
         deposit_indices: &[DepositIdx],
         withdrawal_requests: &[DbWithdrawalRequestRow],
-    ) -> Vec<(DepositIdx, WithdrawalSeq)> {
+    ) -> DbResult<Vec<(DepositIdx, WithdrawalSeq)>> {
         let withdrawal_seqs = withdrawal_requests
             .iter()
             .map(|row| row.seq)
             .collect::<Vec<_>>();
-        let mut cache = self.cache.write().await;
-        let (pairings, next_cursor) = plan_withdrawal_pairings(
-            cache.withdrawal_pairing_cursor(),
-            deposit_indices,
-            &withdrawal_seqs,
-        );
+        let current_cursor = {
+            let cache = self.cache.read().await;
+            cache.withdrawal_pairing_cursor()
+        };
+        let (pairings, next_cursor) =
+            plan_withdrawal_pairings(current_cursor, deposit_indices, &withdrawal_seqs);
+        if pairings.is_empty() {
+            return Ok(pairings);
+        }
 
+        status_db.put_withdrawal_pairings(&pairings)?;
+        status_db.put_withdrawal_pairing_cursor(next_cursor)?;
+
+        let mut cache = self.cache.write().await;
         cache.update_withdrawal_pairings(&pairings, next_cursor);
-        pairings
+        Ok(pairings)
     }
 
     pub(crate) async fn select_withdrawal_status_candidates(
@@ -630,7 +638,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn withdrawal_pairings_apply_atomically_with_cursor() {
+    async fn withdrawal_pairings_persist_rows_and_cursor() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
         let requests = vec![
             DbWithdrawalRequestRow {
@@ -643,7 +652,10 @@ mod tests {
             },
         ];
 
-        let pairings = state.apply_withdrawal_pairings(&[0, 1], &requests).await;
+        let pairings = state
+            .apply_withdrawal_pairings(&status_db, &[0, 1], &requests)
+            .await
+            .expect("persist withdrawal pairings");
 
         assert_eq!(pairings, vec![(0, 0), (1, 1)]);
         assert_eq!(
@@ -653,10 +665,22 @@ mod tests {
                 next_withdrawal_seq: 2
             }
         );
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(snapshot.withdrawal_pairings, vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            snapshot.cursors.withdrawal_pairing,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 2,
+                next_withdrawal_seq: 2
+            }
+        );
     }
 
     #[tokio::test]
     async fn withdrawal_status_candidates_follow_cursor() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
         let requests = vec![
             DbWithdrawalRequestRow {
@@ -669,7 +693,10 @@ mod tests {
             },
         ];
 
-        state.apply_withdrawal_pairings(&[0, 1], &requests).await;
+        state
+            .apply_withdrawal_pairings(&status_db, &[0, 1], &requests)
+            .await
+            .expect("persist withdrawal pairings");
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
             vec![
@@ -750,6 +777,7 @@ mod tests {
 
     #[tokio::test]
     async fn reimbursement_status_candidates_follow_cursor() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
         let requests = vec![DbWithdrawalRequestRow {
             seq: 0,
@@ -761,7 +789,10 @@ mod tests {
             Vec::<DepositIdx>::new()
         );
 
-        state.apply_withdrawal_pairings(&[0], &requests).await;
+        state
+            .apply_withdrawal_pairings(&status_db, &[0], &requests)
+            .await
+            .expect("persist withdrawal pairings");
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
             vec![0]

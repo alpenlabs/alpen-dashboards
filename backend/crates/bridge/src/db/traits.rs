@@ -68,10 +68,6 @@ pub(crate) trait BridgeStatusDb: Send + Sync {
     fn del_withdrawal_info(&self, deposit_idx: DepositIdx) -> DbResult<bool>;
 
     /// Inserts or replaces withdrawal-to-deposit pairings.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired into state in follow-up commits")
-    )]
     fn put_withdrawal_pairings(&self, pairings: &[(DepositIdx, WithdrawalSeq)]) -> DbResult<()>;
 
     /// Deletes withdrawal-to-deposit pairing rows in `start..end`.
@@ -85,10 +81,6 @@ pub(crate) trait BridgeStatusDb: Send + Sync {
     fn put_deposit_info_cursor(&self, cursor: DepositIdx) -> DbResult<()>;
 
     /// Stores the withdrawal-pairing cursor.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired into state in follow-up commits")
-    )]
     fn put_withdrawal_pairing_cursor(&self, cursor: WithdrawalPairingCursor) -> DbResult<()>;
 
     /// Stores the withdrawal-status polling cursor.

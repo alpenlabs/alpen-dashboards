@@ -96,10 +96,17 @@ pub async fn bridge_monitoring_task(
             new_deposit_indices_count,
             context.config().withdrawal_pairing_batch_size(),
         );
-        let new_pairings = context
+        let new_pairings = match context
             .state()
-            .apply_withdrawal_pairings(&deposit_indices, &withdrawal_requests)
-            .await;
+            .apply_withdrawal_pairings(context.status_db(), &deposit_indices, &withdrawal_requests)
+            .await
+        {
+            Ok(pairings) => pairings,
+            Err(e) => {
+                warn!(error = %e, "failed to persist withdrawal pairings");
+                Vec::new()
+            }
+        };
         if !new_pairings.is_empty() {
             info!(
                 pairing_count = new_pairings.len(),
