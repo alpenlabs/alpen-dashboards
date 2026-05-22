@@ -1,6 +1,17 @@
-use crate::db::{
-    error::DbResult,
-    types::{DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest, DbWithdrawalRequestRow},
+use strata_bridge_primitives::types::DepositIdx;
+
+use crate::{
+    db::{
+        error::DbResult,
+        types::{
+            DbBridgeStatusSnapshot, DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest,
+            DbWithdrawalRequestRow,
+        },
+    },
+    types::{
+        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+        WithdrawalStatusCursor,
+    },
 };
 
 /// Storage contract for indexed EVM withdrawal-intent events.
@@ -35,4 +46,41 @@ pub(crate) trait WithdrawalIndexerDb: Send + Sync {
 
     /// Returns the largest indexed withdrawal sequence number.
     fn max_withdrawal_seq(&self) -> DbResult<Option<u64>>;
+}
+
+/// Storage contract for bridge status rows, pairings, and cursors.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "status DB trait is consumed when persistence is wired into state"
+    )
+)]
+pub(crate) trait BridgeStatusDb: Send + Sync {
+    /// Loads all persisted status rows, pairings, and cursors.
+    fn get_status_snapshot(&self) -> DbResult<DbBridgeStatusSnapshot>;
+
+    /// Inserts or replaces one withdrawal status row.
+    fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()>;
+
+    /// Deletes one withdrawal status row.
+    fn del_withdrawal_info(&self, deposit_idx: DepositIdx) -> DbResult<bool>;
+
+    /// Inserts or replaces withdrawal-to-deposit pairings.
+    fn put_withdrawal_pairings(&self, pairings: &[(DepositIdx, WithdrawalSeq)]) -> DbResult<()>;
+
+    /// Deletes withdrawal-to-deposit pairing rows in `start..end`.
+    fn del_withdrawal_pairings_range(&self, start: DepositIdx, end: DepositIdx) -> DbResult<()>;
+
+    /// Stores the deposit-info polling cursor.
+    fn put_deposit_info_cursor(&self, cursor: DepositIdx) -> DbResult<()>;
+
+    /// Stores the withdrawal-pairing cursor.
+    fn put_withdrawal_pairing_cursor(&self, cursor: WithdrawalPairingCursor) -> DbResult<()>;
+
+    /// Stores the withdrawal-status polling cursor.
+    fn put_withdrawal_status_cursor(&self, cursor: WithdrawalStatusCursor) -> DbResult<()>;
+
+    /// Stores the reimbursement-status polling cursor.
+    fn put_reimbursement_status_cursor(&self, cursor: ReimbursementStatusCursor) -> DbResult<()>;
 }

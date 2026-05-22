@@ -4,7 +4,8 @@ use strata_bridge_primitives::types::DepositIdx;
 
 use super::types::{
     DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo, ReimbursementStatus,
-    WithdrawalInfo, WithdrawalStatus,
+    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+    WithdrawalStatus, WithdrawalStatusCursor,
 };
 
 /// Cache entry with timestamp and confirmation tracking
@@ -38,30 +39,11 @@ impl<T> CacheEntry<T> {
     }
 }
 
-/// In-memory cursor for withdrawal-to-deposit pairing progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WithdrawalPairingCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
-    pub(crate) next_withdrawal_seq: u64,
-}
-
 /// In-memory withdrawal-to-deposit pairings and their FIFO cursor.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct WithdrawalPairing {
-    pairings: BTreeMap<DepositIdx, u64>,
+    pairings: BTreeMap<DepositIdx, WithdrawalSeq>,
     cursor: WithdrawalPairingCursor,
-}
-
-/// In-memory cursor for bridge withdrawal status polling progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WithdrawalStatusCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
-}
-
-/// In-memory cursor for bridge reimbursement status polling progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ReimbursementStatusCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
 }
 
 /// In-memory cache for bridge monitoring data
@@ -93,7 +75,7 @@ impl BridgeStatusCache {
     pub(crate) fn withdrawal_pairings_from(
         &self,
         deposit_idx: DepositIdx,
-    ) -> Vec<(DepositIdx, u64)> {
+    ) -> Vec<(DepositIdx, WithdrawalSeq)> {
         self.withdrawal_pairing
             .pairings
             .range(deposit_idx..)
@@ -103,7 +85,7 @@ impl BridgeStatusCache {
 
     pub(crate) fn update_withdrawal_pairings(
         &mut self,
-        pairings: &[(DepositIdx, u64)],
+        pairings: &[(DepositIdx, WithdrawalSeq)],
         cursor: WithdrawalPairingCursor,
     ) {
         self.withdrawal_pairing

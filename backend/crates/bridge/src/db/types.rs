@@ -1,7 +1,37 @@
 //! Types shared by DB traits and implementations.
 
 use serde::{Deserialize, Serialize};
+use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::buf::Buf32;
+
+use crate::types::{
+    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+    WithdrawalStatusCursor,
+};
+
+/// Assembled snapshot of bridge-status cursors.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StatusCursors {
+    pub(crate) deposit_info: DepositIdx,
+    pub(crate) withdrawal_pairing: WithdrawalPairingCursor,
+    pub(crate) withdrawal_status: WithdrawalStatusCursor,
+    pub(crate) reimbursement_status: ReimbursementStatusCursor,
+}
+
+/// Snapshot of all persisted bridge-status rows and cursors.
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "status DB snapshot is consumed when persistence is wired into state"
+    )
+)]
+pub(crate) struct DbBridgeStatusSnapshot {
+    pub(crate) withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
+    pub(crate) withdrawal_pairings: Vec<(DepositIdx, WithdrawalSeq)>,
+    pub(crate) cursors: StatusCursors,
+}
 
 /// Indexer checkpoint. Tracks the highest block number that has been fully
 /// processed; the next scan resumes from `last_scanned_block + 1`.

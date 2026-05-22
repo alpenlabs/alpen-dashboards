@@ -4,14 +4,12 @@ use strata_bridge_primitives::types::DepositIdx;
 use tokio::sync::RwLock;
 
 use super::{
-    cache::{
-        BridgeStatusCache, ReimbursementStatusCursor, WithdrawalPairingCursor,
-        WithdrawalStatusCursor,
-    },
+    cache::BridgeStatusCache,
     db::types::DbWithdrawalRequestRow,
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, WithdrawalInfo, WithdrawalStatus,
+        ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor,
+        WithdrawalSeq, WithdrawalStatus, WithdrawalStatusCursor,
     },
 };
 
@@ -30,7 +28,7 @@ pub(crate) struct DepositInfoUpdate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WithdrawalStatusCandidate {
     pub(crate) deposit_idx: DepositIdx,
-    pub(crate) withdrawal_seq: u64,
+    pub(crate) withdrawal_seq: WithdrawalSeq,
 }
 
 /// Withdrawal status update collected during one monitoring tick.
@@ -115,7 +113,7 @@ impl BridgeMonitoringState {
         &self,
         deposit_indices: &[DepositIdx],
         withdrawal_requests: &[DbWithdrawalRequestRow],
-    ) -> Vec<(DepositIdx, u64)> {
+    ) -> Vec<(DepositIdx, WithdrawalSeq)> {
         let withdrawal_seqs = withdrawal_requests
             .iter()
             .map(|row| row.seq)
@@ -331,8 +329,8 @@ fn next_reimbursement_status_cursor(
 fn plan_withdrawal_pairings(
     cursor: WithdrawalPairingCursor,
     discovered_deposit_indices: &[DepositIdx],
-    indexed_withdrawal_seqs: &[u64],
-) -> (Vec<(DepositIdx, u64)>, WithdrawalPairingCursor) {
+    indexed_withdrawal_seqs: &[WithdrawalSeq],
+) -> (Vec<(DepositIdx, WithdrawalSeq)>, WithdrawalPairingCursor) {
     let discovered_deposit_indices = discovered_deposit_indices
         .iter()
         .copied()

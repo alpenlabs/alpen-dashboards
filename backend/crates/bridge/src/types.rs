@@ -1,10 +1,14 @@
 use bitcoin::{secp256k1::PublicKey, Txid};
 use serde::{Deserialize, Serialize};
+use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::types::{
     RpcClaimPhase, RpcDepositInfo, RpcDepositStatus, RpcOperatorStatus, RpcReimbursementStatus,
     RpcWithdrawalStatus,
 };
 use strata_primitives::buf::Buf32;
+
+/// FIFO withdrawal-request sequence number.
+pub(crate) type WithdrawalSeq = u64;
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -26,6 +30,25 @@ impl OperatorStatus {
             status,
         }
     }
+}
+
+/// In-memory cursor for withdrawal-to-deposit pairing progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WithdrawalPairingCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
+    pub(crate) next_withdrawal_seq: WithdrawalSeq,
+}
+
+/// In-memory cursor for bridge withdrawal status polling progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WithdrawalStatusCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
+}
+
+/// In-memory cursor for bridge reimbursement status polling progress.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReimbursementStatusCursor {
+    pub(crate) next_deposit_idx: DepositIdx,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
