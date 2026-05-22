@@ -7,8 +7,11 @@ use tokio::sync::Notify;
 use tokio::time::Duration;
 
 use super::{
-    bridge_rpc::RpcClientManager, db::WithdrawalIndexerDbSled, esplora::EsploraClient,
-    state::BridgeMonitoringState, types::BridgeStatus,
+    bridge_rpc::RpcClientManager,
+    db::{traits::BridgeStatusDb, BridgeStatusDbSled, WithdrawalIndexerDbSled},
+    esplora::EsploraClient,
+    state::BridgeMonitoringState,
+    types::BridgeStatus,
 };
 use status_config::BridgeMonitoringConfig;
 
@@ -18,6 +21,11 @@ pub struct BridgeMonitoringContext {
     bridge_rpc: RpcClientManager,
     esplora_client: EsploraClient,
     withdrawal_index: Arc<WithdrawalIndexerDbSled>,
+    #[expect(
+        dead_code,
+        reason = "used when status updates persist in follow-up commits"
+    )]
+    status_db: Arc<BridgeStatusDbSled>,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
@@ -27,20 +35,26 @@ impl BridgeMonitoringContext {
     pub fn new(
         config: BridgeMonitoringConfig,
         withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-    ) -> Self {
+        status_db: Arc<BridgeStatusDbSled>,
+    ) -> anyhow::Result<Self> {
         let bridge_rpc = RpcClientManager::new(&config);
         let esplora_client =
             EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
+        let snapshot = status_db
+            .get_status_snapshot()
+            .map_err(|e| anyhow::anyhow!("hydrate bridge status state: {e}"))?;
+        let state = BridgeMonitoringState::from_snapshot(snapshot);
 
-        Self {
+        Ok(Self {
             config,
             bridge_rpc,
             esplora_client,
             withdrawal_index,
-            state: BridgeMonitoringState::default(),
+            status_db,
+            state,
             status_available: AtomicBool::new(false),
             initial_status_query_complete: Notify::new(),
-        }
+        })
     }
 
     pub(crate) fn config(&self) -> &BridgeMonitoringConfig {
@@ -124,7 +138,9 @@ mod tests {
     fn test_context() -> BridgeMonitoringContext {
         let withdrawal_index =
             Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
-        BridgeMonitoringContext::new(test_config(), withdrawal_index)
+        let status_db = Arc::new(BridgeStatusDbSled::open_temporary().expect("open status db"));
+        BridgeMonitoringContext::new(test_config(), withdrawal_index, status_db)
+            .expect("create bridge monitoring context")
     }
 
     #[tokio::test]

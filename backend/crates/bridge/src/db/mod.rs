@@ -6,4 +6,5 @@ pub(crate) mod traits;
 pub(crate) mod types;
 pub(crate) mod withdrawal_index;
 
+pub use status::db::BridgeStatusDbSled;
 pub use withdrawal_index::db::WithdrawalIndexerDbSled;

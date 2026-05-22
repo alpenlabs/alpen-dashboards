@@ -4,7 +4,7 @@ use anyhow::Result;
 use axum::{routing::get, Router};
 use status_bridge::{
     bridge_monitoring_task, get_bridge_status, run_withdrawal_indexer, BridgeMonitoringContext,
-    WithdrawalIndexerDbSled,
+    BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
 use status_config::Config;
 use status_network::{get_network_status, network_monitoring_task, NetworkMonitoringContext};
@@ -32,11 +32,13 @@ fn main() -> Result<()> {
     let executor = task_manager.create_executor();
 
     let withdrawal_index_db = Arc::new(WithdrawalIndexerDbSled::open(config.datadir())?);
+    let bridge_status_db = Arc::new(BridgeStatusDbSled::open(config.datadir())?);
     let network_context = Arc::new(NetworkMonitoringContext::new(config.network().clone()));
     let bridge_context = Arc::new(BridgeMonitoringContext::new(
         config.bridge().clone(),
         Arc::clone(&withdrawal_index_db),
-    ));
+        Arc::clone(&bridge_status_db),
+    )?);
 
     let cors = CorsLayer::new().allow_origin(Any);
     let app = Router::new()

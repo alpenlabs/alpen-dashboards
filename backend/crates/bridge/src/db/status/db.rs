@@ -1,11 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "status DB is wired into the monitoring state in follow-up commits"
-    )
-)]
-
 use std::path::Path;
 
 use anyhow::Context;

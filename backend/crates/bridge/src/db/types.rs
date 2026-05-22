@@ -20,13 +20,6 @@ pub(crate) struct StatusCursors {
 
 /// Snapshot of all persisted bridge-status rows and cursors.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "status DB snapshot is consumed when persistence is wired into state"
-    )
-)]
 pub(crate) struct DbBridgeStatusSnapshot {
     pub(crate) withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
     pub(crate) withdrawal_pairings: Vec<(DepositIdx, WithdrawalSeq)>,
