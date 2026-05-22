@@ -75,13 +75,17 @@ pub async fn bridge_monitoring_task(
         let deposit_infos = get_deposits(context.bridge_rpc(), &deposit_candidates).await;
         let deposit_info_updates =
             get_deposit_info_updates(context.esplora(), chain_tip_height, deposit_infos).await;
-        context
+        if let Err(e) = context
             .state()
             .apply_deposit_info_updates(
+                context.status_db(),
                 deposit_info_updates,
                 context.config().max_tx_confirmations(),
             )
-            .await;
+            .await
+        {
+            warn!(error = %e, "failed to persist deposit status updates");
+        }
 
         let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
         let new_deposit_indices_count =

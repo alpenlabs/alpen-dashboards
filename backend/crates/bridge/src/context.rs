@@ -21,10 +21,6 @@ pub struct BridgeMonitoringContext {
     bridge_rpc: RpcClientManager,
     esplora_client: EsploraClient,
     withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-    #[expect(
-        dead_code,
-        reason = "used when status updates persist in follow-up commits"
-    )]
     status_db: Arc<BridgeStatusDbSled>,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
@@ -71,6 +67,10 @@ impl BridgeMonitoringContext {
 
     pub(crate) fn withdrawal_index(&self) -> &WithdrawalIndexerDbSled {
         self.withdrawal_index.as_ref()
+    }
+
+    pub(crate) fn status_db(&self) -> &BridgeStatusDbSled {
+        self.status_db.as_ref()
     }
 
     pub(crate) fn state(&self) -> &BridgeMonitoringState {
@@ -156,6 +156,7 @@ mod tests {
         context
             .state()
             .apply_deposit_info_updates(
+                context.status_db(),
                 vec![DepositInfoUpdate {
                     deposit_idx: 0,
                     info: DepositInfo {
@@ -167,7 +168,8 @@ mod tests {
                 }],
                 6,
             )
-            .await;
+            .await
+            .expect("apply deposit update");
 
         let status = context.bridge_status().await;
 

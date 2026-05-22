@@ -82,10 +82,6 @@ pub(crate) trait BridgeStatusDb: Send + Sync {
     fn del_withdrawal_pairings_range(&self, start: DepositIdx, end: DepositIdx) -> DbResult<()>;
 
     /// Stores the deposit-info polling cursor.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired into state in follow-up commits")
-    )]
     fn put_deposit_info_cursor(&self, cursor: DepositIdx) -> DbResult<()>;
 
     /// Stores the withdrawal-pairing cursor.

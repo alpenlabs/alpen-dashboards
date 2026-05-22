@@ -5,7 +5,11 @@ use tokio::sync::RwLock;
 
 use super::{
     cache::BridgeStatusCache,
-    db::types::{DbBridgeStatusSnapshot, DbWithdrawalRequestRow},
+    db::{
+        error::DbResult,
+        traits::BridgeStatusDb,
+        types::{DbBridgeStatusSnapshot, DbWithdrawalRequestRow},
+    },
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor,
@@ -75,9 +79,10 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_deposit_info_updates(
         &self,
+        status_db: &impl BridgeStatusDb,
         updates: Vec<DepositInfoUpdate>,
         max_confirmations: u64,
-    ) {
+    ) -> DbResult<()> {
         let mut cache_updates = Vec::new();
         let mut terminal_deposit_indices_to_purge = Vec::new();
 
@@ -100,14 +105,19 @@ impl BridgeMonitoringState {
             }
         }
 
+        let current_cursor = {
+            let cache = self.cache.read().await;
+            cache.deposit_info_cursor()
+        };
+        let next_cursor =
+            next_deposit_info_cursor(current_cursor, &terminal_deposit_indices_to_purge);
+        status_db.put_deposit_info_cursor(next_cursor)?;
+
         let mut cache = self.cache.write().await;
-        let next_cursor = next_deposit_info_cursor(
-            cache.deposit_info_cursor(),
-            &terminal_deposit_indices_to_purge,
-        );
         cache.apply_deposit_updates(cache_updates);
         cache.purge_deposits(terminal_deposit_indices_to_purge);
         cache.set_deposit_info_cursor(next_cursor);
+        Ok(())
     }
 
     pub(crate) async fn withdrawal_pairing_cursor(&self) -> WithdrawalPairingCursor {
@@ -562,6 +572,61 @@ mod tests {
         assert!(status.deposits.is_empty());
         assert_eq!(status.withdrawals.len(), 1);
         assert!(status.reimbursements.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deposit_updates_persist_cursor_only() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        let state = BridgeMonitoringState::default();
+        let deposit_request_txid = Txid::from_byte_array([6; 32]);
+        let deposit_txid = Txid::from_byte_array([7; 32]);
+
+        state
+            .apply_deposit_info_updates(
+                &status_db,
+                vec![DepositInfoUpdate {
+                    deposit_idx: 0,
+                    info: DepositInfo {
+                        deposit_request_txid,
+                        deposit_txid: None,
+                        status: DepositStatus::InProgress,
+                    },
+                    confirmations: None,
+                }],
+                6,
+            )
+            .await
+            .expect("persist deposit cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(snapshot.cursors.deposit_info, 0);
+        assert!(snapshot.withdrawals.is_empty());
+
+        state
+            .apply_deposit_info_updates(
+                &status_db,
+                vec![DepositInfoUpdate {
+                    deposit_idx: 0,
+                    info: DepositInfo {
+                        deposit_request_txid,
+                        deposit_txid: Some(deposit_txid),
+                        status: DepositStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist deposit cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(snapshot.cursors.deposit_info, 1);
+        assert!(snapshot.withdrawals.is_empty());
+        assert_eq!(state.select_deposit_info_candidates(&[0, 1]).await, vec![1]);
     }
 
     #[tokio::test]
