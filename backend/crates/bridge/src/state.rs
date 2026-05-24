@@ -78,7 +78,7 @@ impl BridgeMonitoringState {
         for update in updates {
             match update.info.status {
                 DepositStatus::InProgress => {
-                    cache_updates.push((update.deposit_idx, update.info, 0));
+                    cache_updates.push((update.deposit_idx, update.info, None));
                 }
                 DepositStatus::Failed | DepositStatus::Complete => {
                     let Some(confirmations) = update.confirmations else {
@@ -88,7 +88,7 @@ impl BridgeMonitoringState {
                     if confirmations >= max_confirmations {
                         terminal_deposit_indices_to_purge.push(update.deposit_idx);
                     } else {
-                        cache_updates.push((update.deposit_idx, update.info, confirmations));
+                        cache_updates.push((update.deposit_idx, update.info, Some(confirmations)));
                     }
                 }
             }
@@ -161,7 +161,7 @@ impl BridgeMonitoringState {
         for update in updates {
             match update.info.status {
                 WithdrawalStatus::InProgress => {
-                    cache_updates.push((update.deposit_idx, update.info, 0));
+                    cache_updates.push((update.deposit_idx, update.info, None));
                 }
                 WithdrawalStatus::Complete => {
                     let Some(confirmations) = update.confirmations else {
@@ -172,7 +172,7 @@ impl BridgeMonitoringState {
                         terminal_deposit_indices_to_purge.push(update.deposit_idx);
                         withdrawal_deposit_indices_to_purge.push(update.deposit_idx);
                     } else {
-                        cache_updates.push((update.deposit_idx, update.info, confirmations));
+                        cache_updates.push((update.deposit_idx, update.info, Some(confirmations)));
                     }
                 }
             }
@@ -210,7 +210,7 @@ impl BridgeMonitoringState {
             match update.info.status {
                 ReimbursementStatus::NotStarted => continue,
                 ReimbursementStatus::InProgress => {
-                    cache_updates.push((update.deposit_idx, update.info, 0));
+                    cache_updates.push((update.deposit_idx, update.info, None));
                 }
                 ReimbursementStatus::Slashed
                 | ReimbursementStatus::Aborted
@@ -222,7 +222,7 @@ impl BridgeMonitoringState {
                     if confirmations >= max_confirmations {
                         terminal_deposit_indices_to_purge.push(update.deposit_idx);
                     } else {
-                        cache_updates.push((update.deposit_idx, update.info, confirmations));
+                        cache_updates.push((update.deposit_idx, update.info, Some(confirmations)));
                     }
                 }
             }

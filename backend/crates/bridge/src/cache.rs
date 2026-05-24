@@ -12,12 +12,12 @@ use super::types::{
 #[derive(Debug, Clone)]
 pub(crate) struct CacheEntry<T> {
     pub(crate) data: T,
-    pub(crate) confirmations: u64,
+    pub(crate) confirmations: Option<u64>,
     pub(crate) last_updated: u64,
 }
 
 impl<T> CacheEntry<T> {
-    pub(crate) fn new(data: T, confirmations: u64) -> Self {
+    pub(crate) fn new(data: T, confirmations: Option<u64>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -29,7 +29,7 @@ impl<T> CacheEntry<T> {
         }
     }
 
-    pub(crate) fn update(&mut self, data: T, confirmations: u64) {
+    pub(crate) fn update(&mut self, data: T, confirmations: Option<u64>) {
         self.data = data;
         self.confirmations = confirmations;
         self.last_updated = SystemTime::now()
@@ -115,7 +115,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: DepositInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.deposits.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -130,7 +130,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: WithdrawalInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.withdrawals.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -145,7 +145,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: ReimbursementInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.reimbursements.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -166,7 +166,10 @@ impl BridgeStatusCache {
     }
 
     /// Batch update deposits
-    pub(crate) fn apply_deposit_updates(&mut self, updates: Vec<(DepositIdx, DepositInfo, u64)>) {
+    pub(crate) fn apply_deposit_updates(
+        &mut self,
+        updates: Vec<(DepositIdx, DepositInfo, Option<u64>)>,
+    ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_deposit(deposit_idx, info, confirmations);
         }
@@ -175,7 +178,7 @@ impl BridgeStatusCache {
     /// Batch update withdrawals
     pub(crate) fn apply_withdrawal_updates(
         &mut self,
-        updates: Vec<(DepositIdx, WithdrawalInfo, u64)>,
+        updates: Vec<(DepositIdx, WithdrawalInfo, Option<u64>)>,
     ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_withdrawal(deposit_idx, info, confirmations);
@@ -185,7 +188,7 @@ impl BridgeStatusCache {
     /// Batch update reimbursements
     pub(crate) fn apply_reimbursement_updates(
         &mut self,
-        updates: Vec<(DepositIdx, ReimbursementInfo, u64)>,
+        updates: Vec<(DepositIdx, ReimbursementInfo, Option<u64>)>,
     ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_reimbursement(deposit_idx, info, confirmations);
