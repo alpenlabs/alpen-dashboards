@@ -241,7 +241,7 @@ impl BridgeMonitoringState {
 
         candidates.extend(
             cache
-                .filter_withdrawals(|deposit_idx, info| {
+                .filter_withdrawals(|deposit_idx, info, _| {
                     deposit_idx >= reimbursement_cursor
                         && matches!(info.status, WithdrawalStatus::Complete)
                 })
@@ -293,7 +293,9 @@ impl BridgeMonitoringState {
             (
                 next_cursor,
                 cache
-                    .filter_withdrawals(|deposit_idx, _| deposit_idx < next_cursor.next_deposit_idx)
+                    .filter_withdrawals(|deposit_idx, _, _| {
+                        deposit_idx < next_cursor.next_deposit_idx
+                    })
                     .into_iter()
                     .map(|(deposit_idx, _)| deposit_idx)
                     .collect::<Vec<_>>(),
@@ -320,23 +322,42 @@ impl BridgeMonitoringState {
         Ok(())
     }
 
-    pub(crate) async fn bridge_status(&self) -> BridgeStatus {
+    pub(crate) async fn bridge_status(&self, max_confirmations: u64) -> BridgeStatus {
         let cache = self.cache.read().await;
 
         BridgeStatus {
             operators: cache.get_operators(),
             deposits: cache
-                .filter_deposits(|_| true)
+                // Omit terminal rows whose confirmations reached `max_confirmations`.
+                .filter_deposits(|_, info, confirmations| {
+                    !matches!(info.status, DepositStatus::Complete | DepositStatus::Failed)
+                        || confirmations
+                            .is_none_or(|confirmations| confirmations < max_confirmations)
+                })
                 .into_iter()
                 .map(|(_, info)| info)
                 .collect(),
             withdrawals: cache
-                .filter_withdrawals(|_, _| true)
+                // Complete withdrawals may be retained as reimbursement
+                // handoff state; omit them from this response at `max_confirmations`.
+                .filter_withdrawals(|_, info, confirmations| {
+                    !matches!(info.status, WithdrawalStatus::Complete)
+                        || confirmations
+                            .is_none_or(|confirmations| confirmations < max_confirmations)
+                })
                 .into_iter()
                 .map(|(_, info)| info)
                 .collect(),
             reimbursements: cache
-                .filter_reimbursements(|_| true)
+                // Omit terminal rows whose confirmations reached `max_confirmations`.
+                .filter_reimbursements(|_, info, confirmations| {
+                    !matches!(
+                        info.status,
+                        ReimbursementStatus::Complete
+                            | ReimbursementStatus::Slashed
+                            | ReimbursementStatus::Aborted
+                    ) || confirmations.is_none_or(|confirmations| confirmations < max_confirmations)
+                })
                 .into_iter()
                 .map(|(_, info)| info)
                 .collect(),
@@ -631,7 +652,7 @@ mod tests {
             vec![2]
         );
 
-        let status = state.bridge_status().await;
+        let status = state.bridge_status(6).await;
         assert!(status.deposits.is_empty());
         assert_eq!(status.withdrawals.len(), 1);
         assert!(status.reimbursements.is_empty());
@@ -877,7 +898,7 @@ mod tests {
             .await
             .expect("persist withdrawal status");
 
-        let status = state.bridge_status().await;
+        let status = state.bridge_status(6).await;
 
         assert_eq!(status.withdrawals.len(), 2);
         assert!(status
@@ -947,6 +968,29 @@ mod tests {
             state.select_reimbursement_status_candidates().await,
             vec![0]
         );
+        assert_eq!(state.bridge_status(6).await.withdrawals.len(), 1);
+
+        state
+            .apply_withdrawal_updates(
+                &status_db,
+                vec![WithdrawalInfoUpdate {
+                    deposit_idx: 0,
+                    info: WithdrawalInfo {
+                        withdrawal_request_txid: requests[0].request.tx_hash,
+                        fulfillment_txid: Some(Txid::from_byte_array([3; 32])),
+                        status: WithdrawalStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist confirmed withdrawal status");
+        assert_eq!(
+            state.select_reimbursement_status_candidates().await,
+            vec![0]
+        );
+        assert!(state.bridge_status(6).await.withdrawals.is_empty());
 
         state
             .apply_reimbursement_updates(
@@ -1006,7 +1050,7 @@ mod tests {
             }
         );
         assert!(snapshot.withdrawals.is_empty());
-        assert!(state.bridge_status().await.withdrawals.is_empty());
+        assert!(state.bridge_status(6).await.withdrawals.is_empty());
     }
 
     #[tokio::test]

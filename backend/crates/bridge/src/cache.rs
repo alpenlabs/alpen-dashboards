@@ -3,9 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
 
 use super::types::{
-    DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo, ReimbursementStatus,
-    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
-    WithdrawalStatusCursor,
+    DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
+    WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
 };
 
 /// Cache entry with timestamp and confirmation tracking
@@ -211,38 +210,38 @@ impl BridgeStatusCache {
         }
     }
 
-    /// Filter deposits based on status condition
+    /// Filter deposits based on deposit index, row value, and confirmations.
     pub(crate) fn filter_deposits<F>(&self, filter: F) -> Vec<(DepositIdx, DepositInfo)>
     where
-        F: Fn(&DepositStatus) -> bool,
+        F: Fn(DepositIdx, &DepositInfo, Option<u64>) -> bool,
     {
         self.deposits
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
-    /// Filter withdrawals based on deposit index and row value.
+    /// Filter withdrawals based on deposit index, row value, and confirmations.
     pub(crate) fn filter_withdrawals<F>(&self, filter: F) -> Vec<(DepositIdx, WithdrawalInfo)>
     where
-        F: Fn(DepositIdx, &WithdrawalInfo) -> bool,
+        F: Fn(DepositIdx, &WithdrawalInfo, Option<u64>) -> bool,
     {
         self.withdrawals
             .iter()
-            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
-    /// Filter reimbursements based on status condition
+    /// Filter reimbursements based on deposit index, row value, and confirmations.
     pub(crate) fn filter_reimbursements<F>(&self, filter: F) -> Vec<(DepositIdx, ReimbursementInfo)>
     where
-        F: Fn(&ReimbursementStatus) -> bool,
+        F: Fn(DepositIdx, &ReimbursementInfo, Option<u64>) -> bool,
     {
         self.reimbursements
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }

@@ -108,7 +108,9 @@ impl BridgeMonitoringContext {
     }
 
     pub(crate) async fn bridge_status(&self) -> BridgeStatus {
-        self.state.bridge_status().await
+        self.state
+            .bridge_status(self.config.max_tx_confirmations())
+            .await
     }
 }
 
