@@ -75,13 +75,17 @@ pub async fn bridge_monitoring_task(
         let deposit_infos = get_deposits(context.bridge_rpc(), &deposit_candidates).await;
         let deposit_info_updates =
             get_deposit_info_updates(context.esplora(), chain_tip_height, deposit_infos).await;
-        context
+        if let Err(e) = context
             .state()
             .apply_deposit_info_updates(
+                context.status_db(),
                 deposit_info_updates,
                 context.config().max_tx_confirmations(),
             )
-            .await;
+            .await
+        {
+            warn!(error = %e, "failed to persist deposit status updates");
+        }
 
         let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
         let new_deposit_indices_count =
@@ -92,10 +96,17 @@ pub async fn bridge_monitoring_task(
             new_deposit_indices_count,
             context.config().withdrawal_pairing_batch_size(),
         );
-        let new_pairings = context
+        let new_pairings = match context
             .state()
-            .apply_withdrawal_pairings(&deposit_indices, &withdrawal_requests)
-            .await;
+            .apply_withdrawal_pairings(context.status_db(), &deposit_indices, &withdrawal_requests)
+            .await
+        {
+            Ok(pairings) => pairings,
+            Err(e) => {
+                warn!(error = %e, "failed to persist withdrawal pairings");
+                Vec::new()
+            }
+        };
         if !new_pairings.is_empty() {
             info!(
                 pairing_count = new_pairings.len(),
@@ -113,10 +124,17 @@ pub async fn bridge_monitoring_task(
             context.config().withdrawal_pairing_batch_size(),
         )
         .await;
-        context
+        if let Err(e) = context
             .state()
-            .apply_withdrawal_updates(withdrawal_updates, context.config().max_tx_confirmations())
-            .await;
+            .apply_withdrawal_updates(
+                context.status_db(),
+                withdrawal_updates,
+                context.config().max_tx_confirmations(),
+            )
+            .await
+        {
+            warn!(error = %e, "failed to persist withdrawal status updates");
+        }
 
         let reimbursement_candidates = context
             .state()
@@ -129,13 +147,17 @@ pub async fn bridge_monitoring_task(
             &reimbursement_candidates,
         )
         .await;
-        context
+        if let Err(e) = context
             .state()
             .apply_reimbursement_updates(
+                context.status_db(),
                 reimbursement_updates,
                 context.config().max_tx_confirmations(),
             )
-            .await;
+            .await
+        {
+            warn!(error = %e, "failed to persist reimbursement status updates");
+        }
 
         context.mark_status_available();
     }
