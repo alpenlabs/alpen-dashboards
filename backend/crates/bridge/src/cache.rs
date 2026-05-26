@@ -3,20 +3,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
 
 use super::types::{
-    DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo, ReimbursementStatus,
-    WithdrawalInfo, WithdrawalStatus,
+    DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
+    WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
 };
 
 /// Cache entry with timestamp and confirmation tracking
 #[derive(Debug, Clone)]
 pub(crate) struct CacheEntry<T> {
     pub(crate) data: T,
-    pub(crate) confirmations: u64,
+    pub(crate) confirmations: Option<u64>,
     pub(crate) last_updated: u64,
 }
 
 impl<T> CacheEntry<T> {
-    pub(crate) fn new(data: T, confirmations: u64) -> Self {
+    pub(crate) fn new(data: T, confirmations: Option<u64>) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -28,7 +28,7 @@ impl<T> CacheEntry<T> {
         }
     }
 
-    pub(crate) fn update(&mut self, data: T, confirmations: u64) {
+    pub(crate) fn update(&mut self, data: T, confirmations: Option<u64>) {
         self.data = data;
         self.confirmations = confirmations;
         self.last_updated = SystemTime::now()
@@ -38,30 +38,11 @@ impl<T> CacheEntry<T> {
     }
 }
 
-/// In-memory cursor for withdrawal-to-deposit pairing progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WithdrawalPairingCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
-    pub(crate) next_withdrawal_seq: u64,
-}
-
 /// In-memory withdrawal-to-deposit pairings and their FIFO cursor.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct WithdrawalPairing {
-    pairings: BTreeMap<DepositIdx, u64>,
+    pairings: BTreeMap<DepositIdx, WithdrawalSeq>,
     cursor: WithdrawalPairingCursor,
-}
-
-/// In-memory cursor for bridge withdrawal status polling progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WithdrawalStatusCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
-}
-
-/// In-memory cursor for bridge reimbursement status polling progress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ReimbursementStatusCursor {
-    pub(crate) next_deposit_idx: DepositIdx,
 }
 
 /// In-memory cache for bridge monitoring data
@@ -93,7 +74,7 @@ impl BridgeStatusCache {
     pub(crate) fn withdrawal_pairings_from(
         &self,
         deposit_idx: DepositIdx,
-    ) -> Vec<(DepositIdx, u64)> {
+    ) -> Vec<(DepositIdx, WithdrawalSeq)> {
         self.withdrawal_pairing
             .pairings
             .range(deposit_idx..)
@@ -103,13 +84,29 @@ impl BridgeStatusCache {
 
     pub(crate) fn update_withdrawal_pairings(
         &mut self,
-        pairings: &[(DepositIdx, u64)],
+        pairings: &[(DepositIdx, WithdrawalSeq)],
         cursor: WithdrawalPairingCursor,
     ) {
         self.withdrawal_pairing
             .pairings
             .extend(pairings.iter().copied());
         self.withdrawal_pairing.cursor = cursor;
+    }
+
+    pub(crate) fn purge_withdrawal_pairings_range(&mut self, start: DepositIdx, end: DepositIdx) {
+        if start >= end {
+            return;
+        }
+
+        let deposit_indices = self
+            .withdrawal_pairing
+            .pairings
+            .range(start..end)
+            .map(|(deposit_idx, _)| *deposit_idx)
+            .collect::<Vec<_>>();
+        for deposit_idx in deposit_indices {
+            self.withdrawal_pairing.pairings.remove(&deposit_idx);
+        }
     }
 
     pub(crate) fn withdrawal_status_cursor(&self) -> WithdrawalStatusCursor {
@@ -133,7 +130,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: DepositInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.deposits.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -148,7 +145,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: WithdrawalInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.withdrawals.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -163,7 +160,7 @@ impl BridgeStatusCache {
         &mut self,
         deposit_idx: DepositIdx,
         info: ReimbursementInfo,
-        confirmations: u64,
+        confirmations: Option<u64>,
     ) {
         if let Some(entry) = self.reimbursements.get_mut(&deposit_idx) {
             entry.update(info, confirmations);
@@ -184,7 +181,10 @@ impl BridgeStatusCache {
     }
 
     /// Batch update deposits
-    pub(crate) fn apply_deposit_updates(&mut self, updates: Vec<(DepositIdx, DepositInfo, u64)>) {
+    pub(crate) fn apply_deposit_updates(
+        &mut self,
+        updates: Vec<(DepositIdx, DepositInfo, Option<u64>)>,
+    ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_deposit(deposit_idx, info, confirmations);
         }
@@ -193,7 +193,7 @@ impl BridgeStatusCache {
     /// Batch update withdrawals
     pub(crate) fn apply_withdrawal_updates(
         &mut self,
-        updates: Vec<(DepositIdx, WithdrawalInfo, u64)>,
+        updates: Vec<(DepositIdx, WithdrawalInfo, Option<u64>)>,
     ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_withdrawal(deposit_idx, info, confirmations);
@@ -203,45 +203,45 @@ impl BridgeStatusCache {
     /// Batch update reimbursements
     pub(crate) fn apply_reimbursement_updates(
         &mut self,
-        updates: Vec<(DepositIdx, ReimbursementInfo, u64)>,
+        updates: Vec<(DepositIdx, ReimbursementInfo, Option<u64>)>,
     ) {
         for (deposit_idx, info, confirmations) in updates {
             self.update_reimbursement(deposit_idx, info, confirmations);
         }
     }
 
-    /// Filter deposits based on status condition
+    /// Filter deposits based on deposit index, row value, and confirmations.
     pub(crate) fn filter_deposits<F>(&self, filter: F) -> Vec<(DepositIdx, DepositInfo)>
     where
-        F: Fn(&DepositStatus) -> bool,
+        F: Fn(DepositIdx, &DepositInfo, Option<u64>) -> bool,
     {
         self.deposits
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
-    /// Filter withdrawals based on status condition
+    /// Filter withdrawals based on deposit index, row value, and confirmations.
     pub(crate) fn filter_withdrawals<F>(&self, filter: F) -> Vec<(DepositIdx, WithdrawalInfo)>
     where
-        F: Fn(&WithdrawalStatus) -> bool,
+        F: Fn(DepositIdx, &WithdrawalInfo, Option<u64>) -> bool,
     {
         self.withdrawals
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
 
-    /// Filter reimbursements based on status condition
+    /// Filter reimbursements based on deposit index, row value, and confirmations.
     pub(crate) fn filter_reimbursements<F>(&self, filter: F) -> Vec<(DepositIdx, ReimbursementInfo)>
     where
-        F: Fn(&ReimbursementStatus) -> bool,
+        F: Fn(DepositIdx, &ReimbursementInfo, Option<u64>) -> bool,
     {
         self.reimbursements
             .iter()
-            .filter(|(_, entry)| filter(&entry.data.status))
+            .filter(|(deposit_idx, entry)| filter(**deposit_idx, &entry.data, entry.confirmations))
             .map(|(deposit_idx, entry)| (*deposit_idx, entry.data))
             .collect()
     }
