@@ -3983,12 +3983,14 @@ dependencies = [
 name = "status-wallets"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "axum",
  "reqwest",
  "serde",
  "serde_json",
  "status-config",
+ "strata-tasks",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

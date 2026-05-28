@@ -2,17 +2,27 @@ use crate::bridge_operator::{BridgeOperatorBalances, BridgeOperatorWallets};
 use crate::context::{BalanceContext, WalletBalances};
 use crate::faucet::{FaucetBalances, FaucetWalletBalance};
 use crate::traits::WalletBalance;
-use std::sync::{atomic::Ordering, Arc};
+use anyhow::Result;
+use std::sync::Arc;
+use strata_tasks::ShutdownGuard;
 use tokio::time::{interval, Duration};
 use tracing::info;
 
 /// Background task that monitors all wallet balances
-pub async fn balance_monitoring_task(context: Arc<BalanceContext>) {
+pub async fn balance_monitoring_task(
+    context: Arc<BalanceContext>,
+    shutdown: ShutdownGuard,
+) -> Result<()> {
     info!("Starting wallet balance monitoring task");
     let refresh_interval = Duration::from_secs(context.config().refresh_interval_s());
     let mut interval = interval(refresh_interval);
 
     loop {
+        tokio::select! {
+            _ = shutdown.wait_for_shutdown() => break,
+            _ = interval.tick() => {}
+        }
+
         // Create wallet instances
         let faucet_wallet = FaucetWalletBalance::new(context.config().faucet());
         let bridge_operator_wallets =
@@ -32,29 +42,18 @@ pub async fn balance_monitoring_task(context: Arc<BalanceContext>) {
         new_balances.set_faucet(faucet_balances);
         new_balances.set_bridge_operators(bridge_operator_balances);
 
-        {
-            let mut balances = context.balances().write().await;
-            *balances = new_balances;
-        }
-
-        if !context.balances_available().load(Ordering::Acquire) {
-            context.balances_available().store(true, Ordering::Release);
-            context.initial_balance_query_complete().notify_waiters();
-        }
+        context.set_balances(new_balances).await;
+        context.mark_balances_available();
 
         info!("Updated wallet balances using trait-based APIs");
-        interval.tick().await;
     }
+
+    Ok(())
 }
 
 /// API endpoint to get current balances
 pub async fn get_balances(context: Arc<BalanceContext>) -> axum::Json<WalletBalances> {
-    // Check if balances are already available
-    if !context.balances_available().load(Ordering::Acquire) {
-        info!("Waiting for initial balance query to complete...");
-        context.initial_balance_query_complete().notified().await;
-    }
+    context.wait_until_initial_balances().await;
 
-    let balances = context.balances().read().await;
-    axum::Json(balances.clone())
+    axum::Json(context.balances().await)
 }

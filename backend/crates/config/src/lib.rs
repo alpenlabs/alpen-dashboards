@@ -618,7 +618,11 @@ withdrawal_denomination_sats = 100000000
             "https://esplora.testnet.alpenlabs.io"
         );
         assert_eq!(
-            config.balance().bridge_operators().general_addresses().len(),
+            config
+                .balance()
+                .bridge_operators()
+                .general_addresses()
+                .len(),
             2
         );
         assert_eq!(

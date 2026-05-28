@@ -1,43 +1,65 @@
 use crate::bridge_operator::BridgeOperatorBalances;
 use crate::faucet::FaucetBalances;
 use status_config::BalanceMonitoringConfig;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Notify, RwLock};
 
 /// Shared context for balance monitoring
 #[derive(Debug)]
 pub struct BalanceContext {
-    balances: Arc<RwLock<WalletBalances>>,
-    balances_available: Arc<AtomicBool>,
-    initial_balance_query_complete: Arc<Notify>,
     config: BalanceMonitoringConfig,
+    balances_available: AtomicBool,
+    initial_balance_query_complete: Notify,
+    balances: RwLock<WalletBalances>,
 }
 
 impl BalanceContext {
     pub fn new(config: BalanceMonitoringConfig) -> Self {
         Self {
-            balances: Arc::new(RwLock::new(WalletBalances::default())),
-            balances_available: Arc::new(AtomicBool::new(false)),
-            initial_balance_query_complete: Arc::new(Notify::new()),
             config,
+            balances_available: AtomicBool::new(false),
+            initial_balance_query_complete: Notify::new(),
+            balances: RwLock::new(WalletBalances::default()),
         }
-    }
-
-    pub(crate) fn balances(&self) -> &Arc<RwLock<WalletBalances>> {
-        &self.balances
-    }
-
-    pub(crate) fn balances_available(&self) -> &Arc<AtomicBool> {
-        &self.balances_available
-    }
-
-    pub(crate) fn initial_balance_query_complete(&self) -> &Arc<Notify> {
-        &self.initial_balance_query_complete
     }
 
     pub(crate) fn config(&self) -> &BalanceMonitoringConfig {
         &self.config
+    }
+
+    pub(crate) async fn set_balances(&self, balances: WalletBalances) {
+        let mut locked_balances = self.balances.write().await;
+        *locked_balances = balances;
+    }
+
+    pub(crate) async fn balances(&self) -> WalletBalances {
+        self.balances.read().await.clone()
+    }
+
+    pub(crate) fn mark_balances_available(&self) {
+        if self
+            .balances_available
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            self.initial_balance_query_complete.notify_waiters();
+        }
+    }
+
+    pub(crate) async fn wait_until_initial_balances(&self) {
+        if self.balances_available.load(Ordering::Acquire) {
+            return;
+        }
+
+        let notified = self.initial_balance_query_complete.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        if self.balances_available.load(Ordering::Acquire) {
+            return;
+        }
+
+        notified.await;
     }
 }
 

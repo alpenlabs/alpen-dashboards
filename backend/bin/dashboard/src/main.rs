@@ -77,10 +77,7 @@ fn main() -> Result<()> {
 
     executor.spawn_critical_async_with_shutdown("balance-monitoring", {
         let balance_context = Arc::clone(&balance_context);
-        move |_shutdown| async move {
-            balance_monitoring_task(balance_context).await;
-            Ok(())
-        }
+        move |shutdown| async move { balance_monitoring_task(balance_context, shutdown).await }
     });
 
     executor.spawn_critical_async_with_shutdown("withdrawal-indexer", {

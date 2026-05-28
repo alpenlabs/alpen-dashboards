@@ -10,10 +10,12 @@
   status-config.workspace = true
 
   async-trait.workspace = true
+  anyhow.workspace      = true
   axum.workspace         = true
   reqwest.workspace     = true
   serde.workspace       = true
   serde_json.workspace  = true
+  strata-tasks.workspace = true
   thiserror.workspace   = true
   tokio.workspace       = true
   tracing.workspace     = true
