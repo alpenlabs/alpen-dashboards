@@ -1,39 +1,56 @@
-[package]
-  edition = "2021"
-  name    = "backend"
-  version = "0.2.0"
+[workspace]
+  members = [
+    "bin/dashboard",
+    "crates/bridge",
+    "crates/config",
+    "crates/network",
+    "crates/utils",
+    "crates/wallets",
+  ]
+  resolver = "2"
 
-[dependencies]
-  async-trait = { version = "0.1" }
-  axum = { version = "0.8" }
-  bitcoin = { version = "0.32.5", features = [ "serde" ] }
-  chrono = { version = "0.4.38", features = ["serde"] }
-  clap = { version = "4.5", features = [ "derive" ] }
-  dotenv = "0.15"
-  hex = { version = "0.4" }
-  jsonrpsee = { version = "0.24", features = [ "http-client" ] }
-  reqwest = { version = "0.12.24", features = [ "json" ] }
-  serde = { version = "1", features = [ "derive" ] }
-  serde_json = { version = "1.0", default-features = false, features = [
-    "alloc",
-    "raw_value",
-  ] }
-  thiserror = "1.0"
-  tokio = { version = "1.48.0", features = [ "macros", "rt-multi-thread" ] }
-  toml = { version = "0.9.8" }
-  tower-http = { version = "0.6", features = [ "cors" ] }
-  tracing = { version = "0.1" }
-  tracing-subscriber = { version = "0.3.20", features = [ "env-filter" ] }
+  [workspace.package]
+    edition = "2021"
+    version = "0.2.0"
 
-  strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.2.0-rc2" }
-  strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
-    "client",
-  ], tag = "v0.2.0-rc2" }
-  strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.2.0-rc4" }
+  [workspace.dependencies]
+    # Internal
+    status-bridge  = { path = "crates/bridge" }
+    status-config  = { path = "crates/config" }
+    status-network = { path = "crates/network" }
+    status-utils   = { path = "crates/utils" }
+    status-wallets = { path = "crates/wallets" }
 
-[dev-dependencies]
-  mockito = "1.6.1"
+    # alpen pinned to the rev referenced by the chosen strata-bridge revision,
+    # so the transitive `strata-primitives`/`Buf32` matches our direct pin.
+    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "2c6ae209dd5f2ed71e6f9f7b721ea7ab21190e10" }
+    strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", rev = "0ecec67b67db89f6b761ffeaa09af8e7ad864bb1" }
+    strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
+      "client",
+    ], rev = "0ecec67b67db89f6b761ffeaa09af8e7ad864bb1" }
+    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", rev = "2c6ae209dd5f2ed71e6f9f7b721ea7ab21190e10" }
+    strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.1.0-alpha-rc16" }
+    typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 
-[[bin]]
-  name = "backend"
-  path = "src/main.rs"
+    # External
+    alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
+    alloy-sol-types = { version = "1.4.1" }
+    anyhow = { version = "1" }
+    async-trait = { version = "0.1" }
+    axum = { version = "0.8" }
+    bitcoin = { version = "0.32.8", features = [ "serde" ] }
+    hex = { version = "0.4" }
+    jsonrpsee = { version = "0.26", features = [ "http-client" ] }
+    reqwest = { version = "0.13.3", features = [ "json" ] }
+    serde = { version = "1", features = [ "derive" ] }
+    serde_json = { version = "1.0", default-features = false, features = [
+      "alloc",
+      "raw_value",
+    ] }
+    sled = { version = "0.34" }
+    thiserror = { version = "1" }
+    tokio = { version = "1.52.1", features = [ "macros", "rt-multi-thread" ] }
+    toml = { version = "1.1.2" }
+    tower-http = { version = "0.6", features = [ "cors" ] }
+    tracing = { version = "0.1" }
+    tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
