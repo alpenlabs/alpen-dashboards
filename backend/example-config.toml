@@ -8,18 +8,18 @@ datadir = "data"
 
 # Network monitoring configuration
 [network]
-  bundler_url                   = "https://bundler.testnet.alpenlabs.io/health"
+  bundler_url                   = "https://bundler-staging.testnet-v2.alpenlabs.io/health"
   initial_status_wait_timeout_s = 30
   retry_policy_max_retries      = 5
   retry_policy_total_time_s     = 60
-  rpc_url                       = "https://rpc.testnet.alpenlabs.io"
-  sequencer_url                 = "https://rpc.testnet.alpenlabs.io"
+  rpc_url                       = "https://rpc-staging.testnet-v2.alpenlabs.io"
+  sequencer_url                 = "https://rpc-staging.testnet-v2.alpenlabs.io"
   status_refetch_interval_s     = 10
 
 # Bridge monitoring configuration
 [bridge]
   esplora_request_timeout_s     = 5
-  esplora_url                   = "https://esplora.testnet.alpenlabs.io"
+  esplora_url                   = "https://esplora-staging.testnet-v2.alpenlabs.io"
   initial_status_wait_timeout_s = 5
   max_tx_confirmations          = 6
   status_refetch_interval_s     = 120
@@ -27,25 +27,21 @@ datadir = "data"
 
   # Bridge operators configuration
   [[bridge.operators]]
-    public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/1"
+    public_key = "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd"
+    rpc_url    = "http://localhost:54231"
 
   [[bridge.operators]]
-    public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/2"
+    public_key = "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4"
+    rpc_url    = "http://localhost:54232"
 
   [[bridge.operators]]
-    public_key = "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/3"
-
-  [[bridge.operators]]
-    public_key = "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/4"
+    public_key = "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f"
+    rpc_url    = "http://localhost:54233"
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
   batch_size                   = 1_000
-  eth_rpc_url                  = "https://rpc.testnet.alpenlabs.io"
+  eth_rpc_url                  = "https://alpen-staging.testnet-v2.alpenlabs.io"
   finality_lag                 = 12
   poll_interval_s              = 10
   start_block                  = 0
