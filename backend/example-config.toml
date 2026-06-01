@@ -8,18 +8,18 @@ datadir = "data"
 
 # Network monitoring configuration
 [network]
-  bundler_url                   = "https://bundler.testnet.alpenlabs.io/health"
+  bundler_url                   = "https://bundler-staging.testnet-v2.alpenlabs.io/health"
   initial_status_wait_timeout_s = 30
   retry_policy_max_retries      = 5
   retry_policy_total_time_s     = 60
-  rpc_url                       = "https://rpc.testnet.alpenlabs.io"
-  sequencer_url                 = "https://rpc.testnet.alpenlabs.io"
+  rpc_url                       = "https://rpc-staging.testnet-v2.alpenlabs.io"
+  sequencer_url                 = "https://rpc-staging.testnet-v2.alpenlabs.io"
   status_refetch_interval_s     = 10
 
 # Bridge monitoring configuration
 [bridge]
   esplora_request_timeout_s     = 5
-  esplora_url                   = "https://esplora.testnet.alpenlabs.io"
+  esplora_url                   = "https://esplora-staging.testnet-v2.alpenlabs.io"
   initial_status_wait_timeout_s = 5
   max_tx_confirmations          = 6
   status_refetch_interval_s     = 120
@@ -27,72 +27,60 @@ datadir = "data"
 
   # Bridge operators configuration
   [[bridge.operators]]
-    public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/1"
+    public_key = "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd"
+    rpc_url    = "http://localhost:54231"
 
   [[bridge.operators]]
-    public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/2"
+    public_key = "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4"
+    rpc_url    = "http://localhost:54232"
 
   [[bridge.operators]]
-    public_key = "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/3"
-
-  [[bridge.operators]]
-    public_key = "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3"
-    rpc_url    = "https://bridge.testnet.alpenlabs.io/4"
+    public_key = "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f"
+    rpc_url    = "http://localhost:54233"
 
 # Balance monitoring configuration
 [balance]
   refresh_interval_s = 300
 
   [balance.faucet]
-    l1_url = "https://faucet-api.testnet.alpenlabs.io/balance/l1"
-    l2_url = "https://faucet-api.testnet.alpenlabs.io/balance/l2"
+    l1_url = "https://faucet-api-staging.testnet-v2.alpenlabs.io/balance/l1"
+    l2_url = "https://faucet-api-staging.testnet-v2.alpenlabs.io/balance/l2"
 
   [balance.bridge_operators]
-    esplora_url = "https://esplora.testnet.alpenlabs.io"
+    esplora_url = "https://esplora-staging.testnet-v2.alpenlabs.io"
     general_addresses = [
       [
-        "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0",
-        "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l",
+        "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd",
+        "tb1phf7qfxjf7mntp8u5qma9xa20rjcaw65f5lly9h3auedghhsul7tqr7v672",
       ],
       [
-        "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f",
-        "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj",
+        "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4",
+        "tb1p2q4f3dzeekkrpq7nkr6p0tmmvuht7uu8m4s7v3a5xsmw38vk75kqva55ea",
       ],
       [
-        "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6",
-        "tb1psmyffux46qmxxma3r23hn7ezam5ghur3e3j7g4lryqda9vthdyqsde0gw5",
-      ],
-      [
-        "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3",
-        "tb1plssru8qpturzq0xe6auesc0245nkzjk34mk4qldf4f3dqa2elyeq2sktyp",
+        "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f",
+        "tb1pxhpgl0k5kyyua6uwh0gs49yl0zr3haqwgz8j4j8wla7rqyar9s0sene5a6",
       ],
     ]
     stake_chain_addresses = [
       [
-        "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0",
-        "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq",
+        "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd",
+        "tb1pgv6lntshs3mks847svugsfrugz3utp8ac8egfqqnh2tyekj8kuzqa05423",
       ],
       [
-        "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f",
-        "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg",
+        "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4",
+        "tb1pvpc0l8zyjqgy96709se9untaapqt8cww8rlxulaed3wl02a36fksdlvf23",
       ],
       [
-        "022bc0e2a6dd1c80beefa363d8baf980101d0596d914d4ee2d73e2fcaff2e72dc6",
-        "tb1ph6ln768aj6wv8mazd8k7t27sk935wxka6twraaxqrenln26kwlvshy4gdp",
-      ],
-      [
-        "02714fd9b1be011cbd31666a11b155a0d5d3103582b44a48ccc2014801a848a6e3",
-        "tb1pywhfaznzmw8mncx7ly779mps9wcnec75sep3my3ew8m00spyasms977ces",
+        "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f",
+        "tb1p0mgezlwnqwjlh3c02cdt3mknr77scpg2wu0eltvlxkje2erndpysc4ul2p",
       ],
     ]
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
   batch_size                   = 1_000
-  eth_rpc_url                  = "https://rpc.testnet.alpenlabs.io"
+  eth_rpc_url                  = "https://alpen-staging.testnet-v2.alpenlabs.io"
   finality_lag                 = 12
   poll_interval_s              = 10
   start_block                  = 0

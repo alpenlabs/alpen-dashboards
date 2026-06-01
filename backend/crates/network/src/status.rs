@@ -12,17 +12,24 @@ use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
 use status_config::NetworkMonitoringConfig;
 use status_utils::{create_rpc_client, ExponentialBackoff};
 
-/// Calls `strata_syncStatus` using `jsonrpsee`
+const STRATA_CHAIN_STATUS_METHOD: &str = "strata_getChainStatus";
+
+fn is_chain_status_response_online(json: &serde_json::Value) -> bool {
+    json.get("tip").is_some()
+}
+
+/// Calls `strata_getChainStatus` using `jsonrpsee`.
 async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
     let mut retry_count: u64 = 0;
 
     loop {
-        let response: Result<serde_json::Value, _> =
-            client.request("strata_syncStatus", Vec::<()>::new()).await;
+        let response: Result<serde_json::Value, _> = client
+            .request(STRATA_CHAIN_STATUS_METHOD, Vec::<()>::new())
+            .await;
         match response {
             Ok(json) => {
-                info!(?json, method = "strata_syncStatus", "rpc response");
-                if json.get("tip_height").is_some() {
+                info!(?json, method = STRATA_CHAIN_STATUS_METHOD, "rpc response");
+                if is_chain_status_response_online(&json) {
                     return Status::Online;
                 } else {
                     return Status::Offline;
@@ -35,7 +42,7 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
                         info!(
                             delay_seconds,
                             retry_count,
-                            method = "strata_syncStatus",
+                            method = STRATA_CHAIN_STATUS_METHOD,
                             "retrying rpc status request"
                         );
                         sleep(Duration::from_secs(delay_seconds)).await;
@@ -44,7 +51,7 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
                 } else {
                     error!(
                         error = %e,
-                        method = "strata_syncStatus",
+                        method = STRATA_CHAIN_STATUS_METHOD,
                         "could not get network status"
                     );
                     return Status::Offline;
@@ -120,4 +127,35 @@ pub async fn get_network_status(
     }
 
     Ok(Json(context.status().await))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::is_chain_status_response_online;
+
+    #[test]
+    fn chain_status_response_with_tip_is_online() {
+        assert!(is_chain_status_response_online(&json!({
+            "tip": {
+                "blkid": "0x00",
+                "slot": 1,
+                "epoch": 0,
+                "is_terminal": false
+            },
+            "confirmed": {},
+            "finalized": {},
+            "latest": {}
+        })));
+    }
+
+    #[test]
+    fn chain_status_response_without_tip_is_offline() {
+        assert!(!is_chain_status_response_online(&json!({
+            "confirmed": {},
+            "finalized": {},
+            "latest": {}
+        })));
+    }
 }
