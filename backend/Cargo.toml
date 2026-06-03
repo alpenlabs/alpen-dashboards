@@ -31,7 +31,7 @@
     typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 
     # External
-    alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
+    alloy-primitives = { version = "1.6.0", features = [ "serde" ] }
     alloy-sol-types = { version = "1.4.1" }
     anyhow = { version = "1" }
     axum = { version = "0.8" }
