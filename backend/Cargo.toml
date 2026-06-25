@@ -31,6 +31,13 @@
     typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 
     # External
+    # Pinned to the same source/tag that `strata-primitives` resolves to so cargo
+    # unifies the two into one `Descriptor` type; the `address` feature adds the
+    # `Descriptor::to_script` conversion used to correlate fulfillments to requests.
+    bitcoin-bosd = { git = "https://github.com/alpenlabs/bitcoin-bosd", tag = "v0.10.0", features = [
+      "address",
+    ] }
+
     alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
     alloy-sol-types = { version = "1.4.1" }
     anyhow = { version = "1" }

@@ -3917,6 +3917,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bitcoin",
+ "bitcoin-bosd 0.10.0",
  "hex",
  "jsonrpsee",
  "reqwest",
