@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bitcoin::Txid;
+use bitcoin::{ScriptBuf, Txid};
 use serde::Deserialize;
 use std::time::Duration;
 use strata_primitives::L1Height;
@@ -9,6 +9,30 @@ use tracing::error;
 struct TxStatus {
     confirmed: bool,
     block_height: Option<L1Height>,
+}
+
+/// One transaction output as reported by the esplora `/tx/{txid}` endpoint.
+///
+/// Only the fields needed to correlate a bridge fulfillment to its withdrawal
+/// request are decoded: the paid `scriptpubkey` (hex) and its `value` in
+/// satoshis.
+#[derive(Deserialize)]
+struct EsploraVout {
+    scriptpubkey: String,
+    value: u64,
+}
+
+#[derive(Deserialize)]
+struct EsploraTx {
+    vout: Vec<EsploraVout>,
+}
+
+/// A single fulfillment transaction output: the paid scriptPubKey and its
+/// amount in satoshis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FulfillmentOutput {
+    pub(crate) script_pubkey: ScriptBuf,
+    pub(crate) amount_sats: u64,
 }
 
 pub(crate) struct EsploraClient {
@@ -40,6 +64,25 @@ impl EsploraClient {
         resp.text().await
     }
 
+    async fn get_tx(&self, txid: Txid) -> Option<EsploraTx> {
+        let tx_path = format!("/tx/{txid}");
+        let tx_resp = self.client.get(self.url(&tx_path)).send().await;
+
+        match tx_resp {
+            Ok(resp) => match resp.json().await {
+                Ok(tx) => Some(tx),
+                Err(e) => {
+                    error!(%txid, error = %e, "failed to parse tx JSON from esplora");
+                    None
+                }
+            },
+            Err(e) => {
+                error!(%txid, error = %e, "failed to fetch tx from esplora");
+                None
+            }
+        }
+    }
+
     async fn get_tx_status(&self, txid: Txid) -> Option<TxStatus> {
         let status_path = format!("/tx/{txid}/status");
         let status_resp = self.client.get(self.url(&status_path)).send().await;
@@ -67,6 +110,35 @@ pub(crate) async fn get_bitcoin_chain_tip_height(
     let text = esplora_client.get_tip_height().await?;
     let height = text.trim().parse::<L1Height>()?;
     Ok(height)
+}
+
+/// Fetch the outputs of a transaction from esplora.
+///
+/// Returns the paid scriptPubKey and amount for each output, or `None` if the
+/// transaction could not be fetched or decoded. A malformed `scriptpubkey` hex
+/// for any output drops that output rather than failing the whole lookup.
+pub(crate) async fn get_tx_outputs(
+    esplora_client: &EsploraClient,
+    txid: Txid,
+) -> Option<Vec<FulfillmentOutput>> {
+    let tx = esplora_client.get_tx(txid).await?;
+
+    let outputs = tx
+        .vout
+        .into_iter()
+        .filter_map(|vout| match ScriptBuf::from_hex(&vout.scriptpubkey) {
+            Ok(script_pubkey) => Some(FulfillmentOutput {
+                script_pubkey,
+                amount_sats: vout.value,
+            }),
+            Err(e) => {
+                error!(%txid, error = %e, "failed to decode esplora scriptpubkey hex");
+                None
+            }
+        })
+        .collect();
+
+    Some(outputs)
 }
 
 /// Get transaction confirmations from esplora.
@@ -123,5 +195,21 @@ mod tests {
     #[test]
     fn confirmations_from_block_height_saturates_for_future_height() {
         assert_eq!(confirmations_from_block_height(100, 101), 1);
+    }
+
+    #[test]
+    fn esplora_tx_decodes_vout_scriptpubkey_and_value() {
+        let tx: EsploraTx = serde_json::from_str(
+            r#"{"txid":"aa","vout":[
+                {"scriptpubkey":"0014abcdef","value":100000,"scriptpubkey_type":"v0_p2wpkh"},
+                {"scriptpubkey":"6a04deadbeef","value":0,"scriptpubkey_type":"op_return"}
+            ]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(tx.vout.len(), 2);
+        assert_eq!(tx.vout[0].scriptpubkey, "0014abcdef");
+        assert_eq!(tx.vout[0].value, 100000);
+        assert_eq!(tx.vout[1].value, 0);
     }
 }

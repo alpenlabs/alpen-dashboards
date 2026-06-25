@@ -26,19 +26,30 @@ pub(crate) async fn get_withdrawal_updates(
     candidates: &[WithdrawalStatusCandidate],
     batch_size: usize,
 ) -> Vec<WithdrawalInfoUpdate> {
-    let Some(first_candidate) = candidates.first() else {
+    if candidates.is_empty() {
         return Vec::new();
-    };
+    }
 
-    // Candidates come from state's FIFO pairing map and are contiguous from the
-    // withdrawal-status cursor, so fetching `len` rows from the first seq gives
-    // the matching WRT rows for this status batch.
-    let withdrawal_requests = withdrawal_requests::fetch_withdrawal_requests(
-        withdrawal_index,
-        first_candidate.withdrawal_seq,
-        candidates.len(),
-        batch_size,
-    );
+    // Pairings now correlate deposit→seq by destination+amount, so a candidate's
+    // `withdrawal_seq` is not necessarily contiguous from the lowest one. Fetch
+    // the full seq span the candidates reference (gaps included) so every
+    // candidate's request row is present in the lookup map.
+    let min_seq = candidates
+        .iter()
+        .map(|candidate| candidate.withdrawal_seq)
+        .min()
+        .expect("candidates is non-empty");
+    let max_seq = candidates
+        .iter()
+        .map(|candidate| candidate.withdrawal_seq)
+        .max()
+        .expect("candidates is non-empty");
+    let span = usize::try_from(max_seq - min_seq)
+        .ok()
+        .and_then(|span| span.checked_add(1))
+        .unwrap_or(candidates.len());
+    let withdrawal_requests =
+        withdrawal_requests::fetch_withdrawal_requests(withdrawal_index, min_seq, span, batch_size);
     let withdrawal_requests = withdrawal_requests
         .into_iter()
         .map(|row| (row.seq, row.request))

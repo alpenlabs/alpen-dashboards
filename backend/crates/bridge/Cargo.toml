@@ -21,6 +21,7 @@
   alloy-sol-types.workspace  = true
   axum.workspace             = true
   bitcoin.workspace          = true
+  bitcoin-bosd.workspace     = true
   hex.workspace              = true
   jsonrpsee.workspace        = true
   reqwest.workspace          = true

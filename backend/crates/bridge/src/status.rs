@@ -11,10 +11,12 @@ use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
     esplora::{self, get_bitcoin_chain_tip_height, EsploraClient},
-    state::{DepositInfoUpdate, ReimbursementInfoUpdate},
+    state::{
+        DepositInfoUpdate, ReimbursementInfoUpdate, WithdrawalFulfillment, WithdrawalMatchKey,
+    },
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus,
+        ReimbursementStatus, WithdrawalInfo, WithdrawalStatus,
     },
     withdrawal_requests::fetch_withdrawal_requests,
     withdrawal_status::get_withdrawal_updates,
@@ -90,6 +92,17 @@ pub async fn bridge_monitoring_task(
         let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
         let new_deposit_indices_count =
             count_deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx);
+        // Resolve the fulfillment (paid scriptPubKey + amount) for each new
+        // deposit index so requests can be paired on destination+amount rather
+        // than FIFO position.
+        let fulfillments = resolve_withdrawal_fulfillments(
+            context.bridge_rpc(),
+            context.esplora(),
+            &deposit_indices,
+            pairing_cursor.next_deposit_idx,
+            new_deposit_indices_count,
+        )
+        .await;
         let withdrawal_requests = fetch_withdrawal_requests(
             context.withdrawal_index(),
             pairing_cursor.next_withdrawal_seq,
@@ -98,7 +111,7 @@ pub async fn bridge_monitoring_task(
         );
         let new_pairings = match context
             .state()
-            .apply_withdrawal_pairings(context.status_db(), &deposit_indices, &withdrawal_requests)
+            .apply_withdrawal_pairings(context.status_db(), &fulfillments, &withdrawal_requests)
             .await
         {
             Ok(pairings) => pairings,
@@ -185,6 +198,82 @@ fn count_deposit_indices_from(
     }
 
     count
+}
+
+/// Resolve the fulfillment outputs for the contiguous prefix of new deposit
+/// indices starting at `next_deposit_idx`.
+///
+/// For each deposit, query its withdrawal status; if it is `Complete`, fetch the
+/// fulfillment transaction's outputs from esplora so the pairing planner can
+/// correlate it to a withdrawal request by destination scriptPubKey + amount.
+///
+/// Walks the same contiguous-prefix order the pairing cursor advances over and
+/// stops at the first deposit that is not yet resolvable (status not `Complete`,
+/// RPC error, or fulfillment tx outputs unavailable) so that deposit stays
+/// pending and is retried on a later tick.
+async fn resolve_withdrawal_fulfillments(
+    rpc_manager: &bridge_rpc::RpcClientManager,
+    esplora_client: &EsploraClient,
+    deposit_indices: &[DepositIdx],
+    next_deposit_idx: DepositIdx,
+    count: usize,
+) -> Vec<WithdrawalFulfillment> {
+    let deposit_indices = deposit_indices.iter().copied().collect::<BTreeSet<_>>();
+    let mut fulfillments = Vec::new();
+    let mut deposit_idx = next_deposit_idx;
+
+    for _ in 0..count {
+        if !deposit_indices.contains(&deposit_idx) {
+            break;
+        }
+
+        let status = match bridge_rpc::get_withdrawal_status(rpc_manager, deposit_idx).await {
+            Ok(Some(status)) => status,
+            Ok(None) => break,
+            Err(e) => {
+                warn!(deposit_idx, error = %e, "failed to fetch withdrawal status for pairing");
+                break;
+            }
+        };
+
+        // `WithdrawalInfo::from_status` needs a request txid only for display;
+        // pairing cares solely about the fulfillment txid, so pass a placeholder.
+        let info = WithdrawalInfo::from_status(strata_primitives::buf::Buf32([0u8; 32]), &status);
+        let fulfillment_txid = match info.status {
+            WithdrawalStatus::InProgress => break,
+            WithdrawalStatus::Complete => match info.fulfillment_txid {
+                Some(txid) => txid,
+                None => break,
+            },
+        };
+
+        let Some(outputs) = esplora::get_tx_outputs(esplora_client, fulfillment_txid).await else {
+            warn!(
+                deposit_idx,
+                %fulfillment_txid,
+                "fulfillment tx outputs unavailable; deferring pairing"
+            );
+            break;
+        };
+
+        fulfillments.push(WithdrawalFulfillment {
+            deposit_idx,
+            paid_outputs: outputs
+                .into_iter()
+                .map(|output| WithdrawalMatchKey {
+                    script_pubkey: output.script_pubkey,
+                    amount_sats: output.amount_sats,
+                })
+                .collect(),
+        });
+
+        let Some(next) = deposit_idx.checked_add(1) else {
+            break;
+        };
+        deposit_idx = next;
+    }
+
+    fulfillments
 }
 
 /// Fetch detailed information for all deposits.
