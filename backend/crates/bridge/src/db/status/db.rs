@@ -11,7 +11,7 @@ use crate::{
         types::{DbBridgeStatusSnapshot, StatusCursors},
     },
     types::{
-        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
         WithdrawalStatusCursor,
     },
 };
@@ -108,6 +108,12 @@ impl BridgeStatusDb for BridgeStatusDbSled {
                 .withdrawal_pairings
                 .iter()
                 .map(|result| result.map_err(DbError::from))
+                .map(|result| {
+                    result.map(|(deposit_idx, withdrawal_seq)| WithdrawalPairing {
+                        deposit_idx,
+                        withdrawal_seq,
+                    })
+                })
                 .collect::<DbResult<_>>()?,
             cursors: self.status_cursors()?,
         })
@@ -122,10 +128,10 @@ impl BridgeStatusDb for BridgeStatusDbSled {
         Ok(self.withdrawals.take(&deposit_idx)?.is_some())
     }
 
-    fn put_withdrawal_pairings(&self, pairings: &[(DepositIdx, WithdrawalSeq)]) -> DbResult<()> {
-        for (deposit_idx, withdrawal_seq) in pairings {
+    fn put_withdrawal_pairings(&self, pairings: &[WithdrawalPairing]) -> DbResult<()> {
+        for pairing in pairings {
             self.withdrawal_pairings
-                .insert(deposit_idx, withdrawal_seq)?;
+                .insert(&pairing.deposit_idx, &pairing.withdrawal_seq)?;
         }
         Ok(())
     }
@@ -188,7 +194,7 @@ mod tests {
     use super::*;
     use crate::{
         db::status::mock::MockBridgeStatusDb,
-        types::{WithdrawalInfo, WithdrawalStatus},
+        types::{WithdrawalInfo, WithdrawalPairing, WithdrawalStatus},
     };
 
     fn txid(byte: u8) -> Txid {
@@ -213,6 +219,13 @@ mod tests {
             fulfillment_txid: Some(txid(byte + 1)),
             status,
         }
+    }
+
+    fn pairing(
+        deposit_idx: DepositIdx,
+        withdrawal_seq: crate::types::WithdrawalSeq,
+    ) -> WithdrawalPairing {
+        WithdrawalPairing::new(deposit_idx, withdrawal_seq)
     }
 
     fn assert_empty_snapshot(db: &impl BridgeStatusDb) {
@@ -240,7 +253,7 @@ mod tests {
 
         db.put_withdrawal_info(2, &withdrawal)
             .expect("put withdrawal");
-        db.put_withdrawal_pairings(&[(1, 7), (2, 8)])
+        db.put_withdrawal_pairings(&[pairing(1, 7), pairing(2, 8)])
             .expect("put pairings");
         db.put_deposit_info_cursor(cursors.deposit_info)
             .expect("put deposit cursor");
@@ -258,7 +271,10 @@ mod tests {
             snapshot.withdrawals[0].1.withdrawal_request_txid,
             Buf32([3; 32])
         );
-        assert_eq!(snapshot.withdrawal_pairings, vec![(1, 7), (2, 8)]);
+        assert_eq!(
+            snapshot.withdrawal_pairings,
+            vec![pairing(1, 7), pairing(2, 8)]
+        );
         assert_eq!(snapshot.cursors, cursors);
 
         db.del_withdrawal_pairings_range(0, 2)
@@ -268,13 +284,18 @@ mod tests {
 
         let snapshot = db.get_status_snapshot().expect("snapshot after deletes");
         assert!(snapshot.withdrawals.is_empty());
-        assert_eq!(snapshot.withdrawal_pairings, vec![(2, 8)]);
+        assert_eq!(snapshot.withdrawal_pairings, vec![pairing(2, 8)]);
         assert_eq!(snapshot.cursors, cursors);
     }
 
     fn assert_pairing_range_delete(db: &impl BridgeStatusDb) {
-        db.put_withdrawal_pairings(&[(1, 10), (2, 20), (4, 40), (5, 50)])
-            .expect("put pairings");
+        db.put_withdrawal_pairings(&[
+            pairing(1, 10),
+            pairing(2, 20),
+            pairing(4, 40),
+            pairing(5, 50),
+        ])
+        .expect("put pairings");
 
         db.del_withdrawal_pairings_range(2, 5)
             .expect("delete middle range");
@@ -282,7 +303,7 @@ mod tests {
             db.get_status_snapshot()
                 .expect("snapshot")
                 .withdrawal_pairings,
-            vec![(1, 10), (5, 50)]
+            vec![pairing(1, 10), pairing(5, 50)]
         );
 
         db.del_withdrawal_pairings_range(5, 5)
@@ -293,7 +314,7 @@ mod tests {
             db.get_status_snapshot()
                 .expect("snapshot")
                 .withdrawal_pairings,
-            vec![(1, 10), (5, 50)]
+            vec![pairing(1, 10), pairing(5, 50)]
         );
     }
 

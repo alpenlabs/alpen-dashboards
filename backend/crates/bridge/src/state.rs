@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use strata_bridge_primitives::types::DepositIdx;
 use tokio::sync::RwLock;
@@ -13,8 +13,8 @@ use super::{
     },
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor,
-        WithdrawalSeq, WithdrawalStatus, WithdrawalStatusCursor,
+        ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,
+        WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatus, WithdrawalStatusCursor,
     },
 };
 
@@ -27,13 +27,6 @@ pub(crate) struct DepositInfoUpdate {
     pub(crate) deposit_idx: DepositIdx,
     pub(crate) info: DepositInfo,
     pub(crate) confirmations: Option<u64>,
-}
-
-/// Paired withdrawal candidate whose bridge status can be queried.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WithdrawalStatusCandidate {
-    pub(crate) deposit_idx: DepositIdx,
-    pub(crate) withdrawal_seq: WithdrawalSeq,
 }
 
 /// Withdrawal status update collected during one monitoring tick.
@@ -52,6 +45,12 @@ pub(crate) struct ReimbursementInfoUpdate {
     pub(crate) confirmations: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WithdrawalPairingUpdate {
+    pairings: Vec<WithdrawalPairing>,
+    cursor: WithdrawalPairingCursor,
+}
+
 /// Mutable bridge monitoring state shared by the polling task and HTTP handler.
 #[derive(Debug, Default)]
 pub(crate) struct BridgeMonitoringState {
@@ -61,7 +60,7 @@ pub(crate) struct BridgeMonitoringState {
 impl BridgeMonitoringState {
     pub(crate) fn from_snapshot(snapshot: DbBridgeStatusSnapshot) -> Self {
         Self {
-            cache: RwLock::new(cache_from_status_snapshot(snapshot)),
+            cache: RwLock::new(BridgeStatusCache::from_status_snapshot(snapshot)),
         }
     }
 
@@ -126,12 +125,13 @@ impl BridgeMonitoringState {
         cache.withdrawal_pairing_cursor()
     }
 
-    pub(crate) async fn apply_withdrawal_pairings(
+    pub(crate) async fn advance_withdrawal_pairings(
         &self,
         status_db: &impl BridgeStatusDb,
         deposit_indices: &[DepositIdx],
+        deposit_infos: &[(DepositIdx, DepositInfo)],
         withdrawal_requests: &[DbWithdrawalRequestRow],
-    ) -> DbResult<Vec<(DepositIdx, WithdrawalSeq)>> {
+    ) -> DbResult<Vec<WithdrawalPairing>> {
         let withdrawal_seqs = withdrawal_requests
             .iter()
             .map(|row| row.seq)
@@ -140,33 +140,32 @@ impl BridgeMonitoringState {
             let cache = self.cache.read().await;
             cache.withdrawal_pairing_cursor()
         };
-        let (pairings, next_cursor) =
-            plan_withdrawal_pairings(current_cursor, deposit_indices, &withdrawal_seqs);
-        if pairings.is_empty() {
-            return Ok(pairings);
+        let update = plan_withdrawal_pairings(
+            current_cursor,
+            deposit_indices,
+            deposit_infos,
+            &withdrawal_seqs,
+        );
+        if update.pairings.is_empty() && update.cursor == current_cursor {
+            return Ok(update.pairings);
         }
 
-        status_db.put_withdrawal_pairings(&pairings)?;
-        status_db.put_withdrawal_pairing_cursor(next_cursor)?;
+        if !update.pairings.is_empty() {
+            status_db.put_withdrawal_pairings(&update.pairings)?;
+        }
+        if update.cursor != current_cursor {
+            status_db.put_withdrawal_pairing_cursor(update.cursor)?;
+        }
 
         let mut cache = self.cache.write().await;
-        cache.update_withdrawal_pairings(&pairings, next_cursor);
-        Ok(pairings)
+        cache.update_withdrawal_pairings(&update.pairings, update.cursor);
+        Ok(update.pairings)
     }
 
-    pub(crate) async fn select_withdrawal_status_candidates(
-        &self,
-    ) -> Vec<WithdrawalStatusCandidate> {
+    pub(crate) async fn select_withdrawal_status_candidates(&self) -> Vec<WithdrawalPairing> {
         let cache = self.cache.read().await;
         let cursor = cache.withdrawal_status_cursor().next_deposit_idx;
-        cache
-            .withdrawal_pairings_from(cursor)
-            .into_iter()
-            .map(|(deposit_idx, withdrawal_seq)| WithdrawalStatusCandidate {
-                deposit_idx,
-                withdrawal_seq,
-            })
-            .collect()
+        cache.withdrawal_pairings_from(cursor)
     }
 
     pub(crate) async fn update_operators(&self, operators: Vec<OperatorStatus>) {
@@ -203,12 +202,25 @@ impl BridgeMonitoringState {
             }
         }
 
-        let current_cursor = {
+        let (current_cursor, pairing_frontier, paired_deposit_indices) = {
             let cache = self.cache.read().await;
-            cache.withdrawal_status_cursor()
+            let current_cursor = cache.withdrawal_status_cursor();
+            (
+                current_cursor,
+                cache.withdrawal_pairing_cursor().next_deposit_idx,
+                cache
+                    .withdrawal_pairings_from(current_cursor.next_deposit_idx)
+                    .into_iter()
+                    .map(|pairing| pairing.deposit_idx)
+                    .collect::<Vec<_>>(),
+            )
         };
-        let next_cursor =
-            next_withdrawal_status_cursor(current_cursor, &terminal_deposit_indices_to_purge);
+        let next_cursor = next_withdrawal_status_cursor(
+            current_cursor,
+            &terminal_deposit_indices_to_purge,
+            pairing_frontier,
+            &paired_deposit_indices,
+        );
         for (deposit_idx, info) in &withdrawal_infos_to_persist {
             status_db.put_withdrawal_info(*deposit_idx, info)?;
         }
@@ -236,20 +248,14 @@ impl BridgeMonitoringState {
     pub(crate) async fn select_reimbursement_status_candidates(&self) -> Vec<DepositIdx> {
         let cache = self.cache.read().await;
         let reimbursement_cursor = cache.reimbursement_status_cursor().next_deposit_idx;
-        let withdrawal_cursor = cache.withdrawal_status_cursor().next_deposit_idx;
-        let mut candidates = (reimbursement_cursor..withdrawal_cursor).collect::<BTreeSet<_>>();
-
-        candidates.extend(
-            cache
-                .filter_withdrawals(|deposit_idx, info, _| {
-                    deposit_idx >= reimbursement_cursor
-                        && matches!(info.status, WithdrawalStatus::Complete)
-                })
-                .into_iter()
-                .map(|(deposit_idx, _)| deposit_idx),
-        );
-
-        candidates.into_iter().collect()
+        cache
+            .filter_withdrawals(|deposit_idx, info, _| {
+                deposit_idx >= reimbursement_cursor
+                    && matches!(info.status, WithdrawalStatus::Complete)
+            })
+            .into_iter()
+            .map(|(deposit_idx, _)| deposit_idx)
+            .collect()
     }
 
     pub(crate) async fn apply_reimbursement_updates(
@@ -286,9 +292,21 @@ impl BridgeMonitoringState {
         let (next_cursor, withdrawal_deposit_indices_to_purge) = {
             let cache = self.cache.read().await;
             let current_cursor = cache.reimbursement_status_cursor();
+            let withdrawal_frontier = cache.withdrawal_status_cursor().next_deposit_idx;
+            let complete_withdrawal_deposit_indices = cache
+                .filter_withdrawals(|deposit_idx, info, _| {
+                    deposit_idx >= current_cursor.next_deposit_idx
+                        && deposit_idx < withdrawal_frontier
+                        && matches!(info.status, WithdrawalStatus::Complete)
+                })
+                .into_iter()
+                .map(|(deposit_idx, _)| deposit_idx)
+                .collect::<Vec<_>>();
             let next_cursor = next_reimbursement_status_cursor(
                 current_cursor,
                 &terminal_deposit_indices_to_purge,
+                withdrawal_frontier,
+                &complete_withdrawal_deposit_indices,
             );
             (
                 next_cursor,
@@ -365,27 +383,6 @@ impl BridgeMonitoringState {
     }
 }
 
-fn cache_from_status_snapshot(snapshot: DbBridgeStatusSnapshot) -> BridgeStatusCache {
-    let mut cache = BridgeStatusCache::default();
-
-    cache.apply_withdrawal_updates(
-        snapshot
-            .withdrawals
-            .into_iter()
-            .map(|(deposit_idx, info)| (deposit_idx, info, None))
-            .collect(),
-    );
-    cache.update_withdrawal_pairings(
-        &snapshot.withdrawal_pairings,
-        snapshot.cursors.withdrawal_pairing,
-    );
-    cache.set_deposit_info_cursor(snapshot.cursors.deposit_info);
-    cache.set_withdrawal_status_cursor(snapshot.cursors.withdrawal_status);
-    cache.set_reimbursement_status_cursor(snapshot.cursors.reimbursement_status);
-
-    cache
-}
-
 fn next_deposit_info_cursor(
     current_cursor: DepositIdx,
     terminal_deposit_indices_to_purge: &[DepositIdx],
@@ -409,56 +406,78 @@ fn next_deposit_info_cursor(
 fn next_withdrawal_status_cursor(
     current_cursor: WithdrawalStatusCursor,
     terminal_deposit_indices_to_purge: &[DepositIdx],
+    pairing_frontier: DepositIdx,
+    paired_deposit_indices: &[DepositIdx],
 ) -> WithdrawalStatusCursor {
-    let terminal_deposit_indices_to_purge = terminal_deposit_indices_to_purge
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let mut next_cursor = current_cursor.next_deposit_idx;
-
-    while terminal_deposit_indices_to_purge.contains(&next_cursor) {
-        let Some(next) = next_cursor.checked_add(1) else {
-            break;
-        };
-        next_cursor = next;
-    }
-
     WithdrawalStatusCursor {
-        next_deposit_idx: next_cursor,
+        next_deposit_idx: next_sparse_status_cursor(
+            current_cursor.next_deposit_idx,
+            terminal_deposit_indices_to_purge,
+            pairing_frontier,
+            paired_deposit_indices,
+        ),
     }
 }
 
 fn next_reimbursement_status_cursor(
     current_cursor: ReimbursementStatusCursor,
     terminal_deposit_indices_to_purge: &[DepositIdx],
+    withdrawal_frontier: DepositIdx,
+    complete_withdrawal_deposit_indices: &[DepositIdx],
 ) -> ReimbursementStatusCursor {
+    ReimbursementStatusCursor {
+        next_deposit_idx: next_sparse_status_cursor(
+            current_cursor.next_deposit_idx,
+            terminal_deposit_indices_to_purge,
+            withdrawal_frontier,
+            complete_withdrawal_deposit_indices,
+        ),
+    }
+}
+
+fn next_sparse_status_cursor(
+    current_cursor: DepositIdx,
+    terminal_deposit_indices_to_purge: &[DepositIdx],
+    domain_frontier: DepositIdx,
+    pending_domain_indices: &[DepositIdx],
+) -> DepositIdx {
     let terminal_deposit_indices_to_purge = terminal_deposit_indices_to_purge
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    let mut next_cursor = current_cursor.next_deposit_idx;
+    let pending_domain_indices = pending_domain_indices
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut next_cursor = current_cursor;
 
-    while terminal_deposit_indices_to_purge.contains(&next_cursor) {
+    while next_cursor < domain_frontier
+        && (terminal_deposit_indices_to_purge.contains(&next_cursor)
+            || !pending_domain_indices.contains(&next_cursor))
+    {
         let Some(next) = next_cursor.checked_add(1) else {
             break;
         };
         next_cursor = next;
     }
 
-    ReimbursementStatusCursor {
-        next_deposit_idx: next_cursor,
-    }
+    next_cursor
 }
 
 fn plan_withdrawal_pairings(
     cursor: WithdrawalPairingCursor,
     discovered_deposit_indices: &[DepositIdx],
+    deposit_infos: &[(DepositIdx, DepositInfo)],
     indexed_withdrawal_seqs: &[WithdrawalSeq],
-) -> (Vec<(DepositIdx, WithdrawalSeq)>, WithdrawalPairingCursor) {
+) -> WithdrawalPairingUpdate {
     let discovered_deposit_indices = discovered_deposit_indices
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
+    let deposit_infos = deposit_infos
+        .iter()
+        .map(|(deposit_idx, info)| (*deposit_idx, info.status))
+        .collect::<BTreeMap<_, _>>();
     let indexed_withdrawal_seqs = indexed_withdrawal_seqs
         .iter()
         .copied()
@@ -466,27 +485,46 @@ fn plan_withdrawal_pairings(
     let mut next_cursor = cursor;
     let mut pairings = Vec::new();
 
-    while discovered_deposit_indices.contains(&next_cursor.next_deposit_idx)
-        && indexed_withdrawal_seqs.contains(&next_cursor.next_withdrawal_seq)
-    {
-        pairings.push((
-            next_cursor.next_deposit_idx,
-            next_cursor.next_withdrawal_seq,
-        ));
+    while discovered_deposit_indices.contains(&next_cursor.next_deposit_idx) {
+        match deposit_infos.get(&next_cursor.next_deposit_idx) {
+            Some(DepositStatus::Complete) => {
+                if !indexed_withdrawal_seqs.contains(&next_cursor.next_withdrawal_seq) {
+                    break;
+                }
+                pairings.push(WithdrawalPairing::new(
+                    next_cursor.next_deposit_idx,
+                    next_cursor.next_withdrawal_seq,
+                ));
 
-        let Some(next_deposit_idx) = next_cursor.next_deposit_idx.checked_add(1) else {
-            break;
-        };
-        let Some(next_withdrawal_seq) = next_cursor.next_withdrawal_seq.checked_add(1) else {
-            break;
-        };
-        next_cursor = WithdrawalPairingCursor {
-            next_deposit_idx,
-            next_withdrawal_seq,
-        };
+                let Some(next_deposit_idx) = next_cursor.next_deposit_idx.checked_add(1) else {
+                    break;
+                };
+                let Some(next_withdrawal_seq) = next_cursor.next_withdrawal_seq.checked_add(1)
+                else {
+                    break;
+                };
+                next_cursor = WithdrawalPairingCursor {
+                    next_deposit_idx,
+                    next_withdrawal_seq,
+                };
+            }
+            Some(DepositStatus::Failed) => {
+                let Some(next_deposit_idx) = next_cursor.next_deposit_idx.checked_add(1) else {
+                    break;
+                };
+                next_cursor = WithdrawalPairingCursor {
+                    next_deposit_idx,
+                    next_withdrawal_seq: next_cursor.next_withdrawal_seq,
+                };
+            }
+            Some(DepositStatus::InProgress) | None => break,
+        }
     }
 
-    (pairings, next_cursor)
+    WithdrawalPairingUpdate {
+        pairings,
+        cursor: next_cursor,
+    }
 }
 
 #[cfg(test)]
@@ -496,6 +534,26 @@ mod tests {
     use strata_primitives::buf::Buf32;
 
     use crate::db::{traits::BridgeStatusDb, BridgeStatusDbSled};
+
+    fn deposit_info(status: DepositStatus) -> DepositInfo {
+        DepositInfo {
+            deposit_request_txid: Txid::from_byte_array([1; 32]),
+            deposit_txid: matches!(status, DepositStatus::Complete)
+                .then_some(Txid::from_byte_array([2; 32])),
+            status,
+        }
+    }
+
+    fn deposit_infos(statuses: &[(DepositIdx, DepositStatus)]) -> Vec<(DepositIdx, DepositInfo)> {
+        statuses
+            .iter()
+            .map(|(deposit_idx, status)| (*deposit_idx, deposit_info(*status)))
+            .collect()
+    }
+
+    fn pairing(deposit_idx: DepositIdx, withdrawal_seq: WithdrawalSeq) -> WithdrawalPairing {
+        WithdrawalPairing::new(deposit_idx, withdrawal_seq)
+    }
 
     #[test]
     fn deposit_info_cursor_advances_over_contiguous_purged_deposits() {
@@ -511,7 +569,9 @@ mod tests {
                 WithdrawalStatusCursor {
                     next_deposit_idx: 0
                 },
-                &[2]
+                &[2],
+                3,
+                &[0, 2]
             ),
             WithdrawalStatusCursor {
                 next_deposit_idx: 0
@@ -522,10 +582,42 @@ mod tests {
                 WithdrawalStatusCursor {
                     next_deposit_idx: 0
                 },
+                &[0, 1],
+                2,
                 &[0, 1]
             ),
             WithdrawalStatusCursor {
                 next_deposit_idx: 2
+            }
+        );
+    }
+
+    #[test]
+    fn withdrawal_status_cursor_skips_missing_pairings_below_pairing_frontier() {
+        assert_eq!(
+            next_withdrawal_status_cursor(
+                WithdrawalStatusCursor {
+                    next_deposit_idx: 0
+                },
+                &[0],
+                3,
+                &[0, 2]
+            ),
+            WithdrawalStatusCursor {
+                next_deposit_idx: 2
+            }
+        );
+        assert_eq!(
+            next_withdrawal_status_cursor(
+                WithdrawalStatusCursor {
+                    next_deposit_idx: 0
+                },
+                &[0, 2],
+                3,
+                &[0, 2]
+            ),
+            WithdrawalStatusCursor {
+                next_deposit_idx: 3
             }
         );
     }
@@ -537,7 +629,9 @@ mod tests {
                 ReimbursementStatusCursor {
                     next_deposit_idx: 0
                 },
-                &[2]
+                &[2],
+                3,
+                &[0, 2]
             ),
             ReimbursementStatusCursor {
                 next_deposit_idx: 0
@@ -548,6 +642,8 @@ mod tests {
                 ReimbursementStatusCursor {
                     next_deposit_idx: 0
                 },
+                &[0, 1],
+                2,
                 &[0, 1]
             ),
             ReimbursementStatusCursor {
@@ -557,13 +653,52 @@ mod tests {
     }
 
     #[test]
-    fn withdrawal_pairing_planner_stops_at_deposit_gap() {
-        let (pairings, cursor) =
-            plan_withdrawal_pairings(WithdrawalPairingCursor::default(), &[0, 1, 3], &[0, 1, 2]);
-
-        assert_eq!(pairings, vec![(0, 0), (1, 1)]);
+    fn reimbursement_status_cursor_skips_missing_withdrawals_below_withdrawal_frontier() {
         assert_eq!(
-            cursor,
+            next_reimbursement_status_cursor(
+                ReimbursementStatusCursor {
+                    next_deposit_idx: 0
+                },
+                &[0],
+                3,
+                &[0, 2]
+            ),
+            ReimbursementStatusCursor {
+                next_deposit_idx: 2
+            }
+        );
+        assert_eq!(
+            next_reimbursement_status_cursor(
+                ReimbursementStatusCursor {
+                    next_deposit_idx: 0
+                },
+                &[0, 2],
+                3,
+                &[0, 2]
+            ),
+            ReimbursementStatusCursor {
+                next_deposit_idx: 3
+            }
+        );
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_stops_at_deposit_gap() {
+        let deposit_infos = deposit_infos(&[
+            (0, DepositStatus::Complete),
+            (1, DepositStatus::Complete),
+            (3, DepositStatus::Complete),
+        ]);
+        let update = plan_withdrawal_pairings(
+            WithdrawalPairingCursor::default(),
+            &[0, 1, 3],
+            &deposit_infos,
+            &[0, 1, 2],
+        );
+
+        assert_eq!(update.pairings, vec![pairing(0, 0), pairing(1, 1)]);
+        assert_eq!(
+            update.cursor,
             WithdrawalPairingCursor {
                 next_deposit_idx: 2,
                 next_withdrawal_seq: 2
@@ -573,11 +708,55 @@ mod tests {
 
     #[test]
     fn withdrawal_pairing_planner_stops_without_indexed_wrt() {
-        let (pairings, cursor) =
-            plan_withdrawal_pairings(WithdrawalPairingCursor::default(), &[0], &[]);
+        let deposit_infos = deposit_infos(&[(0, DepositStatus::Complete)]);
+        let update = plan_withdrawal_pairings(
+            WithdrawalPairingCursor::default(),
+            &[0],
+            &deposit_infos,
+            &[],
+        );
 
-        assert!(pairings.is_empty());
-        assert_eq!(cursor, WithdrawalPairingCursor::default());
+        assert!(update.pairings.is_empty());
+        assert_eq!(update.cursor, WithdrawalPairingCursor::default());
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_skips_failed_deposits() {
+        let deposit_infos = deposit_infos(&[
+            (0, DepositStatus::Failed),
+            (1, DepositStatus::Complete),
+            (2, DepositStatus::Complete),
+        ]);
+        let update = plan_withdrawal_pairings(
+            WithdrawalPairingCursor::default(),
+            &[0, 1, 2],
+            &deposit_infos,
+            &[0, 1],
+        );
+
+        assert_eq!(update.pairings, vec![pairing(1, 0), pairing(2, 1)]);
+        assert_eq!(
+            update.cursor,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 3,
+                next_withdrawal_seq: 2
+            }
+        );
+    }
+
+    #[test]
+    fn withdrawal_pairing_planner_stops_at_unresolved_deposit() {
+        let deposit_infos =
+            deposit_infos(&[(0, DepositStatus::InProgress), (1, DepositStatus::Complete)]);
+        let update = plan_withdrawal_pairings(
+            WithdrawalPairingCursor::default(),
+            &[0, 1],
+            &deposit_infos,
+            &[0],
+        );
+
+        assert!(update.pairings.is_empty());
+        assert_eq!(update.cursor, WithdrawalPairingCursor::default());
     }
 
     #[test]
@@ -586,10 +765,12 @@ mod tests {
             next_deposit_idx: 2,
             next_withdrawal_seq: 2,
         };
-        let (pairings, next_cursor) = plan_withdrawal_pairings(cursor, &[0, 1], &[0, 1]);
+        let deposit_infos =
+            deposit_infos(&[(0, DepositStatus::Complete), (1, DepositStatus::Complete)]);
+        let update = plan_withdrawal_pairings(cursor, &[0, 1], &deposit_infos, &[0, 1]);
 
-        assert!(pairings.is_empty());
-        assert_eq!(next_cursor, cursor);
+        assert!(update.pairings.is_empty());
+        assert_eq!(update.cursor, cursor);
     }
 
     #[tokio::test]
@@ -605,7 +786,7 @@ mod tests {
             .put_withdrawal_info(2, &withdrawal_info)
             .expect("put withdrawal info");
         status_db
-            .put_withdrawal_pairings(&[(2, 7)])
+            .put_withdrawal_pairings(&[pairing(2, 7)])
             .expect("put withdrawal pairing");
         status_db
             .put_deposit_info_cursor(2)
@@ -645,7 +826,7 @@ mod tests {
         );
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
-            Vec::<WithdrawalStatusCandidate>::new()
+            Vec::<WithdrawalPairing>::new()
         );
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
@@ -728,12 +909,14 @@ mod tests {
             },
         ];
 
+        let complete_deposit_infos =
+            deposit_infos(&[(0, DepositStatus::Complete), (1, DepositStatus::Complete)]);
         let pairings = state
-            .apply_withdrawal_pairings(&status_db, &[0, 1], &requests)
+            .advance_withdrawal_pairings(&status_db, &[0, 1], &complete_deposit_infos, &requests)
             .await
             .expect("persist withdrawal pairings");
 
-        assert_eq!(pairings, vec![(0, 0), (1, 1)]);
+        assert_eq!(pairings, vec![pairing(0, 0), pairing(1, 1)]);
         assert_eq!(
             state.withdrawal_pairing_cursor().await,
             WithdrawalPairingCursor {
@@ -744,12 +927,47 @@ mod tests {
         let snapshot = status_db
             .get_status_snapshot()
             .expect("load status snapshot");
-        assert_eq!(snapshot.withdrawal_pairings, vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            snapshot.withdrawal_pairings,
+            vec![pairing(0, 0), pairing(1, 1)]
+        );
         assert_eq!(
             snapshot.cursors.withdrawal_pairing,
             WithdrawalPairingCursor {
                 next_deposit_idx: 2,
                 next_withdrawal_seq: 2
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn withdrawal_pairings_persist_cursor_when_skipping_failed_deposits() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        let state = BridgeMonitoringState::default();
+        let failed_deposit_infos = deposit_infos(&[(0, DepositStatus::Failed)]);
+
+        let pairings = state
+            .advance_withdrawal_pairings(&status_db, &[0], &failed_deposit_infos, &[])
+            .await
+            .expect("persist skipped deposit cursor");
+
+        assert!(pairings.is_empty());
+        assert_eq!(
+            state.withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 1,
+                next_withdrawal_seq: 0
+            }
+        );
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert!(snapshot.withdrawal_pairings.is_empty());
+        assert_eq!(
+            snapshot.cursors.withdrawal_pairing,
+            WithdrawalPairingCursor {
+                next_deposit_idx: 1,
+                next_withdrawal_seq: 0
             }
         );
     }
@@ -769,22 +987,15 @@ mod tests {
             },
         ];
 
+        let complete_deposit_infos =
+            deposit_infos(&[(0, DepositStatus::Complete), (1, DepositStatus::Complete)]);
         state
-            .apply_withdrawal_pairings(&status_db, &[0, 1], &requests)
+            .advance_withdrawal_pairings(&status_db, &[0, 1], &complete_deposit_infos, &requests)
             .await
             .expect("persist withdrawal pairings");
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
-            vec![
-                WithdrawalStatusCandidate {
-                    deposit_idx: 0,
-                    withdrawal_seq: 0
-                },
-                WithdrawalStatusCandidate {
-                    deposit_idx: 1,
-                    withdrawal_seq: 1
-                }
-            ]
+            vec![pairing(0, 0), pairing(1, 1)]
         );
 
         state
@@ -806,17 +1017,14 @@ mod tests {
 
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
-            vec![WithdrawalStatusCandidate {
-                deposit_idx: 1,
-                withdrawal_seq: 1
-            }]
+            vec![pairing(1, 1)]
         );
         let snapshot = status_db
             .get_status_snapshot()
             .expect("load status snapshot");
         assert_eq!(
             snapshot.withdrawal_pairings,
-            vec![(1, 1)],
+            vec![pairing(1, 1)],
             "confirmed withdrawal pairings below the cursor are purged"
         );
         assert_eq!(
@@ -833,7 +1041,7 @@ mod tests {
     async fn pairing_gc_retries_below_cursor() {
         let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         status_db
-            .put_withdrawal_pairings(&[(0, 0), (1, 1)])
+            .put_withdrawal_pairings(&[pairing(0, 0), pairing(1, 1)])
             .expect("put withdrawal pairings");
         status_db
             .put_withdrawal_status_cursor(WithdrawalStatusCursor {
@@ -854,14 +1062,86 @@ mod tests {
         let snapshot = status_db
             .get_status_snapshot()
             .expect("load status snapshot");
-        assert_eq!(snapshot.withdrawal_pairings, vec![(1, 1)]);
+        assert_eq!(snapshot.withdrawal_pairings, vec![pairing(1, 1)]);
         assert_eq!(
             state.select_withdrawal_status_candidates().await,
-            vec![WithdrawalStatusCandidate {
-                deposit_idx: 1,
-                withdrawal_seq: 1
-            }]
+            vec![pairing(1, 1)]
         );
+    }
+
+    #[tokio::test]
+    async fn pairing_gc_skips_missing_pairings_below_pairing_frontier() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        status_db
+            .put_withdrawal_pairings(&[pairing(0, 0), pairing(2, 1)])
+            .expect("put withdrawal pairings");
+        status_db
+            .put_withdrawal_pairing_cursor(WithdrawalPairingCursor {
+                next_deposit_idx: 3,
+                next_withdrawal_seq: 2,
+            })
+            .expect("put withdrawal pairing cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        let state = BridgeMonitoringState::from_snapshot(snapshot);
+
+        state
+            .apply_withdrawal_updates(
+                &status_db,
+                vec![WithdrawalInfoUpdate {
+                    deposit_idx: 0,
+                    info: WithdrawalInfo {
+                        withdrawal_request_txid: Buf32([20; 32]),
+                        fulfillment_txid: Some(Txid::from_byte_array([21; 32])),
+                        status: WithdrawalStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist withdrawal status");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.withdrawal_status,
+            WithdrawalStatusCursor {
+                next_deposit_idx: 2
+            }
+        );
+        assert_eq!(snapshot.withdrawal_pairings, vec![pairing(2, 1)]);
+
+        state
+            .apply_withdrawal_updates(
+                &status_db,
+                vec![WithdrawalInfoUpdate {
+                    deposit_idx: 2,
+                    info: WithdrawalInfo {
+                        withdrawal_request_txid: Buf32([22; 32]),
+                        fulfillment_txid: Some(Txid::from_byte_array([23; 32])),
+                        status: WithdrawalStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist withdrawal status");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.withdrawal_status,
+            WithdrawalStatusCursor {
+                next_deposit_idx: 3
+            }
+        );
+        assert!(snapshot.withdrawal_pairings.is_empty());
     }
 
     #[tokio::test]
@@ -929,8 +1209,9 @@ mod tests {
             Vec::<DepositIdx>::new()
         );
 
+        let complete_deposit_infos = deposit_infos(&[(0, DepositStatus::Complete)]);
         state
-            .apply_withdrawal_pairings(&status_db, &[0], &requests)
+            .advance_withdrawal_pairings(&status_db, &[0], &complete_deposit_infos, &requests)
             .await
             .expect("persist withdrawal pairings");
         assert_eq!(
@@ -1054,6 +1335,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reimbursement_gc_skips_missing_withdrawals_below_withdrawal_frontier() {
+        let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        status_db
+            .put_withdrawal_info(
+                0,
+                &WithdrawalInfo {
+                    withdrawal_request_txid: Buf32([30; 32]),
+                    fulfillment_txid: Some(Txid::from_byte_array([31; 32])),
+                    status: WithdrawalStatus::Complete,
+                },
+            )
+            .expect("put withdrawal info");
+        status_db
+            .put_withdrawal_info(
+                2,
+                &WithdrawalInfo {
+                    withdrawal_request_txid: Buf32([32; 32]),
+                    fulfillment_txid: Some(Txid::from_byte_array([33; 32])),
+                    status: WithdrawalStatus::Complete,
+                },
+            )
+            .expect("put withdrawal info");
+        status_db
+            .put_withdrawal_status_cursor(WithdrawalStatusCursor {
+                next_deposit_idx: 3,
+            })
+            .expect("put withdrawal cursor");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        let state = BridgeMonitoringState::from_snapshot(snapshot);
+
+        state
+            .apply_reimbursement_updates(
+                &status_db,
+                vec![ReimbursementInfoUpdate {
+                    deposit_idx: 0,
+                    info: ReimbursementInfo {
+                        claim_txid: Txid::from_byte_array([34; 32]),
+                        challenge_step: crate::types::ChallengeStep::NotApplicable,
+                        payout_txid: Some(Txid::from_byte_array([35; 32])),
+                        status: ReimbursementStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist reimbursement status");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.reimbursement_status,
+            ReimbursementStatusCursor {
+                next_deposit_idx: 2
+            }
+        );
+        assert_eq!(snapshot.withdrawals.len(), 1);
+        assert_eq!(snapshot.withdrawals[0].0, 2);
+
+        state
+            .apply_reimbursement_updates(
+                &status_db,
+                vec![ReimbursementInfoUpdate {
+                    deposit_idx: 2,
+                    info: ReimbursementInfo {
+                        claim_txid: Txid::from_byte_array([36; 32]),
+                        challenge_step: crate::types::ChallengeStep::NotApplicable,
+                        payout_txid: Some(Txid::from_byte_array([37; 32])),
+                        status: ReimbursementStatus::Complete,
+                    },
+                    confirmations: Some(6),
+                }],
+                6,
+            )
+            .await
+            .expect("persist reimbursement status");
+
+        let snapshot = status_db
+            .get_status_snapshot()
+            .expect("load status snapshot");
+        assert_eq!(
+            snapshot.cursors.reimbursement_status,
+            ReimbursementStatusCursor {
+                next_deposit_idx: 3
+            }
+        );
+        assert!(snapshot.withdrawals.is_empty());
+    }
+
+    #[tokio::test]
     async fn reimbursement_candidates_skip_incomplete_withdrawals() {
         let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
         let state = BridgeMonitoringState::default();
@@ -1093,8 +1468,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reimbursement_candidates_include_withdrawal_cursor_lag() {
+    async fn reimbursement_candidates_use_retained_complete_rows_when_cursor_lags() {
         let status_db = BridgeStatusDbSled::open_temporary().expect("open status db");
+        status_db
+            .put_withdrawal_info(
+                2,
+                &WithdrawalInfo {
+                    withdrawal_request_txid: Buf32([13; 32]),
+                    fulfillment_txid: Some(Txid::from_byte_array([14; 32])),
+                    status: WithdrawalStatus::Complete,
+                },
+            )
+            .expect("put withdrawal info");
         status_db
             .put_withdrawal_status_cursor(WithdrawalStatusCursor {
                 next_deposit_idx: 3,
@@ -1113,7 +1498,7 @@ mod tests {
 
         assert_eq!(
             state.select_reimbursement_status_candidates().await,
-            vec![1, 2]
+            vec![2]
         );
     }
 }
