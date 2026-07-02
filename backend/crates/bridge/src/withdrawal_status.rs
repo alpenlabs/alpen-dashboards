@@ -7,8 +7,8 @@ use super::{
     bridge_rpc::{self, RpcClientManager},
     db::traits::WithdrawalIndexerDb,
     esplora::{self, EsploraClient},
-    state::{WithdrawalInfoUpdate, WithdrawalStatusCandidate},
-    types::{WithdrawalInfo, WithdrawalStatus},
+    state::WithdrawalInfoUpdate,
+    types::{WithdrawalInfo, WithdrawalPairing, WithdrawalStatus},
     withdrawal_requests,
 };
 
@@ -23,7 +23,7 @@ pub(crate) async fn get_withdrawal_updates(
     withdrawal_index: &impl WithdrawalIndexerDb,
     esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
-    candidates: &[WithdrawalStatusCandidate],
+    candidates: &[WithdrawalPairing],
     batch_size: usize,
 ) -> Vec<WithdrawalInfoUpdate> {
     let Some(first_candidate) = candidates.first() else {

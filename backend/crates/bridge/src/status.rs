@@ -72,9 +72,32 @@ pub async fn bridge_monitoring_task(
             .state()
             .select_deposit_info_candidates(&deposit_indices)
             .await;
-        let deposit_infos = get_deposits(context.bridge_rpc(), &deposit_candidates).await;
-        let deposit_info_updates =
-            get_deposit_info_updates(context.esplora(), chain_tip_height, deposit_infos).await;
+        let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
+        let withdrawal_pairing_batch_size = context.config().withdrawal_pairing_batch_size();
+        let pairing_deposit_candidates =
+            deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx)
+                .into_iter()
+                .take(withdrawal_pairing_batch_size)
+                .collect::<Vec<_>>();
+        let all_deposit_candidates = deposit_candidates
+            .iter()
+            .chain(pairing_deposit_candidates.iter())
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let deposit_infos = get_deposits(context.bridge_rpc(), &all_deposit_candidates).await;
+        let deposit_candidates = deposit_candidates.into_iter().collect::<BTreeSet<_>>();
+        let deposit_info_updates = get_deposit_info_updates(
+            context.esplora(),
+            chain_tip_height,
+            deposit_infos
+                .iter()
+                .copied()
+                .filter(|(deposit_idx, _)| deposit_candidates.contains(deposit_idx))
+                .collect(),
+        )
+        .await;
         if let Err(e) = context
             .state()
             .apply_deposit_info_updates(
@@ -87,18 +110,27 @@ pub async fn bridge_monitoring_task(
             warn!(error = %e, "failed to persist deposit status updates");
         }
 
-        let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
-        let new_deposit_indices_count =
-            count_deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx);
+        let pairing_deposit_candidates = pairing_deposit_candidates
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let pairing_deposit_infos = deposit_infos
+            .into_iter()
+            .filter(|(deposit_idx, _)| pairing_deposit_candidates.contains(deposit_idx))
+            .collect::<Vec<_>>();
         let withdrawal_requests = fetch_withdrawal_requests(
             context.withdrawal_index(),
             pairing_cursor.next_withdrawal_seq,
-            new_deposit_indices_count,
-            context.config().withdrawal_pairing_batch_size(),
+            pairing_deposit_candidates.len(),
+            withdrawal_pairing_batch_size,
         );
         let new_pairings = match context
             .state()
-            .apply_withdrawal_pairings(context.status_db(), &deposit_indices, &withdrawal_requests)
+            .advance_withdrawal_pairings(
+                context.status_db(),
+                &deposit_indices,
+                &pairing_deposit_infos,
+                &withdrawal_requests,
+            )
             .await
         {
             Ok(pairings) => pairings,
@@ -121,7 +153,7 @@ pub async fn bridge_monitoring_task(
             context.esplora(),
             chain_tip_height,
             &withdrawal_candidates,
-            context.config().withdrawal_pairing_batch_size(),
+            withdrawal_pairing_batch_size,
         )
         .await;
         if let Err(e) = context
@@ -165,26 +197,34 @@ pub async fn bridge_monitoring_task(
     Ok(())
 }
 
+#[cfg(test)]
 fn count_deposit_indices_from(
     deposit_indices: &[DepositIdx],
     next_deposit_idx: DepositIdx,
 ) -> usize {
-    // This mirrors the state pairing planner's contiguous-prefix rule. The
-    // status tick uses this count to size DB reads; state still enforces the
-    // pairing invariant when it applies the fetched rows.
+    deposit_indices_from(deposit_indices, next_deposit_idx).len()
+}
+
+fn deposit_indices_from(
+    deposit_indices: &[DepositIdx],
+    next_deposit_idx: DepositIdx,
+) -> Vec<DepositIdx> {
+    // This collects the contiguous deposit-index window known to the bridge.
+    // The state pairing planner additionally checks deposit status and skips
+    // failed deposits without consuming withdrawal requests.
     let deposit_indices = deposit_indices.iter().copied().collect::<BTreeSet<_>>();
     let mut next_deposit_idx = next_deposit_idx;
-    let mut count = 0;
+    let mut indices = Vec::new();
 
     while deposit_indices.contains(&next_deposit_idx) {
-        count += 1;
+        indices.push(next_deposit_idx);
         let Some(next) = next_deposit_idx.checked_add(1) else {
             break;
         };
         next_deposit_idx = next;
     }
 
-    count
+    indices
 }
 
 /// Fetch detailed information for all deposits.
