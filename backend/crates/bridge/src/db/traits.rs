@@ -9,7 +9,7 @@ use crate::{
         },
     },
     types::{
-        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
         WithdrawalStatusCursor,
     },
 };
@@ -60,7 +60,7 @@ pub(crate) trait BridgeStatusDb: Send + Sync {
     fn del_withdrawal_info(&self, deposit_idx: DepositIdx) -> DbResult<bool>;
 
     /// Inserts or replaces withdrawal-to-deposit pairings.
-    fn put_withdrawal_pairings(&self, pairings: &[(DepositIdx, WithdrawalSeq)]) -> DbResult<()>;
+    fn put_withdrawal_pairings(&self, pairings: &[WithdrawalPairing]) -> DbResult<()>;
 
     /// Deletes withdrawal-to-deposit pairing rows in `start..end`.
     fn del_withdrawal_pairings_range(&self, start: DepositIdx, end: DepositIdx) -> DbResult<()>;

@@ -5,7 +5,7 @@ use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::buf::Buf32;
 
 use crate::types::{
-    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
+    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
     WithdrawalStatusCursor,
 };
 
@@ -22,7 +22,7 @@ pub(crate) struct StatusCursors {
 #[derive(Debug, Clone)]
 pub(crate) struct DbBridgeStatusSnapshot {
     pub(crate) withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
-    pub(crate) withdrawal_pairings: Vec<(DepositIdx, WithdrawalSeq)>,
+    pub(crate) withdrawal_pairings: Vec<WithdrawalPairing>,
     pub(crate) cursors: StatusCursors,
 }
 
