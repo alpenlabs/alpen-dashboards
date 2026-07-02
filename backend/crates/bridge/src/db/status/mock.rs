@@ -10,8 +10,8 @@ use crate::{
         types::{DbBridgeStatusSnapshot, StatusCursors},
     },
     types::{
-        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
-        WithdrawalStatusCursor,
+        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
+        WithdrawalSeq, WithdrawalStatusCursor,
     },
 };
 
@@ -41,7 +41,9 @@ impl BridgeStatusDb for MockBridgeStatusDb {
                 .read()
                 .expect("mock withdrawal_pairings lock poisoned")
                 .iter()
-                .map(|(deposit_idx, withdrawal_seq)| (*deposit_idx, *withdrawal_seq))
+                .map(|(deposit_idx, withdrawal_seq)| {
+                    WithdrawalPairing::new(*deposit_idx, *withdrawal_seq)
+                })
                 .collect(),
             cursors: StatusCursors {
                 deposit_info: *self
@@ -81,11 +83,15 @@ impl BridgeStatusDb for MockBridgeStatusDb {
             .is_some())
     }
 
-    fn put_withdrawal_pairings(&self, pairings: &[(DepositIdx, WithdrawalSeq)]) -> DbResult<()> {
+    fn put_withdrawal_pairings(&self, pairings: &[WithdrawalPairing]) -> DbResult<()> {
         self.withdrawal_pairings
             .write()
             .expect("mock withdrawal_pairings lock poisoned")
-            .extend(pairings.iter().copied());
+            .extend(
+                pairings
+                    .iter()
+                    .map(|pairing| (pairing.deposit_idx, pairing.withdrawal_seq)),
+            );
         Ok(())
     }
 

@@ -2,9 +2,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
 
-use super::types::{
-    DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
-    WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
+use super::{
+    db::types::DbBridgeStatusSnapshot,
+    types::{
+        DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
+        WithdrawalPairing, WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
+    },
 };
 
 /// Cache entry with timestamp and confirmation tracking
@@ -40,7 +43,7 @@ impl<T> CacheEntry<T> {
 
 /// In-memory withdrawal-to-deposit pairings and their FIFO cursor.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct WithdrawalPairing {
+pub(crate) struct WithdrawalPairingState {
     pairings: BTreeMap<DepositIdx, WithdrawalSeq>,
     cursor: WithdrawalPairingCursor,
 }
@@ -50,7 +53,7 @@ pub(crate) struct WithdrawalPairing {
 pub(crate) struct BridgeStatusCache {
     deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
     deposit_info_cursor: DepositIdx,
-    withdrawal_pairing: WithdrawalPairing,
+    withdrawal_pairing: WithdrawalPairingState,
     withdrawal_status_cursor: WithdrawalStatusCursor,
     withdrawals: HashMap<DepositIdx, CacheEntry<WithdrawalInfo>>,
     reimbursement_status_cursor: ReimbursementStatusCursor,
@@ -59,6 +62,27 @@ pub(crate) struct BridgeStatusCache {
 }
 
 impl BridgeStatusCache {
+    pub(crate) fn from_status_snapshot(snapshot: DbBridgeStatusSnapshot) -> Self {
+        let mut cache = Self::default();
+
+        cache.apply_withdrawal_updates(
+            snapshot
+                .withdrawals
+                .into_iter()
+                .map(|(deposit_idx, info)| (deposit_idx, info, None))
+                .collect(),
+        );
+        cache.update_withdrawal_pairings(
+            &snapshot.withdrawal_pairings,
+            snapshot.cursors.withdrawal_pairing,
+        );
+        cache.set_deposit_info_cursor(snapshot.cursors.deposit_info);
+        cache.set_withdrawal_status_cursor(snapshot.cursors.withdrawal_status);
+        cache.set_reimbursement_status_cursor(snapshot.cursors.reimbursement_status);
+
+        cache
+    }
+
     pub(crate) fn deposit_info_cursor(&self) -> DepositIdx {
         self.deposit_info_cursor
     }
@@ -74,22 +98,26 @@ impl BridgeStatusCache {
     pub(crate) fn withdrawal_pairings_from(
         &self,
         deposit_idx: DepositIdx,
-    ) -> Vec<(DepositIdx, WithdrawalSeq)> {
+    ) -> Vec<WithdrawalPairing> {
         self.withdrawal_pairing
             .pairings
             .range(deposit_idx..)
-            .map(|(deposit_idx, withdrawal_seq)| (*deposit_idx, *withdrawal_seq))
+            .map(|(deposit_idx, withdrawal_seq)| {
+                WithdrawalPairing::new(*deposit_idx, *withdrawal_seq)
+            })
             .collect()
     }
 
     pub(crate) fn update_withdrawal_pairings(
         &mut self,
-        pairings: &[(DepositIdx, WithdrawalSeq)],
+        pairings: &[WithdrawalPairing],
         cursor: WithdrawalPairingCursor,
     ) {
-        self.withdrawal_pairing
-            .pairings
-            .extend(pairings.iter().copied());
+        self.withdrawal_pairing.pairings.extend(
+            pairings
+                .iter()
+                .map(|pairing| (pairing.deposit_idx, pairing.withdrawal_seq)),
+        );
         self.withdrawal_pairing.cursor = cursor;
     }
 

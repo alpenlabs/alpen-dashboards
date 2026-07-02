@@ -39,6 +39,22 @@ pub(crate) struct WithdrawalPairingCursor {
     pub(crate) next_withdrawal_seq: WithdrawalSeq,
 }
 
+/// Committed withdrawal-to-deposit pairing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WithdrawalPairing {
+    pub(crate) deposit_idx: DepositIdx,
+    pub(crate) withdrawal_seq: WithdrawalSeq,
+}
+
+impl WithdrawalPairing {
+    pub(crate) fn new(deposit_idx: DepositIdx, withdrawal_seq: WithdrawalSeq) -> Self {
+        Self {
+            deposit_idx,
+            withdrawal_seq,
+        }
+    }
+}
+
 /// In-memory cursor for bridge withdrawal status polling progress.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WithdrawalStatusCursor {
