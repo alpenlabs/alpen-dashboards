@@ -13,23 +13,33 @@ use status_config::NetworkMonitoringConfig;
 use status_utils::{create_rpc_client, ExponentialBackoff};
 
 const STRATA_CHAIN_STATUS_METHOD: &str = "strata_getChainStatus";
+const ETH_BLOCK_NUMBER_METHOD: &str = "eth_blockNumber";
 
 fn is_chain_status_response_online(json: &serde_json::Value) -> bool {
     json.get("tip").is_some()
 }
 
-/// Calls `strata_getChainStatus` using `jsonrpsee`.
-async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+fn is_eth_block_number_response_online(json: &serde_json::Value) -> bool {
+    json.as_str()
+        .and_then(|block_number| block_number.strip_prefix("0x"))
+        .and_then(|block_number| u64::from_str_radix(block_number, 16).ok())
+        .is_some()
+}
+
+async fn call_json_rpc_status(
+    client: &HttpClient,
+    method: &'static str,
+    is_online: impl Fn(&serde_json::Value) -> bool,
+    retry_policy: ExponentialBackoff,
+) -> Status {
     let mut retry_count: u64 = 0;
 
     loop {
-        let response: Result<serde_json::Value, _> = client
-            .request(STRATA_CHAIN_STATUS_METHOD, Vec::<()>::new())
-            .await;
+        let response: Result<serde_json::Value, _> = client.request(method, Vec::<()>::new()).await;
         match response {
             Ok(json) => {
-                info!(?json, method = STRATA_CHAIN_STATUS_METHOD, "rpc response");
-                if is_chain_status_response_online(&json) {
+                info!(?json, method, "rpc response");
+                if is_online(&json) {
                     return Status::Online;
                 } else {
                     return Status::Offline;
@@ -41,9 +51,7 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
                     if delay_seconds > 0 {
                         info!(
                             delay_seconds,
-                            retry_count,
-                            method = STRATA_CHAIN_STATUS_METHOD,
-                            "retrying rpc status request"
+                            retry_count, method, "retrying rpc status request"
                         );
                         sleep(Duration::from_secs(delay_seconds)).await;
                     }
@@ -51,7 +59,7 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
                 } else {
                     error!(
                         error = %e,
-                        method = STRATA_CHAIN_STATUS_METHOD,
+                        method,
                         "could not get network status"
                     );
                     return Status::Offline;
@@ -59,6 +67,28 @@ async fn call_rpc_status(client: &HttpClient, retry_policy: ExponentialBackoff) 
             }
         }
     }
+}
+
+/// Calls the OL `strata_getChainStatus` method.
+async fn call_sequencer_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+    call_json_rpc_status(
+        client,
+        STRATA_CHAIN_STATUS_METHOD,
+        is_chain_status_response_online,
+        retry_policy,
+    )
+    .await
+}
+
+/// Calls the EVM `eth_blockNumber` method.
+async fn call_rpc_endpoint_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+    call_json_rpc_status(
+        client,
+        ETH_BLOCK_NUMBER_METHOD,
+        is_eth_block_number_response_online,
+        retry_policy,
+    )
+    .await
 }
 
 /// Checks bundler health (`/health`)
@@ -96,8 +126,10 @@ pub async fn network_monitoring_task(
         }
 
         let sequencer =
-            call_rpc_status(&sequencer_client, context.config().sequencer_retry_policy()).await;
-        let rpc_endpoint = call_rpc_status(&rpc_client, context.config().rpc_retry_policy()).await;
+            call_sequencer_status(&sequencer_client, context.config().sequencer_retry_policy())
+                .await;
+        let rpc_endpoint =
+            call_rpc_endpoint_status(&rpc_client, context.config().rpc_retry_policy()).await;
         let bundler_endpoint = check_bundler_health(&http_client, context.config()).await;
 
         let new_status = NetworkStatus::new(sequencer, rpc_endpoint, bundler_endpoint);
@@ -133,7 +165,7 @@ pub async fn get_network_status(
 mod tests {
     use serde_json::json;
 
-    use super::is_chain_status_response_online;
+    use super::{is_chain_status_response_online, is_eth_block_number_response_online};
 
     #[test]
     fn chain_status_response_with_tip_is_online() {
@@ -156,6 +188,23 @@ mod tests {
             "confirmed": {},
             "finalized": {},
             "latest": {}
+        })));
+    }
+
+    #[test]
+    fn eth_block_number_response_with_hex_string_is_online() {
+        assert!(is_eth_block_number_response_online(&json!("0x1a")));
+    }
+
+    #[test]
+    fn eth_block_number_response_with_non_hex_string_is_offline() {
+        assert!(!is_eth_block_number_response_online(&json!("latest")));
+    }
+
+    #[test]
+    fn eth_block_number_response_with_object_is_offline() {
+        assert!(!is_eth_block_number_response_online(&json!({
+            "blockNumber": "0x1a"
         })));
     }
 }
