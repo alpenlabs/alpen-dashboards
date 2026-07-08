@@ -448,8 +448,8 @@ host = "0.0.0.0"
 port = 3000
 
 [network]
-sequencer_url = "https://rpc.testnet.alpenlabs.io"
-rpc_url = "https://rpc.testnet.alpenlabs.io"
+sequencer_url = "https://strata.testnet.alpenlabs.io"
+rpc_url = "https://alpen.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
 retry_policy_max_retries = 5
 retry_policy_total_time_s = 60
@@ -496,7 +496,7 @@ stake_chain_addresses = [
 ]
 
 [withdrawal_indexer]
-eth_rpc_url = "https://rpc.testnet.alpenlabs.io"
+eth_rpc_url = "https://alpen.testnet.alpenlabs.io"
 withdrawal_denomination_sats = 100000000
 "#;
 
