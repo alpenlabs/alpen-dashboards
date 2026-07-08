@@ -1,11 +1,78 @@
 import { lazy, Suspense, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import type { EvmChainStatus, OlChainStatus } from '../hooks/useNetworkStatus';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import '../styles/network.css';
 
 const StatusCard = lazy(() => import('../components/StatusCard'));
 const Bridge = lazy(() => import('./Bridge'));
 const Balances = lazy(() => import('./Balances'));
+
+const formatStatus = (status?: string) => status?.toUpperCase() ?? 'UNKNOWN';
+
+const formatNumber = (value?: number | null) =>
+  value == null ? 'Unknown' : value.toLocaleString();
+
+const formatStaleSeconds = (value?: number | null) =>
+  value == null ? 'Unknown' : `${value.toLocaleString()}s`;
+
+const formatSlotLag = (value?: number | null) =>
+  value == null ? 'Unknown' : `${value.toLocaleString()} slots`;
+
+const olChainDetails = (chain?: OlChainStatus | null) => [
+  {
+    label: 'Tip slot',
+    value: formatNumber(chain?.tip.slot),
+  },
+  {
+    label: 'Tip epoch',
+    value: formatNumber(chain?.tip.epoch),
+  },
+  {
+    label: 'Latest epoch',
+    value:
+      chain == null
+        ? 'Unknown'
+        : `epoch ${chain.latest.epoch} / slot ${chain.latest.last_slot.toLocaleString()}`,
+  },
+  {
+    label: 'Confirmed',
+    value:
+      chain == null
+        ? 'Unknown'
+        : `epoch ${chain.confirmed.epoch} / slot ${chain.confirmed.last_slot.toLocaleString()}`,
+  },
+  {
+    label: 'Finalized',
+    value:
+      chain == null
+        ? 'Unknown'
+        : `epoch ${chain.finalized.epoch} / slot ${chain.finalized.last_slot.toLocaleString()}`,
+  },
+  {
+    label: 'Confirm lag',
+    value: formatSlotLag(chain?.confirmation_lag_slots),
+  },
+  {
+    label: 'Finality lag',
+    value: formatSlotLag(chain?.finality_lag_slots),
+  },
+  {
+    label: 'Last progressed',
+    value: formatStaleSeconds(chain?.latest_slot_stale_seconds),
+  },
+];
+
+const evmChainDetails = (chain?: EvmChainStatus | null) => [
+  {
+    label: 'Latest block',
+    value: formatNumber(chain?.latest_block_number),
+  },
+  {
+    label: 'Last progressed',
+    value: formatStaleSeconds(chain?.latest_block_stale_seconds),
+  },
+];
 
 export default function Dashboard() {
   const [isMenuOpen, setMenuOpen] = useState(false);
@@ -76,19 +143,49 @@ export default function Dashboard() {
               {isLoading ? (
                 <p className="loading-text">Loading...</p>
               ) : (
-                <div className="status-cards">
-                  <StatusCard
-                    title="Sequencer status"
-                    status={data?.sequencer.toUpperCase() ?? 'Unknown'}
-                  />
-                  <StatusCard
-                    title="RPC endpoint status"
-                    status={data?.rpc_endpoint.toUpperCase() ?? 'Unknown'}
-                  />
-                  <StatusCard
-                    title="Bundler endpoint status"
-                    status={data?.bundler_endpoint.toUpperCase() ?? 'Unknown'}
-                  />
+                <div className="network-sections">
+                  <section className="network-section">
+                    <h2 className="network-section-title">Service endpoints</h2>
+                    <div className="status-cards">
+                      <StatusCard
+                        title="Sequencer"
+                        status={formatStatus(data?.sequencer)}
+                      />
+                      <StatusCard
+                        title="OL RPC"
+                        status={formatStatus(data?.rpc_endpoint)}
+                      />
+                      <StatusCard
+                        title="EE RPC"
+                        status={formatStatus(data?.ee_endpoint)}
+                      />
+                      <StatusCard
+                        title="Bundler"
+                        status={formatStatus(data?.bundler_endpoint)}
+                      />
+                    </div>
+                  </section>
+
+                  <section className="network-section">
+                    <h2 className="network-section-title">Chain production</h2>
+                    <div className="status-cards">
+                      <StatusCard
+                        title="Sequencer OL"
+                        status={formatStatus(data?.sequencer)}
+                        details={olChainDetails(data?.sequencer_chain)}
+                      />
+                      <StatusCard
+                        title="Public OL RPC"
+                        status={formatStatus(data?.rpc_endpoint)}
+                        details={olChainDetails(data?.rpc_chain)}
+                      />
+                      <StatusCard
+                        title="EE blocks"
+                        status={formatStatus(data?.ee_endpoint)}
+                        details={evmChainDetails(data?.ee_chain)}
+                      />
+                    </div>
+                  </section>
                 </div>
               )}
             </Suspense>

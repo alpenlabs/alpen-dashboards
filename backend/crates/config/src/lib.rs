@@ -80,6 +80,12 @@ pub struct NetworkMonitoringConfig {
     /// JSON-RPC Endpoint for Strata client and reth
     rpc_url: String,
 
+    /// Optional JSON-RPC endpoint for the Strata EVM client.
+    ///
+    /// Defaults to `rpc_url` when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    eth_rpc_url: Option<String>,
+
     /// Bundler health check URL
     bundler_url: String,
 
@@ -104,6 +110,10 @@ impl NetworkMonitoringConfig {
 
     pub fn rpc_url(&self) -> &str {
         &self.rpc_url
+    }
+
+    pub fn eth_rpc_url(&self) -> &str {
+        self.eth_rpc_url.as_deref().unwrap_or(&self.rpc_url)
     }
 
     pub fn bundler_url(&self) -> &str {
@@ -450,6 +460,7 @@ port = 3000
 [network]
 sequencer_url = "https://rpc.testnet.alpenlabs.io"
 rpc_url = "https://rpc.testnet.alpenlabs.io"
+eth_rpc_url = "https://eth-rpc.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
 retry_policy_max_retries = 5
 retry_policy_total_time_s = 60
@@ -587,6 +598,7 @@ port = 8080
 [network]
 sequencer_url = "https://sequencer.example.com"
 rpc_url = "https://rpc.example.com"
+eth_rpc_url = "https://eth-rpc.example.com"
 bundler_url = "https://bundler.example.com/health"
 retry_policy_max_retries = 3
 retry_policy_total_time_s = 30
@@ -647,6 +659,7 @@ withdrawal_denomination_sats = 100000000
             config.network.sequencer_url(),
             "https://sequencer.example.com"
         );
+        assert_eq!(config.network.eth_rpc_url(), "https://eth-rpc.example.com");
         assert_eq!(config.network.status_refetch_interval(), 5);
         assert_eq!(config.network.initial_status_wait_timeout_s(), 4);
         assert_eq!(config.bridge.esplora_url(), "https://esplora.example.com");
@@ -767,6 +780,7 @@ eth_rpc_url = "https://rpc.example.com"
             config.network().initial_status_wait_timeout_s(),
             DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S
         );
+        assert_eq!(config.network().eth_rpc_url(), "");
         assert_eq!(
             config.bridge().initial_status_wait_timeout_s(),
             DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S

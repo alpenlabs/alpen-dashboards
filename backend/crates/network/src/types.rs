@@ -5,7 +5,7 @@ use tokio::time::Duration;
 
 use status_config::NetworkMonitoringConfig;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Status {
     Online,
@@ -16,7 +16,11 @@ pub(crate) enum Status {
 pub struct NetworkStatus {
     sequencer: Status,
     rpc_endpoint: Status,
+    ee_endpoint: Status,
     bundler_endpoint: Status,
+    sequencer_chain: Option<OlChainStatus>,
+    rpc_chain: Option<OlChainStatus>,
+    ee_chain: Option<EvmChainStatus>,
 }
 
 impl Default for NetworkStatus {
@@ -24,18 +28,143 @@ impl Default for NetworkStatus {
         Self {
             sequencer: Status::Offline,
             rpc_endpoint: Status::Offline,
+            ee_endpoint: Status::Offline,
             bundler_endpoint: Status::Offline,
+            sequencer_chain: None,
+            rpc_chain: None,
+            ee_chain: None,
         }
     }
 }
 
 impl NetworkStatus {
-    pub(crate) fn new(sequencer: Status, rpc_endpoint: Status, bundler_endpoint: Status) -> Self {
+    pub(crate) fn new(
+        sequencer: Status,
+        rpc_endpoint: Status,
+        ee_endpoint: Status,
+        bundler_endpoint: Status,
+        sequencer_chain: Option<OlChainStatus>,
+        rpc_chain: Option<OlChainStatus>,
+        ee_chain: Option<EvmChainStatus>,
+    ) -> Self {
         Self {
             sequencer,
             rpc_endpoint,
+            ee_endpoint,
             bundler_endpoint,
+            sequencer_chain,
+            rpc_chain,
+            ee_chain,
         }
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct BlockInfoStatus {
+    slot: u64,
+    block_id: String,
+    epoch: u32,
+    is_terminal: bool,
+}
+
+impl BlockInfoStatus {
+    pub(crate) fn new(slot: u64, block_id: String, epoch: u32, is_terminal: bool) -> Self {
+        Self {
+            slot,
+            block_id,
+            epoch,
+            is_terminal,
+        }
+    }
+
+    pub(crate) fn slot(&self) -> u64 {
+        self.slot
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct EpochCommitmentStatus {
+    epoch: u32,
+    last_slot: u64,
+    last_block_id: String,
+}
+
+impl EpochCommitmentStatus {
+    pub(crate) fn new(epoch: u32, last_slot: u64, last_block_id: String) -> Self {
+        Self {
+            epoch,
+            last_slot,
+            last_block_id,
+        }
+    }
+
+    pub(crate) fn last_slot(&self) -> u64 {
+        self.last_slot
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct OlChainStatus {
+    tip: BlockInfoStatus,
+    latest: EpochCommitmentStatus,
+    confirmed: EpochCommitmentStatus,
+    finalized: EpochCommitmentStatus,
+    confirmation_lag_slots: u64,
+    finality_lag_slots: u64,
+    latest_slot_stale_seconds: Option<u64>,
+}
+
+impl OlChainStatus {
+    pub(crate) fn new(
+        tip: BlockInfoStatus,
+        latest: EpochCommitmentStatus,
+        confirmed: EpochCommitmentStatus,
+        finalized: EpochCommitmentStatus,
+    ) -> Self {
+        let latest_slot = tip.slot();
+        let confirmed_slot = confirmed.last_slot();
+        let finalized_slot = finalized.last_slot();
+
+        Self {
+            tip,
+            latest,
+            confirmed,
+            finalized,
+            confirmation_lag_slots: latest_slot.saturating_sub(confirmed_slot),
+            finality_lag_slots: latest_slot.saturating_sub(finalized_slot),
+            latest_slot_stale_seconds: None,
+        }
+    }
+
+    pub(crate) fn latest_slot(&self) -> u64 {
+        self.tip.slot()
+    }
+
+    pub(crate) fn set_latest_slot_stale_seconds(&mut self, seconds: Option<u64>) {
+        self.latest_slot_stale_seconds = seconds;
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct EvmChainStatus {
+    latest_block_number: u64,
+    latest_block_stale_seconds: Option<u64>,
+}
+
+impl EvmChainStatus {
+    pub(crate) fn new(latest_block_number: u64) -> Self {
+        Self {
+            latest_block_number,
+            latest_block_stale_seconds: None,
+        }
+    }
+
+    pub(crate) fn latest_block_number(&self) -> u64 {
+        self.latest_block_number
+    }
+
+    pub(crate) fn set_latest_block_stale_seconds(&mut self, seconds: Option<u64>) {
+        self.latest_block_stale_seconds = seconds;
     }
 }
 

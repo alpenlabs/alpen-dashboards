@@ -12,6 +12,7 @@ datadir = "data"
   initial_status_wait_timeout_s = 30
   retry_policy_max_retries      = 5
   retry_policy_total_time_s     = 60
+  eth_rpc_url                   = "https://rpc-staging.testnet-v2.alpenlabs.io"
   rpc_url                       = "https://rpc-staging.testnet-v2.alpenlabs.io"
   sequencer_url                 = "https://rpc-staging.testnet-v2.alpenlabs.io"
   status_refetch_interval_s     = 10
