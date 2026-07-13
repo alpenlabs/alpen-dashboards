@@ -1,3 +1,4 @@
+use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, trace};
@@ -9,10 +10,13 @@ use status_utils::ExponentialBackoff;
 pub struct Config {
     /// Base directory for persisted dashboard data.
     datadir: PathBuf,
+
     /// API server configuration
     server: ApiServerConfig,
+
     /// Network monitoring configuration
     network: NetworkMonitoringConfig,
+
     /// Bridge monitoring configuration
     bridge: BridgeMonitoringConfig,
     /// Balance monitoring configuration
@@ -27,6 +31,7 @@ pub struct Config {
 pub struct ApiServerConfig {
     /// Host address to bind the server to
     host: String,
+
     /// Port number to bind the server to
     port: u16,
 }
@@ -252,19 +257,27 @@ impl WithdrawalIndexerConfig {
 /// Configuration for a bridge operator
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BridgeOperator {
+    /// Display name of the bridge operator
+    name: String,
+
     /// Public key of the bridge operator
-    public_key: String,
-    /// RPC URL for the bridge operator
-    rpc_url: String,
+    public_key: PublicKey,
+
+    /// RPC URL for the bridge operator.
+    rpc_url: Option<String>,
 }
 
 impl BridgeOperator {
-    pub fn public_key(&self) -> &str {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
 
-    pub fn rpc_url(&self) -> &str {
-        &self.rpc_url
+    pub fn rpc_url(&self) -> Option<&str> {
+        self.rpc_url.as_deref()
     }
 }
 
@@ -464,19 +477,23 @@ status_refetch_interval_s = 120
 initial_status_wait_timeout_s = 5
 
 [[bridge.operators]]
-public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+name = "Operator 1"
+public_key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 rpc_url = "https://bridge.testnet.alpenlabs.io/1"
 
 [[bridge.operators]]
-public_key = "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+name = "Operator 2"
+public_key = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 rpc_url = "https://bridge.testnet.alpenlabs.io/2"
 
 [[bridge.operators]]
-public_key = "02f00dbabe9876543210fedcba9876543210fedcba9876543210fedcba987654"
+name = "Operator 3"
+public_key = "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
 rpc_url = "https://bridge.testnet.alpenlabs.io/3"
 
 [[bridge.operators]]
-public_key = "02badcafe1111111111111111111111111111111111111111111111111111111111"
+name = "Operator 4"
+public_key = "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13"
 rpc_url = "https://bridge.testnet.alpenlabs.io/4"
 
 [balance]
@@ -602,11 +619,13 @@ initial_status_wait_timeout_s = 7
 withdrawal_pairing_batch_size = 500
 
 [[bridge.operators]]
-public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+name = "Operator 1"
+public_key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 rpc_url = "https://bridge.example.com/1"
 
 [[bridge.operators]]
-public_key = "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+name = "Operator 2"
+public_key = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 rpc_url = "https://bridge.example.com/2"
 
 [balance]
@@ -656,21 +675,23 @@ withdrawal_denomination_sats = 100000000
         assert_eq!(config.bridge.initial_status_wait_timeout_s(), 7);
         assert_eq!(config.bridge.withdrawal_pairing_batch_size(), 500);
         assert_eq!(config.bridge.operators().len(), 2);
+        assert_eq!(config.bridge.operators()[0].name(), "Operator 1");
         assert_eq!(
-            config.bridge.operators()[0].public_key(),
-            "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            config.bridge.operators()[0].public_key().to_string(),
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         );
         assert_eq!(
             config.bridge.operators()[0].rpc_url(),
-            "https://bridge.example.com/1"
+            Some("https://bridge.example.com/1")
         );
+        assert_eq!(config.bridge.operators()[1].name(), "Operator 2");
         assert_eq!(
-            config.bridge.operators()[1].public_key(),
-            "02cafebabe1234567890abcdef1234567890abcdef1234567890abcdef123456"
+            config.bridge.operators()[1].public_key().to_string(),
+            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
         );
         assert_eq!(
             config.bridge.operators()[1].rpc_url(),
-            "https://bridge.example.com/2"
+            Some("https://bridge.example.com/2")
         );
         assert_eq!(config.balance().refresh_interval_s(), 300);
         assert_eq!(
@@ -713,6 +734,101 @@ withdrawal_denomination_sats = 100000000
             config.withdrawal_indexer().withdrawal_denomination_sats(),
             100_000_000
         );
+    }
+
+    #[test]
+    fn bridge_operator_name_is_required() {
+        let config_content = r#"
+datadir = "data"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[network]
+sequencer_url = ""
+rpc_url = ""
+bundler_url = ""
+retry_policy_max_retries = 0
+retry_policy_total_time_s = 0
+status_refetch_interval_s = 0
+
+[bridge]
+esplora_url = ""
+max_tx_confirmations = 0
+status_refetch_interval_s = 0
+
+[[bridge.operators]]
+public_key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+rpc_url = "https://bridge.example.com/1"
+
+[balance]
+refresh_interval_s = 300
+
+[balance.faucet]
+l1_url = ""
+l2_url = ""
+
+[balance.bridge_operators]
+esplora_url = ""
+general_addresses = []
+stake_chain_addresses = []
+
+[withdrawal_indexer]
+eth_rpc_url = "https://rpc.example.com"
+"#;
+
+        let error = toml::from_str::<Config>(config_content).expect_err("missing operator name");
+        assert!(
+            error.to_string().contains("missing field `name`"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn bridge_operator_rpc_url_is_optional() {
+        let config_content = r#"
+datadir = "data"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[network]
+sequencer_url = ""
+rpc_url = ""
+bundler_url = ""
+retry_policy_max_retries = 0
+retry_policy_total_time_s = 0
+status_refetch_interval_s = 0
+
+[bridge]
+esplora_url = ""
+max_tx_confirmations = 0
+status_refetch_interval_s = 0
+
+[[bridge.operators]]
+name = "External Operator"
+public_key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+
+[balance]
+refresh_interval_s = 300
+
+[balance.faucet]
+l1_url = ""
+l2_url = ""
+
+[balance.bridge_operators]
+esplora_url = ""
+general_addresses = []
+stake_chain_addresses = []
+
+[withdrawal_indexer]
+eth_rpc_url = "https://rpc.example.com"
+"#;
+
+        let config = toml::from_str::<Config>(config_content).expect("parse config");
+        assert_eq!(config.bridge.operators()[0].rpc_url(), None);
     }
 
     #[test]
