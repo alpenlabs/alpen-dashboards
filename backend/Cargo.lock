@@ -3995,6 +3995,7 @@ dependencies = [
 name = "status-config"
 version = "0.2.0"
 dependencies = [
+ "bitcoin",
  "serde",
  "status-utils",
  "toml",

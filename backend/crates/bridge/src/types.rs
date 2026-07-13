@@ -1,4 +1,4 @@
-use bitcoin::{secp256k1::PublicKey, Txid};
+use bitcoin::{PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::types::{

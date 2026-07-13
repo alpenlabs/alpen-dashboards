@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::Json;
-use bitcoin::{secp256k1::PublicKey, Txid};
+use bitcoin::Txid;
 use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::L1Height;
@@ -40,13 +40,14 @@ pub async fn bridge_monitoring_task(
 
         let mut operator_statuses = Vec::new();
 
-        for (index, operator) in context.config().operators().iter().enumerate() {
-            let operator_id = format!("Alpen Labs #{}", index + 1);
-            let pk_bytes = hex::decode(operator.public_key()).expect("decode to succeed");
-            let operator_pk = PublicKey::from_slice(&pk_bytes).expect("conversion to succeed");
-            let status =
-                bridge_rpc::get_operator_status(context.bridge_rpc(), operator.public_key()).await;
-            operator_statuses.push(OperatorStatus::new(operator_id, operator_pk, status));
+        for operator in context.config().operators() {
+            let operator_pk = *operator.public_key();
+            let status = bridge_rpc::get_operator_status(context.bridge_rpc(), operator_pk).await;
+            operator_statuses.push(OperatorStatus::new(
+                operator.name().to_owned(),
+                operator_pk,
+                status,
+            ));
         }
 
         context.state().update_operators(operator_statuses).await;

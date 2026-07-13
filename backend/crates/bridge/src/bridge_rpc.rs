@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
+use bitcoin::PublicKey;
 use jsonrpsee::http_client::HttpClient;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, future::Future};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonitoringApiClient};
 use strata_bridge_rpc::types::{
@@ -54,10 +55,10 @@ impl RpcClientManager {
     pub(crate) fn new(config: &BridgeMonitoringConfig) -> Self {
         let mut clients = BTreeMap::new();
         for operator in config.operators() {
-            clients.insert(
-                operator.public_key().to_string(),
-                create_rpc_client(operator.rpc_url()),
-            );
+            let operator_pk = operator.public_key().to_string();
+            if let Some(rpc_url) = operator.rpc_url() {
+                clients.insert(operator_pk, create_rpc_client(rpc_url));
+            }
         }
 
         Self { clients }
@@ -107,7 +108,7 @@ impl RpcClientManager {
     async fn query_clients_with_retry<T, F, Fut>(&self, operation: F) -> Option<T>
     where
         F: Fn(HttpClient) -> Fut,
-        Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
+        Fut: Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
         // BTreeMap maintains sorted order automatically.
         for (client_key, client) in self.clients.iter() {
@@ -150,21 +151,32 @@ impl RpcClientManager {
 /// Fetch operator status.
 pub(crate) async fn get_operator_status(
     rpc_manager: &RpcClientManager,
-    operator_public_key: &str,
+    operator_pk: PublicKey,
 ) -> RpcOperatorStatus {
-    let Some(client) = rpc_manager.client(operator_public_key) else {
-        warn!(
-            operator_pk = %operator_public_key,
-            "missing bridge operator RPC client"
-        );
-        return RpcOperatorStatus::Offline;
+    let operator_pk_str = operator_pk.to_string();
+    let Some(client) = rpc_manager.client(&operator_pk_str) else {
+        return rpc_manager
+            .query_clients_with_retry(|client| async move {
+                client
+                    .get_operator_status(operator_pk)
+                    .await
+                    .map_err(|e| e.into())
+            })
+            .await
+            .unwrap_or_else(|| {
+                warn!(
+                    operator_pk = %operator_pk_str,
+                    "failed to fetch bridge operator status from peer clients"
+                );
+                RpcOperatorStatus::Offline
+            });
     };
 
     match client.get_uptime().await {
         Ok(_) => RpcOperatorStatus::Online,
         Err(e) => {
             warn!(
-                operator_pk = %operator_public_key,
+                operator_pk = %operator_pk_str,
                 error = %e,
                 "failed to fetch bridge operator uptime"
             );
