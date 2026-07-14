@@ -51,6 +51,8 @@ jobs:
         uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
         with:
           mask-password: "true"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v3
       - name: Build and push Docker image
         id: build-and-push
         env:
@@ -59,9 +61,6 @@ jobs:
         run: |
           IMAGE_TAG=${COMMIT::7}
           SERVICE="${{ matrix.service }}"
-
-          DOCKERFILE_PATH="$SERVICE.Dockerfile"
-          CONTEXT_DIR="."
           # Flat, per-service repo in shared-services ECR, e.g.
           # strata/strata-dashboards-backend. ECR_REPOSITORY_PREFIX is the repo
           # family (e.g. strata/strata-dashboards) and the service is appended
@@ -74,6 +73,9 @@ jobs:
           # Only the immutable commit tag is pushed. Shared-services repos are
           # created IMMUTABLE, so re-pushing a moving :latest tag would fail on
           # the second build; deployments values reference the SHA tag anyway.
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-                      -f $DOCKERFILE_PATH $CONTEXT_DIR
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker buildx build \
+            --platform linux/amd64 \
+            --file "$SERVICE.Dockerfile" \
+            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            --push \
+            .
