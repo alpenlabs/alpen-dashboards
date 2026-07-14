@@ -59,7 +59,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY_PREFIX: ${{ vars.ECR_REPOSITORY_PREFIX }}
         run: |
-          IMAGE_TAG=${COMMIT::7}
+          IMAGE_TAG=${COMMIT}
           SERVICE="${{ matrix.service }}"
           # Flat, per-service repo in shared-services ECR, e.g.
           # strata/strata-dashboards-backend. ECR_REPOSITORY_PREFIX is the repo
