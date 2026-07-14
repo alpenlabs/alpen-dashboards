@@ -9,16 +9,7 @@ on:
   #     - main
   #   types:
   #     - closed
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Select environment'
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          # currently we do not support cd to production, it's only for future reference
-          - production
+  workflow_dispatch: {}
 env:
   CI: false
   COMMIT: ${{ github.sha }}
@@ -31,7 +22,6 @@ jobs:
       id-token: write
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || (github.ref == 'refs/heads/main' && 'staging') }}
     strategy:
       matrix:
         service: [frontend, backend]
