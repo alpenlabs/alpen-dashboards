@@ -4,15 +4,7 @@ on:
   push:
     branches:
       - internal-dashboard
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Select environment'
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
+  workflow_dispatch: {}
 
 env:
   CI: false
@@ -26,7 +18,6 @@ jobs:
       id-token: write
     name: Build and Push Docker Images (Internal)
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment || (github.ref == 'refs/heads/internal-dashboard' && 'staging') }}
     strategy:
       matrix:
         service: [frontend, backend]
