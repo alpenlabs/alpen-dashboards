@@ -1,4 +1,4 @@
-name: Kubernetes CI/CD
+name: Build & Push Dashboard Images
 
 on:
   push:
