@@ -4,13 +4,13 @@ interface StatusCardProps {
 }
 
 const StatusCard = ({ title, status }: StatusCardProps) => {
+  const label = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
   return (
     <div className="status-section">
-      <div className="status-title">{title.toUpperCase()}</div>
+      <div className="status-title">{title}</div>
       <div className="status-value">
-        <span className={`status-text ${status.toLowerCase()}`}>
-          {status.toUpperCase()}
-        </span>
+        <span className={`status-text ${status.toLowerCase()}`}>{label}</span>
       </div>
     </div>
   );
