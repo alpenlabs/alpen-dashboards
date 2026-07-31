@@ -2,9 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useConfig } from './useConfig';
 
 export type NetworkStatus = {
-  sequencer: string;
-  rpc_endpoint: string;
-  bundler_endpoint: string;
+  alpen_sequencer: string;
+  alpen_rpc: string;
+  alpen_bundler: string;
+  strata_sequencer: string;
+  strata_rpc: string;
 };
 
 const fetchNetworkStatus = async (baseUrl: string): Promise<NetworkStatus> => {

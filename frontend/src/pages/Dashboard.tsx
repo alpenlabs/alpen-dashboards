@@ -102,20 +102,32 @@ export default function Dashboard() {
               {isLoading ? (
                 <p className="loading-text">Loading...</p>
               ) : (
-                <div className="status-cards">
-                  <StatusCard
-                    title="Sequencer status"
-                    status={data?.sequencer.toUpperCase() ?? 'Unknown'}
-                  />
-                  <StatusCard
-                    title="RPC endpoint status"
-                    status={data?.rpc_endpoint.toUpperCase() ?? 'Unknown'}
-                  />
-                  <StatusCard
-                    title="Bundler endpoint status"
-                    status={data?.bundler_endpoint.toUpperCase() ?? 'Unknown'}
-                  />
-                </div>
+                <>
+                  <div className="status-cards">
+                    <StatusCard
+                      title="Alpen sequencer"
+                      status={data?.alpen_sequencer.toUpperCase() ?? 'Unknown'}
+                    />
+                    <StatusCard
+                      title="Alpen RPC"
+                      status={data?.alpen_rpc.toUpperCase() ?? 'Unknown'}
+                    />
+                    <StatusCard
+                      title="Alpen bundler"
+                      status={data?.alpen_bundler.toUpperCase() ?? 'Unknown'}
+                    />
+                  </div>
+                  <div className="status-cards status-cards-centered">
+                    <StatusCard
+                      title="Strata sequencer"
+                      status={data?.strata_sequencer.toUpperCase() ?? 'Unknown'}
+                    />
+                    <StatusCard
+                      title="Strata RPC"
+                      status={data?.strata_rpc.toUpperCase() ?? 'Unknown'}
+                    />
+                  </div>
+                </>
               )}
             </Suspense>
           </div>

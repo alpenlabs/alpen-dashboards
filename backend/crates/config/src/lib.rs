@@ -54,6 +54,9 @@ const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
+/// Default timeout for bundler health check requests in seconds.
+const DEFAULT_BUNDLER_REQUEST_TIMEOUT_S: u64 = 5;
+
 /// Default time a network status request waits for the first poll result.
 const DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 5;
 
@@ -65,6 +68,9 @@ const DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE: usize = 1_000;
 
 fn default_esplora_request_timeout_s() -> u64 {
     DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+fn default_bundler_request_timeout_s() -> u64 {
+    DEFAULT_BUNDLER_REQUEST_TIMEOUT_S
 }
 fn default_network_initial_status_wait_timeout_s() -> u64 {
     DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S
@@ -79,14 +85,24 @@ fn default_withdrawal_pairing_batch_size() -> usize {
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkMonitoringConfig {
-    /// JSON-RPC Endpoint for Strata sequencer
-    sequencer_url: String,
+    /// JSON-RPC endpoint for the Alpen sequencer
+    alpen_sequencer_url: String,
 
-    /// JSON-RPC Endpoint for Strata client and reth
-    rpc_url: String,
+    /// Public JSON-RPC endpoint for Alpen
+    alpen_rpc_url: String,
+
+    /// JSON-RPC endpoint for the Strata sequencer
+    strata_sequencer_url: String,
+
+    /// Public JSON-RPC endpoint for Strata
+    strata_rpc_url: String,
 
     /// Bundler health check URL
     bundler_url: String,
+
+    /// Timeout for bundler health check requests in seconds.
+    #[serde(default = "default_bundler_request_timeout_s")]
+    bundler_request_timeout_s: u64,
 
     /// Max retries for status queries
     retry_policy_max_retries: u64,
@@ -103,16 +119,28 @@ pub struct NetworkMonitoringConfig {
 }
 
 impl NetworkMonitoringConfig {
-    pub fn sequencer_url(&self) -> &str {
-        &self.sequencer_url
+    pub fn alpen_sequencer_url(&self) -> &str {
+        &self.alpen_sequencer_url
     }
 
-    pub fn rpc_url(&self) -> &str {
-        &self.rpc_url
+    pub fn alpen_rpc_url(&self) -> &str {
+        &self.alpen_rpc_url
+    }
+
+    pub fn strata_sequencer_url(&self) -> &str {
+        &self.strata_sequencer_url
+    }
+
+    pub fn strata_rpc_url(&self) -> &str {
+        &self.strata_rpc_url
     }
 
     pub fn bundler_url(&self) -> &str {
         &self.bundler_url
+    }
+
+    pub fn bundler_request_timeout_s(&self) -> u64 {
+        self.bundler_request_timeout_s
     }
 
     pub fn status_refetch_interval(&self) -> u64 {
@@ -123,17 +151,8 @@ impl NetworkMonitoringConfig {
         self.initial_status_wait_timeout_s
     }
 
-    /// Retry policy for sequencer status queries
-    pub fn sequencer_retry_policy(&self) -> ExponentialBackoff {
-        ExponentialBackoff::new(
-            self.retry_policy_max_retries,
-            self.retry_policy_total_time_s,
-            DEFAULT_RETRY_POLICY_BASE,
-        )
-    }
-
-    /// Retry policy for RPC endpoint status queries
-    pub fn rpc_retry_policy(&self) -> ExponentialBackoff {
+    /// Retry policy for status queries
+    pub fn retry_policy(&self) -> ExponentialBackoff {
         ExponentialBackoff::new(
             self.retry_policy_max_retries,
             self.retry_policy_total_time_s,
@@ -461,8 +480,10 @@ host = "0.0.0.0"
 port = 3000
 
 [network]
-sequencer_url = "https://strata.testnet.alpenlabs.io"
-rpc_url = "https://alpen.testnet.alpenlabs.io"
+alpen_sequencer_url = "https://alpen.testnet.alpenlabs.io"
+alpen_rpc_url = "https://alpen.testnet.alpenlabs.io"
+strata_sequencer_url = "https://strata.testnet.alpenlabs.io"
+strata_rpc_url = "https://strata.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
 retry_policy_max_retries = 5
 retry_policy_total_time_s = 60
@@ -544,8 +565,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -602,8 +625,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = "https://sequencer.example.com"
-rpc_url = "https://rpc.example.com"
+alpen_sequencer_url = "https://alpen-sequencer.example.com"
+alpen_rpc_url = "https://alpen-rpc.example.com"
+strata_sequencer_url = "https://strata-sequencer.example.com"
+strata_rpc_url = "https://strata-rpc.example.com"
 bundler_url = "https://bundler.example.com/health"
 retry_policy_max_retries = 3
 retry_policy_total_time_s = 30
@@ -663,8 +688,20 @@ withdrawal_denomination_sats = 100000000
         assert_eq!(config.server.host(), "127.0.0.1");
         assert_eq!(config.server.port(), 8080);
         assert_eq!(
-            config.network.sequencer_url(),
-            "https://sequencer.example.com"
+            config.network.alpen_sequencer_url(),
+            "https://alpen-sequencer.example.com"
+        );
+        assert_eq!(
+            config.network.alpen_rpc_url(),
+            "https://alpen-rpc.example.com"
+        );
+        assert_eq!(
+            config.network.strata_sequencer_url(),
+            "https://strata-sequencer.example.com"
+        );
+        assert_eq!(
+            config.network.strata_rpc_url(),
+            "https://strata-rpc.example.com"
         );
         assert_eq!(config.network.status_refetch_interval(), 5);
         assert_eq!(config.network.initial_status_wait_timeout_s(), 4);
@@ -746,8 +783,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -795,8 +834,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -841,8 +882,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
