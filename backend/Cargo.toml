@@ -21,34 +21,34 @@
     status-utils   = { path = "crates/utils" }
     status-wallets = { path = "crates/wallets" }
 
-    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.1" }
-    strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.1" }
+    alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
+    strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.4" }
     strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
       "client",
-    ], tag = "v0.3.0-rc.1" }
-    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.1" }
-    strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.1" }
+    ], tag = "v0.3.0-rc.4" }
+    strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
+    strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
     typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 
     # External
-    alloy-primitives = { version = "1.4.1", features = [ "serde" ] }
+    alloy-primitives = { version = "1.6.1", features = [ "serde" ] }
     alloy-sol-types = { version = "1.4.1" }
-    anyhow = { version = "1" }
+    anyhow = { version = "1.0.104" }
     async-trait = { version = "0.1" }
     axum = { version = "0.8" }
-    bitcoin = { version = "0.32.8", features = [ "serde" ] }
+    bitcoin = { version = "0.32.102", features = [ "serde" ] }
     hex = { version = "0.4" }
     jsonrpsee = { version = "0.26", features = [ "http-client" ] }
     reqwest = { version = "0.13.3", features = [ "json" ] }
     serde = { version = "1", features = [ "derive" ] }
-    serde_json = { version = "1.0", default-features = false, features = [
+    serde_json = { version = "1.0.151", default-features = false, features = [
       "alloc",
       "raw_value",
     ] }
     sled = { version = "0.34" }
-    thiserror = { version = "2" }
-    tokio = { version = "1.52.1", features = [ "macros", "rt-multi-thread" ] }
-    toml = { version = "1.1.2" }
+    thiserror = { version = "2.0.19" }
+    tokio = { version = "1.53.1", features = [ "macros", "rt-multi-thread" ] }
+    toml = { version = "1.1.3" }
     tower-http = { version = "0.7", features = [ "cors" ] }
     tracing = { version = "0.1" }
     tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
