@@ -72,14 +72,16 @@ main {
 
 .sidebar {
   width: 15%;
-  min-height: 120vh;
+  /* Capped at one viewport (minus the 20px vertical padding) so it has room to
+     stick — a sidebar stretched to the content height cannot scroll. */
+  height: calc(100vh - 40px);
   padding: 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   margin: 0;
-  position: relative;
-  border-right: 0.5px solid #ececec;
+  position: sticky;
+  top: 0;
 }
 
 .hamburger {
@@ -106,14 +108,25 @@ main {
 .content {
   flex-grow: 1;
   padding: 40px;
+  /* Divider moved off .sidebar, whose border now stops at the fold. */
+  border-left: 0.5px solid #ececec;
 }
 
 .navbar-menu-wrapper {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem;
+  flex: 1;
+  width: 100%;
   padding-top: 100px;
+}
+
+.primary-nav-links,
+.external-nav-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
 
 .menu {
@@ -121,6 +134,11 @@ main {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.external-nav-links {
+  margin-top: auto;
+  padding-bottom: 30px;
 }
 
 .menu-item {
@@ -193,11 +211,17 @@ main {
 
   .sidebar {
     width: 100%;
-    min-height: auto;
+    height: auto;
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
     padding: 10px 16px;
+    /* Opaque so scrolled content does not show through the pinned bar */
+    background-color: white;
+  }
+
+  .content {
+    border-left: none;
   }
 
   .logo-wrapper {
@@ -254,6 +278,7 @@ main {
     display: none;
     flex-direction: column;
     align-items: center;
+    flex: none;
     position: absolute;
     top: 50px;
     right: 0px;
@@ -262,6 +287,13 @@ main {
     z-index: 10;
     padding: 20px 0;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+
+  .external-nav-links {
+    /* Wider than the ~2rem between links inside a group, so the external links
+       read as a separate set rather than a continuation of the page links. */
+    margin-top: 2.5rem;
+    padding-bottom: 0;
   }
 
   .navbar-menu-wrapper.show-menu {
