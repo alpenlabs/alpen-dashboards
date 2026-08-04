@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import '../styles/network.css';
 
