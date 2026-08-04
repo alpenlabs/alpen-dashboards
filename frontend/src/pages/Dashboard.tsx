@@ -1,11 +1,17 @@
 import { lazy, Suspense, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import '../styles/network.css';
 
 const StatusCard = lazy(() => import('../components/StatusCard'));
 const Bridge = lazy(() => import('./Bridge'));
 const Balances = lazy(() => import('./Balances'));
+
+const externalNavLinks = [
+  { label: 'Home', href: 'https://alpen.org/' },
+  { label: 'Documentation', href: 'https://docs.alpen.org/' },
+  { label: 'Blog', href: 'https://alpenlabs.io/blog' },
+];
 
 export default function Dashboard() {
   const [isMenuOpen, setMenuOpen] = useState(false);
@@ -41,29 +47,49 @@ export default function Dashboard() {
         </div>
 
         {/* Responsive menu dropdown (mobile) */}
-        <div className={`navbar-menu-wrapper ${isMenuOpen ? 'show-menu' : ''}`}>
-          <Link
-            to="/"
-            className={`menu-item ${pathname === '/' ? 'active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Network
-          </Link>
-          <Link
-            to="/bridge"
-            className={`menu-item ${pathname === '/bridge' ? 'active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Bridge
-          </Link>
-          <Link
-            to="/balances"
-            className={`menu-item ${pathname === '/balances' ? 'active' : ''}`}
-            onClick={() => setMenuOpen(false)}
-          >
-            Balances
-          </Link>
-        </div>
+        <nav
+          className={`navbar-menu-wrapper ${isMenuOpen ? 'show-menu' : ''}`}
+          aria-label="Dashboard navigation"
+        >
+          <div className="primary-nav-links">
+            <Link
+              to="/"
+              className={`menu-item ${pathname === '/' ? 'active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Network
+            </Link>
+            <Link
+              to="/bridge"
+              className={`menu-item ${pathname === '/bridge' ? 'active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Bridge
+            </Link>
+            <Link
+              to="/balances"
+              className={`menu-item ${pathname === '/balances' ? 'active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              Balances
+            </Link>
+          </div>
+
+          <div className="external-nav-links">
+            {externalNavLinks.map(link => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="menu-item"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMenuOpen(false)}
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+        </nav>
       </div>
 
       <div className="content">
