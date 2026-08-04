@@ -351,15 +351,48 @@ impl FaucetBalanceConfig {
     }
 }
 
+/// Wallet addresses monitored for a single bridge operator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BridgeOperatorBalance {
+    /// Display name of the bridge operator.
+    name: String,
+
+    /// Public key of the bridge operator.
+    public_key: String,
+
+    /// General wallet address.
+    general_address: String,
+
+    /// Stake chain wallet address.
+    stake_chain_address: String,
+}
+
+impl BridgeOperatorBalance {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+
+    pub fn general_address(&self) -> &str {
+        &self.general_address
+    }
+
+    pub fn stake_chain_address(&self) -> &str {
+        &self.stake_chain_address
+    }
+}
+
 /// Configuration for bridge operator balance monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BridgeOperatorConfig {
     /// Esplora API URL.
     esplora_url: String,
-    /// General wallet addresses as `(public_key, address)` tuples.
-    general_addresses: Vec<(String, String)>,
-    /// Stake chain wallet addresses as `(public_key, address)` tuples.
-    stake_chain_addresses: Vec<(String, String)>,
+
+    /// Operators whose wallet balances are monitored.
+    operators: Vec<BridgeOperatorBalance>,
 }
 
 impl BridgeOperatorConfig {
@@ -368,14 +401,9 @@ impl BridgeOperatorConfig {
         &self.esplora_url
     }
 
-    /// Returns the general wallet addresses.
-    pub fn general_addresses(&self) -> &Vec<(String, String)> {
-        &self.general_addresses
-    }
-
-    /// Returns the stake chain wallet addresses.
-    pub fn stake_chain_addresses(&self) -> &Vec<(String, String)> {
-        &self.stake_chain_addresses
+    /// Returns the monitored operators.
+    pub fn operators(&self) -> &[BridgeOperatorBalance] {
+        &self.operators
     }
 }
 
@@ -384,8 +412,10 @@ impl BridgeOperatorConfig {
 pub struct BalanceMonitoringConfig {
     /// Faucet balance monitoring configuration.
     faucet: FaucetBalanceConfig,
+
     /// Bridge operator balance monitoring configuration.
     bridge_operators: BridgeOperatorConfig,
+
     /// Refresh interval in seconds.
     refresh_interval_s: u64,
 }
@@ -526,12 +556,12 @@ l2_url = "https://faucet.example.com/balance/l2"
 
 [balance.bridge_operators]
 esplora_url = "https://esplora.testnet.alpenlabs.io"
-general_addresses = [
-    ["02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"]
-]
-stake_chain_addresses = [
-    ["02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"]
-]
+
+[[balance.bridge_operators.operators]]
+name = "Operator 1"
+public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+general_address = "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
+stake_chain_address = "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
 
 [withdrawal_indexer]
 eth_rpc_url = "https://alpen.testnet.alpenlabs.io"
@@ -589,8 +619,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = ""
@@ -662,14 +691,18 @@ l2_url = "https://faucet-api.testnet.alpenlabs.io/balance/l2"
 
 [balance.bridge_operators]
 esplora_url = "https://esplora.testnet.alpenlabs.io"
-general_addresses = [
-    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"],
-    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj"]
-]
-stake_chain_addresses = [
-    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"],
-    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg"]
-]
+
+[[balance.bridge_operators.operators]]
+name = "Operator 1"
+public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
+general_address = "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
+stake_chain_address = "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
+
+[[balance.bridge_operators.operators]]
+name = "Operator 2"
+public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
+general_address = "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj"
+stake_chain_address = "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg"
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -743,22 +776,18 @@ withdrawal_denomination_sats = 100000000
             config.balance().bridge_operators().esplora_url(),
             "https://esplora.testnet.alpenlabs.io"
         );
+        let balance_operators = config.balance().bridge_operators().operators();
+        assert_eq!(balance_operators.len(), 2);
+        assert_eq!(balance_operators[0].name(), "Operator 1");
         assert_eq!(
-            config
-                .balance()
-                .bridge_operators()
-                .general_addresses()
-                .len(),
-            2
+            balance_operators[0].general_address(),
+            "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
         );
         assert_eq!(
-            config
-                .balance()
-                .bridge_operators()
-                .stake_chain_addresses()
-                .len(),
-            2
+            balance_operators[0].stake_chain_address(),
+            "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
         );
+        assert_eq!(balance_operators[1].name(), "Operator 2");
         assert_eq!(
             config.withdrawal_indexer().eth_rpc_url(),
             "https://rpc.example.com"
@@ -810,8 +839,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -861,8 +889,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -906,8 +933,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
