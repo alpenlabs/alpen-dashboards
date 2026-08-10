@@ -70,7 +70,7 @@ async fn call_json_rpc_status(
 }
 
 /// Calls the OL `strata_getChainStatus` method.
-async fn call_sequencer_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+async fn call_chain_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
     call_json_rpc_status(
         client,
         STRATA_CHAIN_STATUS_METHOD,
@@ -81,7 +81,7 @@ async fn call_sequencer_status(client: &HttpClient, retry_policy: ExponentialBac
 }
 
 /// Calls the EVM `eth_blockNumber` method.
-async fn call_rpc_endpoint_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+async fn call_eth_block_number(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
     call_json_rpc_status(
         client,
         ETH_BLOCK_NUMBER_METHOD,
@@ -106,6 +106,56 @@ async fn check_bundler_health(
     Status::Offline
 }
 
+/// Clients for the monitored network endpoints, built once per monitoring task.
+struct NetworkClients {
+    alpen_sequencer: HttpClient,
+    alpen_rpc: HttpClient,
+    strata_sequencer: HttpClient,
+    strata_rpc: HttpClient,
+    bundler: reqwest::Client,
+}
+
+impl NetworkClients {
+    fn new(config: &NetworkMonitoringConfig) -> Self {
+        Self {
+            alpen_sequencer: create_rpc_client(config.alpen_sequencer_url()),
+            alpen_rpc: create_rpc_client(config.alpen_rpc_url()),
+            strata_sequencer: create_rpc_client(config.strata_sequencer_url()),
+            strata_rpc: create_rpc_client(config.strata_rpc_url()),
+            // `reqwest` applies no timeout by default, and a poll only completes
+            // once every check has, so an unbounded request would stall the
+            // whole monitoring loop.
+            bundler: reqwest::Client::builder()
+                .timeout(Duration::from_secs(config.bundler_request_timeout_s()))
+                .build()
+                .expect("failed to build bundler HTTP client"),
+        }
+    }
+}
+
+/// Queries every monitored endpoint once, concurrently, returning when all
+/// checks have finished.
+async fn poll_network_status(
+    clients: &NetworkClients,
+    config: &NetworkMonitoringConfig,
+) -> NetworkStatus {
+    let (alpen_sequencer, alpen_rpc, strata_sequencer, strata_rpc, alpen_bundler) = tokio::join!(
+        call_eth_block_number(&clients.alpen_sequencer, config.retry_policy()),
+        call_eth_block_number(&clients.alpen_rpc, config.retry_policy()),
+        call_chain_status(&clients.strata_sequencer, config.retry_policy()),
+        call_chain_status(&clients.strata_rpc, config.retry_policy()),
+        check_bundler_health(&clients.bundler, config),
+    );
+
+    NetworkStatus {
+        alpen_sequencer,
+        alpen_rpc,
+        alpen_bundler,
+        strata_sequencer,
+        strata_rpc,
+    }
+}
+
 /// Periodically polls configured network service endpoints and updates status state.
 pub async fn network_monitoring_task(
     context: Arc<NetworkMonitoringContext>,
@@ -115,9 +165,7 @@ pub async fn network_monitoring_task(
     let mut interval = interval(Duration::from_secs(
         context.config().status_refetch_interval(),
     ));
-    let sequencer_client = create_rpc_client(context.config().sequencer_url());
-    let rpc_client = create_rpc_client(context.config().rpc_url());
-    let http_client = reqwest::Client::new();
+    let clients = NetworkClients::new(context.config());
 
     loop {
         tokio::select! {
@@ -125,14 +173,7 @@ pub async fn network_monitoring_task(
             _ = interval.tick() => {}
         }
 
-        let sequencer =
-            call_sequencer_status(&sequencer_client, context.config().sequencer_retry_policy())
-                .await;
-        let rpc_endpoint =
-            call_rpc_endpoint_status(&rpc_client, context.config().rpc_retry_policy()).await;
-        let bundler_endpoint = check_bundler_health(&http_client, context.config()).await;
-
-        let new_status = NetworkStatus::new(sequencer, rpc_endpoint, bundler_endpoint);
+        let new_status = poll_network_status(&clients, context.config()).await;
 
         info!(?new_status, "updated network status");
 

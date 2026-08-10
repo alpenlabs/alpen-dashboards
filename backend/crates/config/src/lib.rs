@@ -54,6 +54,9 @@ const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
+/// Default timeout for bundler health check requests in seconds.
+const DEFAULT_BUNDLER_REQUEST_TIMEOUT_S: u64 = 5;
+
 /// Default time a network status request waits for the first poll result.
 const DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 5;
 
@@ -65,6 +68,9 @@ const DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE: usize = 1_000;
 
 fn default_esplora_request_timeout_s() -> u64 {
     DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+fn default_bundler_request_timeout_s() -> u64 {
+    DEFAULT_BUNDLER_REQUEST_TIMEOUT_S
 }
 fn default_network_initial_status_wait_timeout_s() -> u64 {
     DEFAULT_NETWORK_INITIAL_STATUS_WAIT_TIMEOUT_S
@@ -79,14 +85,24 @@ fn default_withdrawal_pairing_batch_size() -> usize {
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkMonitoringConfig {
-    /// JSON-RPC Endpoint for Strata sequencer
-    sequencer_url: String,
+    /// JSON-RPC endpoint for the Alpen sequencer
+    alpen_sequencer_url: String,
 
-    /// JSON-RPC Endpoint for Strata client and reth
-    rpc_url: String,
+    /// Public JSON-RPC endpoint for Alpen
+    alpen_rpc_url: String,
+
+    /// JSON-RPC endpoint for the Strata sequencer
+    strata_sequencer_url: String,
+
+    /// Public JSON-RPC endpoint for Strata
+    strata_rpc_url: String,
 
     /// Bundler health check URL
     bundler_url: String,
+
+    /// Timeout for bundler health check requests in seconds.
+    #[serde(default = "default_bundler_request_timeout_s")]
+    bundler_request_timeout_s: u64,
 
     /// Max retries for status queries
     retry_policy_max_retries: u64,
@@ -103,16 +119,28 @@ pub struct NetworkMonitoringConfig {
 }
 
 impl NetworkMonitoringConfig {
-    pub fn sequencer_url(&self) -> &str {
-        &self.sequencer_url
+    pub fn alpen_sequencer_url(&self) -> &str {
+        &self.alpen_sequencer_url
     }
 
-    pub fn rpc_url(&self) -> &str {
-        &self.rpc_url
+    pub fn alpen_rpc_url(&self) -> &str {
+        &self.alpen_rpc_url
+    }
+
+    pub fn strata_sequencer_url(&self) -> &str {
+        &self.strata_sequencer_url
+    }
+
+    pub fn strata_rpc_url(&self) -> &str {
+        &self.strata_rpc_url
     }
 
     pub fn bundler_url(&self) -> &str {
         &self.bundler_url
+    }
+
+    pub fn bundler_request_timeout_s(&self) -> u64 {
+        self.bundler_request_timeout_s
     }
 
     pub fn status_refetch_interval(&self) -> u64 {
@@ -123,17 +151,8 @@ impl NetworkMonitoringConfig {
         self.initial_status_wait_timeout_s
     }
 
-    /// Retry policy for sequencer status queries
-    pub fn sequencer_retry_policy(&self) -> ExponentialBackoff {
-        ExponentialBackoff::new(
-            self.retry_policy_max_retries,
-            self.retry_policy_total_time_s,
-            DEFAULT_RETRY_POLICY_BASE,
-        )
-    }
-
-    /// Retry policy for RPC endpoint status queries
-    pub fn rpc_retry_policy(&self) -> ExponentialBackoff {
+    /// Retry policy for status queries
+    pub fn retry_policy(&self) -> ExponentialBackoff {
         ExponentialBackoff::new(
             self.retry_policy_max_retries,
             self.retry_policy_total_time_s,
@@ -332,15 +351,48 @@ impl FaucetBalanceConfig {
     }
 }
 
+/// Wallet addresses monitored for a single bridge operator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BridgeOperatorBalance {
+    /// Display name of the bridge operator.
+    name: String,
+
+    /// Public key of the bridge operator.
+    public_key: String,
+
+    /// General wallet address.
+    general_address: String,
+
+    /// Stake chain wallet address.
+    stake_chain_address: String,
+}
+
+impl BridgeOperatorBalance {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn public_key(&self) -> &str {
+        &self.public_key
+    }
+
+    pub fn general_address(&self) -> &str {
+        &self.general_address
+    }
+
+    pub fn stake_chain_address(&self) -> &str {
+        &self.stake_chain_address
+    }
+}
+
 /// Configuration for bridge operator balance monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BridgeOperatorConfig {
     /// Esplora API URL.
     esplora_url: String,
-    /// General wallet addresses as `(public_key, address)` tuples.
-    general_addresses: Vec<(String, String)>,
-    /// Stake chain wallet addresses as `(public_key, address)` tuples.
-    stake_chain_addresses: Vec<(String, String)>,
+
+    /// Operators whose wallet balances are monitored.
+    operators: Vec<BridgeOperatorBalance>,
 }
 
 impl BridgeOperatorConfig {
@@ -349,14 +401,9 @@ impl BridgeOperatorConfig {
         &self.esplora_url
     }
 
-    /// Returns the general wallet addresses.
-    pub fn general_addresses(&self) -> &Vec<(String, String)> {
-        &self.general_addresses
-    }
-
-    /// Returns the stake chain wallet addresses.
-    pub fn stake_chain_addresses(&self) -> &Vec<(String, String)> {
-        &self.stake_chain_addresses
+    /// Returns the monitored operators.
+    pub fn operators(&self) -> &[BridgeOperatorBalance] {
+        &self.operators
     }
 }
 
@@ -365,8 +412,10 @@ impl BridgeOperatorConfig {
 pub struct BalanceMonitoringConfig {
     /// Faucet balance monitoring configuration.
     faucet: FaucetBalanceConfig,
+
     /// Bridge operator balance monitoring configuration.
     bridge_operators: BridgeOperatorConfig,
+
     /// Refresh interval in seconds.
     refresh_interval_s: u64,
 }
@@ -461,8 +510,10 @@ host = "0.0.0.0"
 port = 3000
 
 [network]
-sequencer_url = "https://strata.testnet.alpenlabs.io"
-rpc_url = "https://alpen.testnet.alpenlabs.io"
+alpen_sequencer_url = "https://alpen.testnet.alpenlabs.io"
+alpen_rpc_url = "https://alpen.testnet.alpenlabs.io"
+strata_sequencer_url = "https://strata.testnet.alpenlabs.io"
+strata_rpc_url = "https://strata.testnet.alpenlabs.io"
 bundler_url = "https://bundler.testnet.alpenlabs.io/health"
 retry_policy_max_retries = 5
 retry_policy_total_time_s = 60
@@ -505,12 +556,12 @@ l2_url = "https://faucet.example.com/balance/l2"
 
 [balance.bridge_operators]
 esplora_url = "https://esplora.testnet.alpenlabs.io"
-general_addresses = [
-    ["02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"]
-]
-stake_chain_addresses = [
-    ["02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"]
-]
+
+[[balance.bridge_operators.operators]]
+name = "Operator 1"
+public_key = "02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+general_address = "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
+stake_chain_address = "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
 
 [withdrawal_indexer]
 eth_rpc_url = "https://alpen.testnet.alpenlabs.io"
@@ -544,8 +595,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -566,8 +619,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = ""
@@ -602,8 +654,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = "https://sequencer.example.com"
-rpc_url = "https://rpc.example.com"
+alpen_sequencer_url = "https://alpen-sequencer.example.com"
+alpen_rpc_url = "https://alpen-rpc.example.com"
+strata_sequencer_url = "https://strata-sequencer.example.com"
+strata_rpc_url = "https://strata-rpc.example.com"
 bundler_url = "https://bundler.example.com/health"
 retry_policy_max_retries = 3
 retry_policy_total_time_s = 30
@@ -637,14 +691,18 @@ l2_url = "https://faucet-api.testnet.alpenlabs.io/balance/l2"
 
 [balance.bridge_operators]
 esplora_url = "https://esplora.testnet.alpenlabs.io"
-general_addresses = [
-    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"],
-    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj"]
-]
-stake_chain_addresses = [
-    ["0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0", "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"],
-    ["026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f", "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg"]
-]
+
+[[balance.bridge_operators.operators]]
+name = "Operator 1"
+public_key = "0273441f2ba801b557b23c15829f4a87c02332d59a71499da1479048e6175ff4e0"
+general_address = "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
+stake_chain_address = "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
+
+[[balance.bridge_operators.operators]]
+name = "Operator 2"
+public_key = "026bc16ede3b4b30edd4b59ab3a7209de21b468508349983e17a08910ec7a82f5f"
+general_address = "tb1pkyy0wrpgjhtjtga6nh8jx9qq9l3vns3jcywyvyh3ms9p20f7zyfskvnvsj"
+stake_chain_address = "tb1pa042m8jz7622qdvydakxj3ufrhxsg7wlc6kp2rnzkld3t92rcghsdtg6wg"
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -663,8 +721,20 @@ withdrawal_denomination_sats = 100000000
         assert_eq!(config.server.host(), "127.0.0.1");
         assert_eq!(config.server.port(), 8080);
         assert_eq!(
-            config.network.sequencer_url(),
-            "https://sequencer.example.com"
+            config.network.alpen_sequencer_url(),
+            "https://alpen-sequencer.example.com"
+        );
+        assert_eq!(
+            config.network.alpen_rpc_url(),
+            "https://alpen-rpc.example.com"
+        );
+        assert_eq!(
+            config.network.strata_sequencer_url(),
+            "https://strata-sequencer.example.com"
+        );
+        assert_eq!(
+            config.network.strata_rpc_url(),
+            "https://strata-rpc.example.com"
         );
         assert_eq!(config.network.status_refetch_interval(), 5);
         assert_eq!(config.network.initial_status_wait_timeout_s(), 4);
@@ -706,22 +776,18 @@ withdrawal_denomination_sats = 100000000
             config.balance().bridge_operators().esplora_url(),
             "https://esplora.testnet.alpenlabs.io"
         );
+        let balance_operators = config.balance().bridge_operators().operators();
+        assert_eq!(balance_operators.len(), 2);
+        assert_eq!(balance_operators[0].name(), "Operator 1");
         assert_eq!(
-            config
-                .balance()
-                .bridge_operators()
-                .general_addresses()
-                .len(),
-            2
+            balance_operators[0].general_address(),
+            "tb1p9e8cemc7q7emc0s0gklwrlpl4jjh98en95as4pka35t0luv4dhjsdn098l"
         );
         assert_eq!(
-            config
-                .balance()
-                .bridge_operators()
-                .stake_chain_addresses()
-                .len(),
-            2
+            balance_operators[0].stake_chain_address(),
+            "tb1p22v50hp20j5644m88yjs7de3mn5ju7llw44hc6gtqfr2nsu35nkqn2n4qq"
         );
+        assert_eq!(balance_operators[1].name(), "Operator 2");
         assert_eq!(
             config.withdrawal_indexer().eth_rpc_url(),
             "https://rpc.example.com"
@@ -746,8 +812,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -771,8 +839,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -795,8 +862,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -820,8 +889,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"
@@ -841,8 +909,10 @@ host = "127.0.0.1"
 port = 8080
 
 [network]
-sequencer_url = ""
-rpc_url = ""
+alpen_sequencer_url = ""
+alpen_rpc_url = ""
+strata_sequencer_url = ""
+strata_rpc_url = ""
 bundler_url = ""
 retry_policy_max_retries = 0
 retry_policy_total_time_s = 0
@@ -863,8 +933,7 @@ l2_url = ""
 
 [balance.bridge_operators]
 esplora_url = ""
-general_addresses = []
-stake_chain_addresses = []
+operators = []
 
 [withdrawal_indexer]
 eth_rpc_url = "https://rpc.example.com"

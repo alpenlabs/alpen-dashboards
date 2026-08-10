@@ -14,27 +14,21 @@ pub(crate) enum Status {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct NetworkStatus {
-    sequencer: Status,
-    rpc_endpoint: Status,
-    bundler_endpoint: Status,
+    pub(crate) alpen_sequencer: Status,
+    pub(crate) alpen_rpc: Status,
+    pub(crate) alpen_bundler: Status,
+    pub(crate) strata_sequencer: Status,
+    pub(crate) strata_rpc: Status,
 }
 
 impl Default for NetworkStatus {
     fn default() -> Self {
         Self {
-            sequencer: Status::Offline,
-            rpc_endpoint: Status::Offline,
-            bundler_endpoint: Status::Offline,
-        }
-    }
-}
-
-impl NetworkStatus {
-    pub(crate) fn new(sequencer: Status, rpc_endpoint: Status, bundler_endpoint: Status) -> Self {
-        Self {
-            sequencer,
-            rpc_endpoint,
-            bundler_endpoint,
+            alpen_sequencer: Status::Offline,
+            alpen_rpc: Status::Offline,
+            alpen_bundler: Status::Offline,
+            strata_sequencer: Status::Offline,
+            strata_rpc: Status::Offline,
         }
     }
 }
@@ -108,8 +102,10 @@ mod tests {
     fn test_config() -> NetworkMonitoringConfig {
         toml::from_str(
             r#"
-            sequencer_url = "http://localhost:8545"
-            rpc_url = "http://localhost:8546"
+            alpen_sequencer_url = "http://localhost:8545"
+            alpen_rpc_url = "http://localhost:8546"
+            strata_sequencer_url = "http://localhost:8432"
+            strata_rpc_url = "http://localhost:8433"
             bundler_url = "http://localhost:3000/health"
             retry_policy_max_retries = 1
             retry_policy_total_time_s = 1

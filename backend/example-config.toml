@@ -8,87 +8,95 @@ datadir = "data"
 
 # Network monitoring configuration
 [network]
-  bundler_url                   = "https://bundler-staging.testnet-v2.alpenlabs.io/health"
+  alpen_rpc_url                 = "https://alpen.testnet.alpen.org"
+  alpen_sequencer_url           = "http://localhost:56917/"
+  bundler_url                   = "https://bundler.testnet.alpen.org/health"
   initial_status_wait_timeout_s = 30
   retry_policy_max_retries      = 5
   retry_policy_total_time_s     = 60
-  rpc_url                       = "https://alpen-staging.testnet-v2.alpenlabs.io"
-  sequencer_url                 = "https://strata-staging.testnet-v2.alpenlabs.io"
   status_refetch_interval_s     = 10
+  strata_rpc_url                = "https://strata.testnet.alpen.org"
+  strata_sequencer_url          = "http://localhost:56790/"
 
 # Bridge monitoring configuration
 [bridge]
   esplora_request_timeout_s     = 5
-  esplora_url                   = "https://esplora-staging.testnet-v2.alpenlabs.io"
+  esplora_url                   = "https://esplora.testnet-prod.alpenlabs.io"
   initial_status_wait_timeout_s = 5
-  max_tx_confirmations          = 6
+  max_tx_confirmations          = 18
   status_refetch_interval_s     = 120
   withdrawal_pairing_batch_size = 1_000
 
   # Bridge operators configuration
   [[bridge.operators]]
     name       = "Alpen Labs #1"
-    public_key = "02157d08fa2eb6071cef0750bcf1c0c9e94c2f05f629cdbdb3982851dce9472cd0"
-    rpc_url    = "http://localhost:54195"
+    public_key = "025a46d9052f64ad8f3a6ad65342ddead4f4f76f92ac184868ca402b8bed627cb8"
+    rpc_url    = "http://localhost:55936"
 
   [[bridge.operators]]
     name       = "Alpen Labs #2"
     public_key = "02444d7dca618168c1c4963a1556c2cab7d9172f0702cc3498dff72015717c0968"
-    rpc_url    = "http://localhost:54367"
+    rpc_url    = "http://localhost:56062"
 
   [[bridge.operators]]
     name       = "Alpen Labs #3"
     public_key = "02bff82939acd1deaeed90d6620b64ec475c6ff80a30fd07fca05315ddb1df873d"
-    rpc_url    = "http://localhost:54492"
+    rpc_url    = "http://localhost:56135"
 
   [[bridge.operators]]
-    name       = "External Operator #1"
+    name       = "Stakely"
     public_key = "02a96ec5406c02be9b6a7b254af44acf15b23b908b21619f9be583d82f943b6fb2"
+
+  [[bridge.operators]]
+    name       = "Chainflow"
+    public_key = "024fba11d351c5e3b988a938b82bf210c1e7736594f6924f8e8ebe0c462e03569b"
 
 # Balance monitoring configuration
 [balance]
   refresh_interval_s = 300
 
   [balance.faucet]
-    l1_url = "https://faucet-api-staging.testnet-v2.alpenlabs.io/balance/l1"
-    l2_url = "https://faucet-api-staging.testnet-v2.alpenlabs.io/balance/l2"
+    l1_url = "https://faucet-api.testnet-prod.alpenlabs.io/balance/l1"
+    l2_url = "https://faucet-api.testnet-prod.alpenlabs.io/balance/l2"
 
   [balance.bridge_operators]
-    esplora_url = "https://esplora-staging.testnet-v2.alpenlabs.io"
-    general_addresses = [
-      [
-        "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd",
-        "tb1phf7qfxjf7mntp8u5qma9xa20rjcaw65f5lly9h3auedghhsul7tqr7v672",
-      ],
-      [
-        "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4",
-        "tb1p2q4f3dzeekkrpq7nkr6p0tmmvuht7uu8m4s7v3a5xsmw38vk75kqva55ea",
-      ],
-      [
-        "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f",
-        "tb1pxhpgl0k5kyyua6uwh0gs49yl0zr3haqwgz8j4j8wla7rqyar9s0sene5a6",
-      ],
-    ]
-    stake_chain_addresses = [
-      [
-        "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd",
-        "tb1pgv6lntshs3mks847svugsfrugz3utp8ac8egfqqnh2tyekj8kuzqa05423",
-      ],
-      [
-        "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4",
-        "tb1pvpc0l8zyjqgy96709se9untaapqt8cww8rlxulaed3wl02a36fksdlvf23",
-      ],
-      [
-        "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f",
-        "tb1p0mgezlwnqwjlh3c02cdt3mknr77scpg2wu0eltvlxkje2erndpysc4ul2p",
-      ],
-    ]
+    esplora_url = "https://esplora.testnet-prod.alpenlabs.io"
+
+    [[balance.bridge_operators.operators]]
+      general_address     = "tb1p97xdspmgr6t7v4569dymf202wkg5y8w64ecxtckxy9de2qhuzqyslkxsns"
+      name                = "Alpen Labs #1"
+      public_key          = "025a46d9052f64ad8f3a6ad65342ddead4f4f76f92ac184868ca402b8bed627cb8"
+      stake_chain_address = "tb1pfnllxwmcx9d7w3nn5vtw5ed5tr0u0wuxq7zamuam2f0kacpe39mqaysw88"
+
+    [[balance.bridge_operators.operators]]
+      general_address     = "tb1p959drgw4v7hy9zrtv582h90h2e6rpuuk6chrwg75pz4yp6tcsu5smecjvl"
+      name                = "Alpen Labs #2"
+      public_key          = "02444d7dca618168c1c4963a1556c2cab7d9172f0702cc3498dff72015717c0968"
+      stake_chain_address = "tb1pg2u4mv98gs0a6lz2dxa8mfqfygreqgqzv92rnletqp0txw3lcggsuln5p5"
+
+    [[balance.bridge_operators.operators]]
+      general_address     = "tb1pry3qyj8p7mypgweyy2zpk6ge5vt9f5nvjlkeeg6s6g62tvusunhq7l0wal"
+      name                = "Alpen Labs #3"
+      public_key          = "02bff82939acd1deaeed90d6620b64ec475c6ff80a30fd07fca05315ddb1df873d"
+      stake_chain_address = "tb1ps7ccx3zfus5ntqxq33r98j8rvlvjd4udnduz9tsnge55e7dxnmwsp60cz8"
+
+    [[balance.bridge_operators.operators]]
+      general_address     = "tb1pnprx2whkjc9s3vy6uv5r7ysfm06vf4dg7uyjpqq6jwzgpx7t2uqqc6zcqe"
+      name                = "Stakely"
+      public_key          = "02a96ec5406c02be9b6a7b254af44acf15b23b908b21619f9be583d82f943b6fb2"
+      stake_chain_address = "tb1pywfjemn8v7qdzdflfdn2u89ymz5030cnzqfxsyem2zkekx7u5sussugjqr"
+
+    [[balance.bridge_operators.operators]]
+      general_address     = "tb1pp0jj7rsmkkcnatnnqxt9adtcavghmzts8d4r7sgszh4vtgtq65nqqzetam"
+      name                = "Chainflow"
+      public_key          = "024fba11d351c5e3b988a938b82bf210c1e7736594f6924f8e8ebe0c462e03569b"
+      stake_chain_address = "tb1pk99w4jdejv9y9gf0uh32zxrrgvdgt2encfpnkl2jp5rczt7cg3pqkw6euk"
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
   batch_size                   = 1_000
-  eth_rpc_url                  = "https://alpen-staging.testnet-v2.alpenlabs.io"
+  eth_rpc_url                  = "https://alpen.testnet.alpen.org"
   finality_lag                 = 12
   poll_interval_s              = 10
   start_block                  = 0
-  withdrawal_denomination_sats = 100_000_000
+  withdrawal_denomination_sats = 200_000_000
