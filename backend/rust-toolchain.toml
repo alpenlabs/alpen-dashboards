@@ -1,6 +1,6 @@
 [toolchain]
   # Matches alpen's pin so transitive `ruint`/`alloy` builds.
-  channel = "nightly-2026-09-01"
+  channel = "nightly-2026-07-01"
   components = [
     "cargo",
     "clippy",
