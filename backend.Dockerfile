@@ -12,13 +12,13 @@ COPY backend/crates/config/Cargo.toml ./crates/config/
 COPY backend/crates/network/Cargo.toml ./crates/network/
 COPY backend/crates/utils/Cargo.toml ./crates/utils/
 
-RUN cargo fetch
+RUN cargo fetch --locked
 
 # Copy the rest of the source code
 COPY backend .
 
 # Compile the Rust application
-RUN cargo build -p status-dashboard-backend
+RUN cargo build --locked -p status-dashboard-backend
 
 # Stage 2: Runtime
 FROM rust
