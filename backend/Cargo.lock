@@ -146,12 +146,12 @@ dependencies = [
 [[package]]
 name = "alpen-reth-primitives"
 version = "0.3.0-alpha.1"
-source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.0-rc.3#9e3d54471fda459001b2aad5d76f715982ac5d1a"
+source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.1#dfc81485d76c3643bfd67de6447891d8faff6e1d"
 dependencies = [
  "alloy-sol-types",
  "serde",
  "strata-ol-bridge-types",
- "strata-primitives",
+ "strata-primitives 0.3.0-alpha.1 (git+https://github.com/alpenlabs/alpen.git?tag=v0.3.1)",
 ]
 
 [[package]]
@@ -4232,7 +4232,7 @@ dependencies = [
  "status-utils",
  "strata-bridge-primitives",
  "strata-bridge-rpc",
- "strata-primitives",
+ "strata-primitives 0.3.0-alpha.1 (git+https://github.com/alpenlabs/alpen.git?tag=v0.3.0-rc.3)",
  "strata-tasks",
  "thiserror 2.0.19",
  "tokio",
@@ -4654,7 +4654,7 @@ dependencies = [
 [[package]]
 name = "strata-ol-bridge-types"
 version = "0.3.0-alpha.1"
-source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.0-rc.3#9e3d54471fda459001b2aad5d76f715982ac5d1a"
+source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.1#dfc81485d76c3643bfd67de6447891d8faff6e1d"
 dependencies = [
  "arbitrary",
  "borsh",
@@ -4664,7 +4664,7 @@ dependencies = [
  "strata-asm-proto-bridge-v1-types",
  "strata-codec",
  "strata-identifiers",
- "strata-primitives",
+ "strata-primitives 0.3.0-alpha.1 (git+https://github.com/alpenlabs/alpen.git?tag=v0.3.1)",
  "thiserror 2.0.19",
 ]
 
@@ -4693,6 +4693,22 @@ dependencies = [
 name = "strata-primitives"
 version = "0.3.0-alpha.1"
 source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.0-rc.3#9e3d54471fda459001b2aad5d76f715982ac5d1a"
+dependencies = [
+ "bitcoin",
+ "bitcoin-bosd 0.11.0",
+ "borsh",
+ "hex",
+ "serde",
+ "strata-btc-types",
+ "strata-crypto",
+ "strata-identifiers",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "strata-primitives"
+version = "0.3.0-alpha.1"
+source = "git+https://github.com/alpenlabs/alpen.git?tag=v0.3.1#dfc81485d76c3643bfd67de6447891d8faff6e1d"
 dependencies = [
  "bitcoin",
  "bitcoin-bosd 0.11.0",
