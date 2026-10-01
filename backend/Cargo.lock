@@ -5222,7 +5222,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 [[package]]
 name = "typed-sled"
 version = "0.1.1"
-source = "git+https://github.com/alpenlabs/typed-sled#5d6a24411a9b9635eb75d7a7eec56d75423dcb06"
+source = "git+https://github.com/alpenlabs/typed-sled#f38c9b1a88a46da0c915aecf70ffb1e80b3eda64"
 dependencies = [
  "dashmap",
  "rkyv",
