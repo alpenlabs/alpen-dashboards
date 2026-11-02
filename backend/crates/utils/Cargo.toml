@@ -8,5 +8,3 @@
 
 [dependencies]
   jsonrpsee.workspace = true
-  tokio.workspace     = true
-  tracing.workspace   = true

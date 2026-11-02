@@ -135,6 +135,11 @@ status_refetch_interval_s = 60
 initial_status_wait_timeout_s = 7
 withdrawal_pairing_batch_size = 500
 
+[bridge.retry]
+max_retries = 2
+base_delay_ms = 100
+max_delay_ms = 900
+
 [[bridge.operators]]
 name = "Operator 1"
 public_key = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
@@ -160,10 +165,20 @@ withdrawal_denomination_sats = 100000000
     }
 
     #[test]
+    fn config_example_uses_documented_bridge_retry_defaults() {
+        let config: Config = toml::from_str(include_str!("../../../example-config.toml"))
+            .expect("parse documented example config");
+        let retry = config.bridge().retry_policy();
+        assert_eq!(retry.max_retries, 3);
+        assert_eq!(retry.base_delay_ms, 2_000);
+        assert_eq!(retry.max_delay_ms, 5_000);
+    }
+
+    #[test]
     fn config_preserves_settings_across_toml_roundtrip() {
         let config = make_config();
 
-        // Serialization must preserve the same public configuration.
+        // Serialization must preserve the same public configuration, including retry overrides.
         let serialized = toml::to_string(&config).expect("serialize config");
         let restored: Config = toml::from_str(&serialized).expect("restore config");
         assert_eq!(restored, config);
@@ -185,7 +200,7 @@ withdrawal_denomination_sats = 100000000
     #[test]
     fn config_accessors_return_configured_values() {
         let config = make_config();
-        // Each public accessor must return the configured value.
+        // Each public accessor must return the configured value, including the nested retry policy.
         assert_eq!(config.datadir(), Path::new("data"));
         assert_eq!(config.server().host(), "127.0.0.1");
         assert_eq!(config.server().port(), 8080);
@@ -244,6 +259,10 @@ withdrawal_denomination_sats = 100000000
             config.withdrawal_indexer().withdrawal_denomination_sats(),
             100_000_000
         );
+        let retry = config.bridge().retry_policy();
+        assert_eq!(retry.max_retries, 2);
+        assert_eq!(retry.base_delay_ms, 100);
+        assert_eq!(retry.max_delay_ms, 900);
     }
 
     #[test]

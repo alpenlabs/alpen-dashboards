@@ -1,5 +1,6 @@
 use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
+use strata_retry::RetryConfig;
 
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
@@ -50,11 +51,20 @@ pub struct BridgeMonitoringConfig {
     #[serde(default = "default_withdrawal_pairing_batch_size")]
     withdrawal_pairing_batch_size: usize,
 
+    /// Request retry policy for bridge RPC.
+    #[serde(default)]
+    retry: BridgeRetryConfig,
+
     /// Bridge operators
     operators: Vec<BridgeOperator>,
 }
 
 impl BridgeMonitoringConfig {
+    /// Builds the bridge RPC retry policy from `[bridge.retry]` settings.
+    pub fn retry_policy(&self) -> RetryConfig {
+        self.retry.policy()
+    }
+
     pub fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
@@ -195,9 +205,98 @@ impl WithdrawalIndexerConfig {
     }
 }
 
+/// Request retry settings for bridge RPC.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct BridgeRetryConfig {
+    /// Retries after the initial request; zero disables retries.
+    max_retries: u16,
+
+    /// Delay before the first retry.
+    base_delay_ms: u64,
+
+    /// Cap applied as retry delays increase.
+    max_delay_ms: u64,
+}
+
+impl Default for BridgeRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_delay_ms: 2_000,
+            max_delay_ms: 5_000,
+        }
+    }
+}
+
+impl BridgeRetryConfig {
+    fn policy(&self) -> RetryConfig {
+        RetryConfig {
+            max_retries: self.max_retries,
+            base_delay_ms: self.base_delay_ms,
+            multiplier: 150,
+            multiplier_base: 100,
+            max_delay_ms: self.max_delay_ms,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::BridgeOperator;
+    use super::{BridgeMonitoringConfig, BridgeOperator};
+
+    fn make_bridge_config(retry_table: &str) -> BridgeMonitoringConfig {
+        toml::from_str(&format!(
+            r#"
+            esplora_url = "http://localhost:3000"
+            max_tx_confirmations = 6
+            status_refetch_interval_s = 1
+            operators = []
+            {retry_table}
+            "#
+        ))
+        .expect("parse bridge config")
+    }
+
+    #[test]
+    fn bridge_retry_uses_defaults_for_missing_or_empty_table() {
+        // Existing config files and an explicitly empty table use the same policy.
+        for table in ["", "[retry]"] {
+            let policy = make_bridge_config(table).retry_policy();
+            assert_eq!(policy.max_retries, 3);
+            assert_eq!(policy.base_delay_ms, 2_000);
+            assert_eq!(policy.max_delay_ms, 5_000);
+            assert_eq!(policy.multiplier, 150);
+            assert_eq!(policy.multiplier_base, 100);
+        }
+    }
+
+    #[test]
+    fn bridge_retry_preserves_overrides_across_config_roundtrip() {
+        let config =
+            make_bridge_config("[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900");
+        let policy = config.retry_policy();
+        assert_eq!(policy.max_retries, 2);
+        assert_eq!(policy.base_delay_ms, 100);
+        assert_eq!(policy.max_delay_ms, 900);
+        // Growth remains fixed at 1.5 while the operator controls the budget and cap.
+        assert_eq!(policy.multiplier, 150);
+        assert_eq!(policy.multiplier_base, 100);
+
+        let serialized = toml::to_string(&config).expect("serialize bridge config");
+        let restored: BridgeMonitoringConfig =
+            toml::from_str(&serialized).expect("restore bridge config");
+        assert_eq!(restored, config);
+    }
+
+    #[test]
+    fn bridge_retry_partial_override_can_disable_retries() {
+        // Zero retries still allows the initial request; omitted delay fields keep defaults.
+        let policy = make_bridge_config("[retry]\nmax_retries = 0").retry_policy();
+        assert_eq!(policy.max_retries, 0);
+        assert_eq!(policy.base_delay_ms, 2_000);
+        assert_eq!(policy.max_delay_ms, 5_000);
+    }
 
     #[test]
     fn bridge_operator_requires_name() {

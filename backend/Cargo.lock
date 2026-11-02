@@ -4239,6 +4239,7 @@ dependencies = [
  "strata-bridge-primitives",
  "strata-bridge-rpc",
  "strata-primitives",
+ "strata-retry",
  "strata-tasks",
  "thiserror 2.0.21",
  "tokio",
@@ -4254,6 +4255,7 @@ dependencies = [
  "bitcoin",
  "serde",
  "status-utils",
+ "strata-retry",
  "toml",
  "tracing",
 ]
@@ -4297,8 +4299,6 @@ name = "status-utils"
 version = "0.2.0"
 dependencies = [
  "jsonrpsee",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -4709,6 +4709,16 @@ dependencies = [
  "strata-crypto",
  "strata-identifiers",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "strata-retry"
+version = "0.3.0-alpha.1"
+source = "git+https://github.com/alpenlabs/strata-common?tag=v0.4.0#fc71f121d8990af0e56c2da436754b0b1fd304e0"
+dependencies = [
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
