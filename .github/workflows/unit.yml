@@ -37,7 +37,7 @@ jobs:
         uses: dtolnay/rust-toolchain@b95584d8105b9ab200e15821fa671848cf2b7017 # nightly
 
       - name: Install latest cargo-nextest release
-        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: nextest
 
