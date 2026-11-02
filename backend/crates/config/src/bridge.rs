@@ -53,7 +53,7 @@ pub struct BridgeMonitoringConfig {
     #[serde(default = "default_withdrawal_pairing_batch_size")]
     withdrawal_pairing_batch_size: usize,
 
-    /// Request retry policy for bridge RPC.
+    /// Request retry policy shared by bridge RPC and Esplora.
     #[serde(default)]
     retry: RequestRetryConfig,
 
@@ -62,7 +62,7 @@ pub struct BridgeMonitoringConfig {
 }
 
 impl BridgeMonitoringConfig {
-    /// Builds the bridge RPC retry policy from `[bridge.retry]` settings.
+    /// Builds the shared request retry policy from `[bridge.retry]` settings.
     pub fn retry_policy(&self) -> RetryConfig {
         self.retry.policy()
     }

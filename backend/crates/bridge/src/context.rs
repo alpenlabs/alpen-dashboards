@@ -34,8 +34,11 @@ impl BridgeMonitoringContext {
         status_db: Arc<BridgeStatusDbSled>,
     ) -> anyhow::Result<Self> {
         let bridge_rpc = RpcClientManager::new(&config);
-        let esplora_client =
-            EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
+        let esplora_client = EsploraClient::new(
+            config.esplora_url(),
+            config.esplora_request_timeout_s(),
+            config.retry_policy(),
+        );
         let snapshot = status_db
             .get_status_snapshot()
             .map_err(|e| anyhow::anyhow!("hydrate bridge status state: {e}"))?;
