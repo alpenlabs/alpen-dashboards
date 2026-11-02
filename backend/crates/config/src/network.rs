@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
-use status_utils::ExponentialBackoff;
+use strata_retry::RetryConfig;
 
-/// Default exponential growth factor for network request retries.
-const DEFAULT_RETRY_POLICY_BASE: f64 = 1.5;
+use crate::retry::RequestRetryConfig;
 
 /// Default timeout for bundler health check requests in seconds.
 const DEFAULT_BUNDLER_REQUEST_TIMEOUT_S: u64 = 5;
@@ -20,6 +19,7 @@ fn default_network_initial_status_wait_timeout_s() -> u64 {
 
 /// Configuration for network monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkMonitoringConfig {
     /// JSON-RPC endpoint for the Alpen sequencer
     alpen_sequencer_url: String,
@@ -40,11 +40,9 @@ pub struct NetworkMonitoringConfig {
     #[serde(default = "default_bundler_request_timeout_s")]
     bundler_request_timeout_s: u64,
 
-    /// Max retries for status queries
-    retry_policy_max_retries: u64,
-
-    /// Total time in seconds to spend retrying status queries
-    retry_policy_total_time_s: u64,
+    /// Request retry policy for network JSON-RPC status queries.
+    #[serde(default)]
+    retry: RequestRetryConfig,
 
     /// Network status refetch interval in seconds
     status_refetch_interval_s: u64,
@@ -87,12 +85,84 @@ impl NetworkMonitoringConfig {
         self.initial_status_wait_timeout_s
     }
 
-    /// Retry policy for status queries
-    pub fn retry_policy(&self) -> ExponentialBackoff {
-        ExponentialBackoff::new(
-            self.retry_policy_max_retries,
-            self.retry_policy_total_time_s,
-            DEFAULT_RETRY_POLICY_BASE,
-        )
+    /// Builds the request retry policy from `[network.retry]` settings.
+    pub fn retry_policy(&self) -> RetryConfig {
+        self.retry.policy()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NetworkMonitoringConfig;
+
+    fn make_network_config(retry_settings: &str) -> NetworkMonitoringConfig {
+        toml::from_str(&format!(
+            r#"
+            alpen_sequencer_url = "http://localhost:8545"
+            alpen_rpc_url = "http://localhost:8546"
+            strata_sequencer_url = "http://localhost:8432"
+            strata_rpc_url = "http://localhost:8433"
+            bundler_url = "http://localhost:3000/health"
+            status_refetch_interval_s = 1
+            {retry_settings}
+            "#
+        ))
+        .expect("parse network config")
+    }
+
+    #[test]
+    fn network_retry_uses_shared_defaults_for_missing_or_empty_table() {
+        for table in ["", "[retry]"] {
+            let policy = make_network_config(table).retry_policy();
+            assert_eq!(policy.max_retries, 3);
+            assert_eq!(policy.base_delay_ms, 2_000);
+            assert_eq!(policy.max_delay_ms, 5_000);
+            assert_eq!(policy.multiplier, 150);
+            assert_eq!(policy.multiplier_base, 100);
+        }
+    }
+
+    #[test]
+    fn network_retry_preserves_overrides_across_config_roundtrip() {
+        let config = make_network_config(
+            "[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900",
+        );
+        let policy = config.retry_policy();
+        assert_eq!(policy.max_retries, 2);
+        assert_eq!(policy.base_delay_ms, 100);
+        assert_eq!(policy.max_delay_ms, 900);
+        assert_eq!(policy.multiplier, 150);
+        assert_eq!(policy.multiplier_base, 100);
+
+        let serialized = toml::to_string(&config).expect("serialize network config");
+        let restored: NetworkMonitoringConfig =
+            toml::from_str(&serialized).expect("restore network config");
+        assert_eq!(restored, config);
+    }
+
+    #[test]
+    fn network_retry_partial_override_can_disable_retries() {
+        // Omitting the delays keeps their defaults even when retries are disabled.
+        let policy = make_network_config("[retry]\nmax_retries = 0").retry_policy();
+        assert_eq!(policy.max_retries, 0);
+        assert_eq!(policy.base_delay_ms, 2_000);
+        assert_eq!(policy.max_delay_ms, 5_000);
+    }
+
+    #[test]
+    fn network_config_rejects_unknown_settings() {
+        let config = toml::to_string(&make_network_config("")).expect("serialize network config");
+
+        // Unknown keys must fail instead of being silently ignored.
+        for key in ["retry_policy_max_retries", "retry_policy_total_time_s"] {
+            let error = toml::from_str::<NetworkMonitoringConfig>(&format!("{key} = 5\n{config}"))
+                .expect_err("unknown network setting must be rejected");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("unknown field `{key}`")),
+                "unexpected error: {error}"
+            );
+        }
     }
 }

@@ -33,4 +33,5 @@
   tracing.workspace          = true
 
 [dev-dependencies]
+  status-utils   = { workspace = true, features = [ "test-utils" ] }
   toml.workspace = true

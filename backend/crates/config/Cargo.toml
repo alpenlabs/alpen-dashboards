@@ -7,7 +7,6 @@
   path = "src/lib.rs"
 
 [dependencies]
-  status-utils.workspace = true
   strata-retry.workspace = true
 
   bitcoin.workspace = true

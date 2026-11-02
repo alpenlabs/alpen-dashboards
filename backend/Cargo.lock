@@ -4254,7 +4254,6 @@ version = "0.2.0"
 dependencies = [
  "bitcoin",
  "serde",
- "status-utils",
  "strata-retry",
  "toml",
  "tracing",
@@ -4288,6 +4287,7 @@ dependencies = [
  "serde_json",
  "status-config",
  "status-utils",
+ "strata-retry",
  "strata-tasks",
  "tokio",
  "toml",
@@ -4298,7 +4298,11 @@ dependencies = [
 name = "status-utils"
 version = "0.2.0"
 dependencies = [
+ "axum",
  "jsonrpsee",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

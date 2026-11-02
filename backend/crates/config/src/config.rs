@@ -122,10 +122,13 @@ alpen_rpc_url = "https://alpen-rpc.example.com"
 strata_sequencer_url = "https://strata-sequencer.example.com"
 strata_rpc_url = "https://strata-rpc.example.com"
 bundler_url = "https://bundler.example.com/health"
-retry_policy_max_retries = 3
-retry_policy_total_time_s = 30
 status_refetch_interval_s = 5
 initial_status_wait_timeout_s = 4
+
+[network.retry]
+max_retries = 1
+base_delay_ms = 200
+max_delay_ms = 800
 
 [bridge]
 esplora_request_timeout_s = 9
@@ -162,16 +165,6 @@ withdrawal_denomination_sats = 100000000
 
     fn make_config() -> Config {
         toml::from_str(make_config_toml()).expect("parse configured settings")
-    }
-
-    #[test]
-    fn config_example_uses_documented_bridge_retry_defaults() {
-        let config: Config = toml::from_str(include_str!("../../../example-config.toml"))
-            .expect("parse documented example config");
-        let retry = config.bridge().retry_policy();
-        assert_eq!(retry.max_retries, 3);
-        assert_eq!(retry.base_delay_ms, 2_000);
-        assert_eq!(retry.max_delay_ms, 5_000);
     }
 
     #[test]
@@ -222,6 +215,10 @@ withdrawal_denomination_sats = 100000000
         );
         assert_eq!(config.network().status_refetch_interval(), 5);
         assert_eq!(config.network().initial_status_wait_timeout_s(), 4);
+        let network_retry = config.network().retry_policy();
+        assert_eq!(network_retry.max_retries, 1);
+        assert_eq!(network_retry.base_delay_ms, 200);
+        assert_eq!(network_retry.max_delay_ms, 800);
         assert_eq!(config.bridge().esplora_url(), "https://esplora.example.com");
         assert_eq!(config.bridge().esplora_request_timeout_s(), 9);
         assert_eq!(config.bridge().max_tx_confirmations(), 12);
@@ -282,8 +279,6 @@ alpen_rpc_url = ""
 strata_sequencer_url = ""
 strata_rpc_url = ""
 bundler_url = ""
-retry_policy_max_retries = 0
-retry_policy_total_time_s = 0
 status_refetch_interval_s = 0
 
 [bridge]

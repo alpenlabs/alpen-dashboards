@@ -202,95 +202,25 @@ pub(crate) async fn get_reimbursement_status(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
-
-    use axum::{extract::State, routing::post, Json, Router};
     use bitcoin::secp256k1::{Secp256k1, SecretKey};
-    use serde_json::{json, Value};
+    use serde_json::json;
+    use status_utils::test_utils::{make_rpc_error_reply, TestRpcServer};
 
     use super::*;
-    use crate::test_utils::{make_retry_config, TestHttpServer};
+    use crate::test_utils::make_retry_config;
 
-    struct RpcResponses {
-        replies: VecDeque<Value>,
-        methods: Vec<String>,
-    }
-
-    struct RpcFixture {
-        server: TestHttpServer,
-        responses: Arc<Mutex<RpcResponses>>,
-    }
-
-    impl RpcFixture {
-        /// Serves replies in order, then repeats the final reply.
-        async fn new(replies: Vec<Value>) -> Self {
-            assert!(!replies.is_empty(), "RPC fixture needs a response");
-            let responses = Arc::new(Mutex::new(RpcResponses {
-                replies: replies.into(),
-                methods: Vec::new(),
-            }));
-            let router = Router::new()
-                .route("/", post(rpc_response))
-                .with_state(responses.clone());
-            Self {
-                server: TestHttpServer::new(router).await,
-                responses,
-            }
-        }
-
-        fn attempts(&self) -> usize {
-            self.responses
-                .lock()
-                .expect("RPC response lock")
-                .methods
-                .len()
-        }
-
-        fn methods(&self) -> Vec<String> {
-            self.responses
-                .lock()
-                .expect("RPC response lock")
-                .methods
-                .clone()
-        }
-    }
-
-    async fn rpc_response(
-        State(responses): State<Arc<Mutex<RpcResponses>>>,
-        Json(request): Json<Value>,
-    ) -> Json<Value> {
-        let mut responses = responses.lock().expect("RPC response lock");
-        responses
-            .methods
-            .push(request["method"].as_str().expect("RPC method").to_owned());
-        let mut reply = responses.replies.front().expect("RPC reply").clone();
-        if responses.replies.len() > 1 {
-            responses.replies.pop_front();
-        }
-        reply["jsonrpc"] = json!("2.0");
-        reply["id"] = request["id"].clone();
-        Json(reply)
-    }
-
-    fn make_error_reply() -> Value {
-        json!({"error": {"code": -32000, "message": "temporarily unavailable"}})
-    }
-
-    fn make_rpc_manager(fixtures: &[&RpcFixture]) -> RpcClientManager {
+    fn make_rpc_manager(fixtures: &[&TestRpcServer]) -> RpcClientManager {
         RpcClientManager {
             clients: fixtures
                 .iter()
                 .enumerate()
-                .map(|(index, fixture)| {
-                    (index.to_string(), create_rpc_client(fixture.server.url()))
-                })
+                .map(|(index, fixture)| (index.to_string(), create_rpc_client(fixture.url())))
                 .collect(),
             retry_config: make_retry_config(),
         }
     }
 
-    fn make_configured_rpc_manager(fixture: &RpcFixture, max_retries: u16) -> RpcClientManager {
+    fn make_configured_rpc_manager(fixture: &TestRpcServer, max_retries: u16) -> RpcClientManager {
         let config: BridgeMonitoringConfig = toml::from_str(&format!(
             r#"
             esplora_url = "http://localhost:3000"
@@ -303,7 +233,7 @@ mod tests {
             max_delay_ms = 1
         "#,
             make_operator_key(),
-            fixture.server.url()
+            fixture.url()
         ))
         .expect("parse configured retry budget");
         RpcClientManager::new(&config)
@@ -316,8 +246,8 @@ mod tests {
 
     #[tokio::test]
     async fn rpc_queries_stop_after_first_success() {
-        let first = RpcFixture::new(vec![json!({"result": [1, 2]})]).await;
-        let second = RpcFixture::new(vec![make_error_reply()]).await;
+        let first = TestRpcServer::new(vec![json!({"result": [1, 2]})]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
         let manager = make_rpc_manager(&[&first, &second]);
 
         assert_eq!(
@@ -333,9 +263,9 @@ mod tests {
     #[tokio::test]
     async fn rpc_queries_recover_after_failed_attempts() {
         // Two failures must be retried against the same endpoint.
-        let fixture = RpcFixture::new(vec![
-            make_error_reply(),
-            make_error_reply(),
+        let fixture = TestRpcServer::new(vec![
+            make_rpc_error_reply(),
+            make_rpc_error_reply(),
             json!({"result": [3]}),
         ])
         .await;
@@ -350,8 +280,8 @@ mod tests {
 
     #[tokio::test]
     async fn rpc_queries_fail_over_after_exhausting_first_endpoint() {
-        let first = RpcFixture::new(vec![make_error_reply()]).await;
-        let second = RpcFixture::new(vec![json!({"result": [4]})]).await;
+        let first = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let second = TestRpcServer::new(vec![json!({"result": [4]})]).await;
         let manager = make_rpc_manager(&[&first, &second]);
 
         assert_eq!(
@@ -367,8 +297,8 @@ mod tests {
 
     #[tokio::test]
     async fn rpc_queries_return_error_after_all_endpoints_are_exhausted() {
-        let first = RpcFixture::new(vec![make_error_reply()]).await;
-        let second = RpcFixture::new(vec![make_error_reply()]).await;
+        let first = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
         let manager = make_rpc_manager(&[&first, &second]);
 
         assert_eq!(
@@ -382,8 +312,8 @@ mod tests {
     #[tokio::test]
     async fn rpc_queries_return_missing_status_without_retry_or_failover() {
         // A valid null result must retain its meaning instead of being treated as an RPC error.
-        let first = RpcFixture::new(vec![json!({"result": null})]).await;
-        let second = RpcFixture::new(vec![make_error_reply()]).await;
+        let first = TestRpcServer::new(vec![json!({"result": null})]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
         let manager = make_rpc_manager(&[&first, &second]);
 
         assert!(get_withdrawal_status(&manager, 0)
@@ -396,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn operator_without_endpoint_uses_peer_status_query() {
-        let fixture = RpcFixture::new(vec![json!({"result": RpcOperatorStatus::Online})]).await;
+        let fixture = TestRpcServer::new(vec![json!({"result": RpcOperatorStatus::Online})]).await;
         let manager = make_rpc_manager(&[&fixture]);
 
         assert!(matches!(
@@ -408,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn operator_with_endpoint_queries_uptime_once_on_failure() {
-        let fixture = RpcFixture::new(vec![make_error_reply()]).await;
+        let fixture = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
         // Query retries are enabled, but the configured operator uses a single uptime call.
         let manager = make_configured_rpc_manager(&fixture, 3);
 
@@ -422,7 +352,7 @@ mod tests {
 
     #[tokio::test]
     async fn rpc_queries_stop_after_configured_retry_budget_is_exhausted() {
-        let fixture = RpcFixture::new(vec![make_error_reply()]).await;
+        let fixture = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
         let manager = make_configured_rpc_manager(&fixture, 1);
 
         assert_eq!(

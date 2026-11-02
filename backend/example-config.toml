@@ -12,11 +12,15 @@ datadir = "data"
   alpen_sequencer_url           = "http://localhost:56917/"
   bundler_url                   = "https://bundler.testnet.alpen.org/health"
   initial_status_wait_timeout_s = 30
-  retry_policy_max_retries      = 5
-  retry_policy_total_time_s     = 60
   status_refetch_interval_s     = 10
   strata_rpc_url                = "https://strata.testnet.alpen.org"
   strata_sequencer_url          = "http://localhost:56790/"
+
+  # Request retry policy; growth is fixed at 1.5x, matching bridge retries.
+  [network.retry]
+    base_delay_ms = 2_000
+    max_delay_ms  = 5_000
+    max_retries   = 3
 
 # Bridge monitoring configuration
 [bridge]

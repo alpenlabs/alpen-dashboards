@@ -2,6 +2,8 @@ use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
 use strata_retry::RetryConfig;
 
+use crate::retry::RequestRetryConfig;
+
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
@@ -53,7 +55,7 @@ pub struct BridgeMonitoringConfig {
 
     /// Request retry policy for bridge RPC.
     #[serde(default)]
-    retry: BridgeRetryConfig,
+    retry: RequestRetryConfig,
 
     /// Bridge operators
     operators: Vec<BridgeOperator>,
@@ -202,42 +204,6 @@ impl WithdrawalIndexerConfig {
 
     pub fn withdrawal_denomination_sats(&self) -> u64 {
         self.withdrawal_denomination_sats
-    }
-}
-
-/// Request retry settings for bridge RPC.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-struct BridgeRetryConfig {
-    /// Retries after the initial request; zero disables retries.
-    max_retries: u16,
-
-    /// Delay before the first retry.
-    base_delay_ms: u64,
-
-    /// Cap applied as retry delays increase.
-    max_delay_ms: u64,
-}
-
-impl Default for BridgeRetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            base_delay_ms: 2_000,
-            max_delay_ms: 5_000,
-        }
-    }
-}
-
-impl BridgeRetryConfig {
-    fn policy(&self) -> RetryConfig {
-        RetryConfig {
-            max_retries: self.max_retries,
-            base_delay_ms: self.base_delay_ms,
-            multiplier: 150,
-            multiplier_base: 100,
-            max_delay_ms: self.max_delay_ms,
-        }
     }
 }
 

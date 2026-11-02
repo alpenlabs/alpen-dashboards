@@ -10,6 +10,7 @@
   anyhow.workspace        = true
   status-config.workspace = true
   status-utils.workspace  = true
+  strata-retry.workspace  = true
   strata-tasks.workspace  = true
 
   axum.workspace       = true
@@ -21,4 +22,5 @@
   tracing.workspace    = true
 
 [dev-dependencies]
+  status-utils   = { workspace = true, features = [ "test-utils" ] }
   toml.workspace = true
