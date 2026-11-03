@@ -6,8 +6,11 @@
 [lib]
   path = "src/lib.rs"
 
+[features]
+  test-utils = [  ]
+
 [dependencies]
-  status-utils.workspace = true
+  strata-retry.workspace = true
 
   bitcoin.workspace = true
   serde.workspace   = true

@@ -27,6 +27,7 @@
       "client",
     ], tag = "v0.3.0-rc.4" }
     strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
+    strata-retry = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.4.0" }
     strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
     typed-sled = { git = "https://github.com/alpenlabs/typed-sled" }
 

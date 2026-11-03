@@ -5,6 +5,8 @@ mod db;
 mod esplora;
 mod state;
 mod status;
+#[cfg(test)]
+mod test_utils;
 mod types;
 mod withdrawal_indexer;
 mod withdrawal_requests;

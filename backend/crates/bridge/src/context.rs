@@ -34,8 +34,11 @@ impl BridgeMonitoringContext {
         status_db: Arc<BridgeStatusDbSled>,
     ) -> anyhow::Result<Self> {
         let bridge_rpc = RpcClientManager::new(&config);
-        let esplora_client =
-            EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
+        let esplora_client = EsploraClient::new(
+            config.esplora_url(),
+            config.esplora_request_timeout_s(),
+            config.retry_policy(),
+        );
         let snapshot = status_db
             .get_status_snapshot()
             .map_err(|e| anyhow::anyhow!("hydrate bridge status state: {e}"))?;
@@ -116,6 +119,8 @@ impl BridgeMonitoringContext {
 
 #[cfg(test)]
 mod tests {
+    use status_config::test_utils::{make_bridge_config, LOCAL_ESPLORA_URL};
+
     use bitcoin::Txid;
     use std::str::FromStr;
 
@@ -125,24 +130,16 @@ mod tests {
         types::{DepositInfo, DepositStatus},
     };
 
-    fn test_config() -> BridgeMonitoringConfig {
-        toml::from_str(
-            r#"
-            esplora_url = "http://localhost:3000"
-            max_tx_confirmations = 6
-            status_refetch_interval_s = 1
-            operators = []
-            "#,
-        )
-        .expect("test config should deserialize")
-    }
-
     fn test_context() -> BridgeMonitoringContext {
         let withdrawal_index =
             Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
         let status_db = Arc::new(BridgeStatusDbSled::open_temporary().expect("open status db"));
-        BridgeMonitoringContext::new(test_config(), withdrawal_index, status_db)
-            .expect("create bridge monitoring context")
+        BridgeMonitoringContext::new(
+            make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
+            withdrawal_index,
+            status_db,
+        )
+        .expect("create bridge monitoring context")
     }
 
     #[tokio::test]
