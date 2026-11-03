@@ -8,7 +8,7 @@ use tokio::time::Duration;
 
 use super::{
     bridge_rpc::RpcClientManager,
-    db::{traits::BridgeStatusDb, BridgeStatusDbSled, WithdrawalIndexerDbSled},
+    db::traits::{BridgeStatusDb, WithdrawalIndexerDb},
     esplora::EsploraClient,
     state::BridgeMonitoringState,
     types::BridgeStatus,
@@ -20,8 +20,8 @@ pub struct BridgeMonitoringContext {
     config: BridgeMonitoringConfig,
     bridge_rpc: RpcClientManager,
     esplora_client: EsploraClient,
-    withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-    status_db: Arc<BridgeStatusDbSled>,
+    withdrawal_index_db: Arc<dyn WithdrawalIndexerDb>,
+    status_db: Arc<dyn BridgeStatusDb>,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
@@ -30,8 +30,8 @@ pub struct BridgeMonitoringContext {
 impl BridgeMonitoringContext {
     pub fn new(
         config: BridgeMonitoringConfig,
-        withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-        status_db: Arc<BridgeStatusDbSled>,
+        withdrawal_index_db: Arc<impl WithdrawalIndexerDb>,
+        status_db: Arc<impl BridgeStatusDb>,
     ) -> anyhow::Result<Self> {
         let bridge_rpc = RpcClientManager::new(&config);
         let esplora_client = EsploraClient::new(
@@ -48,7 +48,7 @@ impl BridgeMonitoringContext {
             config,
             bridge_rpc,
             esplora_client,
-            withdrawal_index,
+            withdrawal_index_db,
             status_db,
             state,
             status_available: AtomicBool::new(false),
@@ -68,11 +68,11 @@ impl BridgeMonitoringContext {
         &self.esplora_client
     }
 
-    pub(crate) fn withdrawal_index(&self) -> &WithdrawalIndexerDbSled {
-        self.withdrawal_index.as_ref()
+    pub(crate) fn withdrawal_index_db(&self) -> &dyn WithdrawalIndexerDb {
+        self.withdrawal_index_db.as_ref()
     }
 
-    pub(crate) fn status_db(&self) -> &BridgeStatusDbSled {
+    pub(crate) fn status_db(&self) -> &dyn BridgeStatusDb {
         self.status_db.as_ref()
     }
 
@@ -126,18 +126,16 @@ mod tests {
 
     use super::*;
     use crate::{
+        db::{status::mock::MockBridgeStatusDb, withdrawal_index::mock::MockWithdrawalIndexerDb},
         state::DepositInfoUpdate,
         types::{DepositInfo, DepositStatus},
     };
 
     fn test_context() -> BridgeMonitoringContext {
-        let withdrawal_index =
-            Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
-        let status_db = Arc::new(BridgeStatusDbSled::open_temporary().expect("open status db"));
         BridgeMonitoringContext::new(
             make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
-            withdrawal_index,
-            status_db,
+            Arc::new(MockWithdrawalIndexerDb::default()),
+            Arc::new(MockBridgeStatusDb::default()),
         )
         .expect("create bridge monitoring context")
     }

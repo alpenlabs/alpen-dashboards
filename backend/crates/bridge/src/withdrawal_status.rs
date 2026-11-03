@@ -20,7 +20,7 @@ use super::{
 /// [`BridgeMonitoringState`](super::state::BridgeMonitoringState).
 pub(crate) async fn get_withdrawal_updates(
     rpc_manager: &RpcClientManager,
-    withdrawal_index: &impl WithdrawalIndexerDb,
+    withdrawal_index: &(impl WithdrawalIndexerDb + ?Sized),
     esplora_client: &EsploraClient,
     chain_tip_height: L1Height,
     candidates: &[WithdrawalPairing],

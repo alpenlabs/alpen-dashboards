@@ -3,7 +3,7 @@ use tracing::warn;
 use super::db::{traits::WithdrawalIndexerDb, types::DbWithdrawalRequestRow};
 
 pub(crate) fn fetch_withdrawal_requests(
-    withdrawal_index: &impl WithdrawalIndexerDb,
+    withdrawal_index: &(impl WithdrawalIndexerDb + ?Sized),
     start_seq: u64,
     fetch_count: usize,
     batch_size: usize,
@@ -43,27 +43,15 @@ pub(crate) fn fetch_withdrawal_requests(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{
-        types::DbWithdrawalRequest,
-        withdrawal_index::{mock::MockWithdrawalIndexerDb, test_utils::make_withdrawal_request},
+    use crate::db::withdrawal_index::{
+        mock::MockWithdrawalIndexerDb, test_utils::make_withdrawal_event,
     };
 
     #[test]
     fn fetches_withdrawal_requests_in_batches() {
         let db = MockWithdrawalIndexerDb::default();
-        let request = make_withdrawal_request(1);
-        db.insert_withdrawal_event(&[
-            request.clone(),
-            DbWithdrawalRequest {
-                sub_idx: 1,
-                ..request.clone()
-            },
-            DbWithdrawalRequest {
-                sub_idx: 2,
-                ..request
-            },
-        ])
-        .expect("insert requests");
+        db.insert_withdrawal_event(&make_withdrawal_event(1, 3))
+            .expect("insert requests");
 
         let rows = fetch_withdrawal_requests(&db, 0, 3, 2);
 

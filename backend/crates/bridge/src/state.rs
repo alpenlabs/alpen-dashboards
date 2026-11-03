@@ -9,7 +9,7 @@ use super::{
     db::{
         error::DbResult,
         traits::BridgeStatusDb,
-        types::{DbBridgeStatusSnapshot, DbWithdrawalRequestRow},
+        types::{BridgeStatusDbSnapshot, DbWithdrawalRequestRow},
     },
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
@@ -58,7 +58,7 @@ pub(crate) struct BridgeMonitoringState {
 }
 
 impl BridgeMonitoringState {
-    pub(crate) fn from_snapshot(snapshot: DbBridgeStatusSnapshot) -> Self {
+    pub(crate) fn from_snapshot(snapshot: BridgeStatusDbSnapshot) -> Self {
         Self {
             cache: RwLock::new(BridgeStatusCache::from_status_snapshot(snapshot)),
         }
@@ -79,7 +79,7 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_deposit_info_updates(
         &self,
-        status_db: &impl BridgeStatusDb,
+        status_db: &(impl BridgeStatusDb + ?Sized),
         updates: Vec<DepositInfoUpdate>,
         max_confirmations: u64,
     ) -> DbResult<()> {
@@ -127,7 +127,7 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn advance_withdrawal_pairings(
         &self,
-        status_db: &impl BridgeStatusDb,
+        status_db: &(impl BridgeStatusDb + ?Sized),
         deposit_indices: &[DepositIdx],
         deposit_infos: &[(DepositIdx, DepositInfo)],
         withdrawal_requests: &[DbWithdrawalRequestRow],
@@ -175,7 +175,7 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_withdrawal_updates(
         &self,
-        status_db: &impl BridgeStatusDb,
+        status_db: &(impl BridgeStatusDb + ?Sized),
         updates: Vec<WithdrawalInfoUpdate>,
         max_confirmations: u64,
     ) -> DbResult<()> {
@@ -260,7 +260,7 @@ impl BridgeMonitoringState {
 
     pub(crate) async fn apply_reimbursement_updates(
         &self,
-        status_db: &impl BridgeStatusDb,
+        status_db: &(impl BridgeStatusDb + ?Sized),
         updates: Vec<ReimbursementInfoUpdate>,
         max_confirmations: u64,
     ) -> DbResult<()> {

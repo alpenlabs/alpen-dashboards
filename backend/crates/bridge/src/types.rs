@@ -8,7 +8,7 @@ use strata_bridge_rpc::types::{
 use strata_primitives::buf::Buf32;
 
 /// FIFO withdrawal-request sequence number.
-pub(crate) type WithdrawalSeq = u64;
+pub type WithdrawalSeq = u64;
 
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -32,39 +32,68 @@ impl OperatorStatus {
     }
 }
 
-/// In-memory cursor for withdrawal-to-deposit pairing progress.
+/// Cursor for withdrawal-to-deposit pairing progress.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WithdrawalPairingCursor {
+pub struct WithdrawalPairingCursor {
     pub(crate) next_deposit_idx: DepositIdx,
     pub(crate) next_withdrawal_seq: WithdrawalSeq,
 }
 
+impl WithdrawalPairingCursor {
+    pub fn new(next_deposit_idx: DepositIdx, next_withdrawal_seq: WithdrawalSeq) -> Self {
+        Self {
+            next_deposit_idx,
+            next_withdrawal_seq,
+        }
+    }
+}
+
 /// Committed withdrawal-to-deposit pairing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WithdrawalPairing {
+pub struct WithdrawalPairing {
     pub(crate) deposit_idx: DepositIdx,
     pub(crate) withdrawal_seq: WithdrawalSeq,
 }
 
 impl WithdrawalPairing {
-    pub(crate) fn new(deposit_idx: DepositIdx, withdrawal_seq: WithdrawalSeq) -> Self {
+    pub fn new(deposit_idx: DepositIdx, withdrawal_seq: WithdrawalSeq) -> Self {
         Self {
             deposit_idx,
             withdrawal_seq,
         }
     }
+
+    pub fn deposit_idx(&self) -> DepositIdx {
+        self.deposit_idx
+    }
+
+    pub fn withdrawal_seq(&self) -> WithdrawalSeq {
+        self.withdrawal_seq
+    }
 }
 
-/// In-memory cursor for bridge withdrawal status polling progress.
+/// Cursor for bridge withdrawal status polling progress.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WithdrawalStatusCursor {
+pub struct WithdrawalStatusCursor {
     pub(crate) next_deposit_idx: DepositIdx,
 }
 
-/// In-memory cursor for bridge reimbursement status polling progress.
+impl WithdrawalStatusCursor {
+    pub fn new(next_deposit_idx: DepositIdx) -> Self {
+        Self { next_deposit_idx }
+    }
+}
+
+/// Cursor for bridge reimbursement status polling progress.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ReimbursementStatusCursor {
+pub struct ReimbursementStatusCursor {
     pub(crate) next_deposit_idx: DepositIdx,
+}
+
+impl ReimbursementStatusCursor {
+    pub fn new(next_deposit_idx: DepositIdx) -> Self {
+        Self { next_deposit_idx }
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
@@ -109,7 +138,7 @@ impl From<&RpcDepositInfo> for DepositInfo {
 
 /// Withdrawal status
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
-pub(crate) enum WithdrawalStatus {
+pub enum WithdrawalStatus {
     #[serde(rename = "In progress")]
     InProgress,
 
@@ -118,13 +147,25 @@ pub(crate) enum WithdrawalStatus {
 
 /// Withdrawal information passed to status dashboard
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-pub(crate) struct WithdrawalInfo {
+pub struct WithdrawalInfo {
     pub(crate) withdrawal_request_txid: Buf32,
     pub(crate) fulfillment_txid: Option<Txid>,
     pub(crate) status: WithdrawalStatus,
 }
 
 impl WithdrawalInfo {
+    pub fn new(
+        withdrawal_request_txid: Buf32,
+        fulfillment_txid: Option<Txid>,
+        status: WithdrawalStatus,
+    ) -> Self {
+        Self {
+            withdrawal_request_txid,
+            fulfillment_txid,
+            status,
+        }
+    }
+
     pub(crate) fn from_status(
         withdrawal_request_txid: Buf32,
         status: &RpcWithdrawalStatus,

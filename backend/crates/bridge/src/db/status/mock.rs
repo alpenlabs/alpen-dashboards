@@ -7,7 +7,7 @@ use crate::{
     db::{
         error::DbResult,
         traits::BridgeStatusDb,
-        types::{DbBridgeStatusSnapshot, StatusCursors},
+        types::{BridgeStatusDbSnapshot, StatusCursors},
     },
     types::{
         ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
@@ -27,17 +27,15 @@ pub(crate) struct MockBridgeStatusDb {
 }
 
 impl BridgeStatusDb for MockBridgeStatusDb {
-    fn get_status_snapshot(&self) -> DbResult<DbBridgeStatusSnapshot> {
-        Ok(DbBridgeStatusSnapshot {
-            withdrawals: self
-                .withdrawals
+    fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
+        Ok(BridgeStatusDbSnapshot::new(
+            self.withdrawals
                 .read()
                 .expect("mock withdrawals lock poisoned")
                 .iter()
                 .map(|(deposit_idx, info)| (*deposit_idx, *info))
                 .collect(),
-            withdrawal_pairings: self
-                .withdrawal_pairings
+            self.withdrawal_pairings
                 .read()
                 .expect("mock withdrawal_pairings lock poisoned")
                 .iter()
@@ -45,25 +43,25 @@ impl BridgeStatusDb for MockBridgeStatusDb {
                     WithdrawalPairing::new(*deposit_idx, *withdrawal_seq)
                 })
                 .collect(),
-            cursors: StatusCursors {
-                deposit_info: *self
+            StatusCursors::new(
+                *self
                     .deposit_info_cursor
                     .read()
                     .expect("mock deposit_info_cursor lock poisoned"),
-                withdrawal_pairing: *self
+                *self
                     .withdrawal_pairing_cursor
                     .read()
                     .expect("mock withdrawal_pairing_cursor lock poisoned"),
-                withdrawal_status: *self
+                *self
                     .withdrawal_status_cursor
                     .read()
                     .expect("mock withdrawal_status_cursor lock poisoned"),
-                reimbursement_status: *self
+                *self
                     .reimbursement_status_cursor
                     .read()
                     .expect("mock reimbursement_status_cursor lock poisoned"),
-            },
-        })
+            ),
+        ))
     }
 
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()> {
