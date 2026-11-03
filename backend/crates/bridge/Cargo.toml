@@ -35,4 +35,5 @@
 [dev-dependencies]
   status-config  = { workspace = true, features = [ "test-utils" ] }
   status-utils   = { workspace = true, features = [ "test-utils" ] }
+  tokio          = { workspace = true, features = [ "test-util" ] }
   toml.workspace = true

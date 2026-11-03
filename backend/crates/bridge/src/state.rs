@@ -509,16 +509,124 @@ fn plan_withdrawal_pairings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use bitcoin::{hashes::Hash, Txid};
 
     use crate::{
+        db::{
+            error::DbError, status::mock::MockBridgeStatusDb, traits::BridgeStatusDb,
+            types::BridgeStatusDbSnapshot,
+        },
         test_utils::{
             make_deposit_info, make_withdrawal_info, make_withdrawal_request_row,
             BridgeStatusFixture, TEST_MAX_CONFIRMATIONS,
         },
         types::ChallengeStep,
     };
+
+    /// Mock status database that fails the next pairing-row or pairing-cursor write.
+    #[derive(Default)]
+    struct FailingPairingWriteDb {
+        inner: MockBridgeStatusDb,
+        fail_next_pairings: AtomicBool,
+        fail_next_pairing_cursor: AtomicBool,
+    }
+
+    impl BridgeStatusDb for FailingPairingWriteDb {
+        fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
+            self.inner.get_status_snapshot()
+        }
+
+        fn put_withdrawal_info(
+            &self,
+            deposit_idx: DepositIdx,
+            info: &WithdrawalInfo,
+        ) -> DbResult<()> {
+            self.inner.put_withdrawal_info(deposit_idx, info)
+        }
+
+        fn del_withdrawal_info(&self, deposit_idx: DepositIdx) -> DbResult<bool> {
+            self.inner.del_withdrawal_info(deposit_idx)
+        }
+
+        fn put_withdrawal_pairings(&self, pairings: &[WithdrawalPairing]) -> DbResult<()> {
+            if self.fail_next_pairings.swap(false, Ordering::Relaxed) {
+                return Err(injected_write_failure());
+            }
+            self.inner.put_withdrawal_pairings(pairings)
+        }
+
+        fn del_withdrawal_pairings_range(
+            &self,
+            start: DepositIdx,
+            end: DepositIdx,
+        ) -> DbResult<()> {
+            self.inner.del_withdrawal_pairings_range(start, end)
+        }
+
+        fn put_deposit_info_cursor(&self, cursor: DepositIdx) -> DbResult<()> {
+            self.inner.put_deposit_info_cursor(cursor)
+        }
+
+        fn put_withdrawal_pairing_cursor(&self, cursor: WithdrawalPairingCursor) -> DbResult<()> {
+            if self.fail_next_pairing_cursor.swap(false, Ordering::Relaxed) {
+                return Err(injected_write_failure());
+            }
+            self.inner.put_withdrawal_pairing_cursor(cursor)
+        }
+
+        fn put_withdrawal_status_cursor(&self, cursor: WithdrawalStatusCursor) -> DbResult<()> {
+            self.inner.put_withdrawal_status_cursor(cursor)
+        }
+
+        fn put_reimbursement_status_cursor(
+            &self,
+            cursor: ReimbursementStatusCursor,
+        ) -> DbResult<()> {
+            self.inner.put_reimbursement_status_cursor(cursor)
+        }
+    }
+
+    fn injected_write_failure() -> DbError {
+        DbError::from(sled::Error::Unsupported(
+            "injected write failure".to_owned(),
+        ))
+    }
+
+    /// Pairs deposit 0 with withdrawal 0 after one failed write, then retries.
+    async fn assert_pairing_retry_after_failed_write(status_db: FailingPairingWriteDb) {
+        let fixture = BridgeStatusFixture::new(status_db);
+        let deposit_infos = [(0, make_deposit_info(DepositStatus::Complete))];
+        let requests = [make_withdrawal_request_row(0, 1)];
+        let advance = || {
+            fixture.state().advance_withdrawal_pairings(
+                fixture.status_db(),
+                &[0],
+                &deposit_infos,
+                &requests,
+            )
+        };
+
+        assert!(advance().await.is_err());
+        assert_eq!(
+            fixture.state().withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor::default()
+        );
+
+        let expected = vec![WithdrawalPairing::new(0, 0)];
+        assert_eq!(advance().await.expect("retry pairing"), expected);
+        assert_eq!(
+            fixture.state().withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor::new(1, 1)
+        );
+        let snapshot = fixture.snapshot();
+        assert_eq!(snapshot.withdrawal_pairings, expected);
+        assert_eq!(
+            snapshot.cursors.withdrawal_pairing,
+            WithdrawalPairingCursor::new(1, 1)
+        );
+    }
 
     fn make_reimbursement_info(seed: u8, status: ReimbursementStatus) -> ReimbursementInfo {
         ReimbursementInfo {
@@ -1562,5 +1670,24 @@ mod tests {
                 .await,
             vec![2]
         );
+    }
+
+    #[tokio::test]
+    async fn failed_pairing_row_write_keeps_cursor_and_retry_pairs_once() {
+        assert_pairing_retry_after_failed_write(FailingPairingWriteDb {
+            fail_next_pairings: AtomicBool::new(true),
+            ..FailingPairingWriteDb::default()
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn failed_pairing_cursor_write_keeps_cursor_and_retry_pairs_once() {
+        // The pairing rows are already written when the cursor write fails.
+        assert_pairing_retry_after_failed_write(FailingPairingWriteDb {
+            fail_next_pairing_cursor: AtomicBool::new(true),
+            ..FailingPairingWriteDb::default()
+        })
+        .await;
     }
 }

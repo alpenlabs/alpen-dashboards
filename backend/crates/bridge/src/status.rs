@@ -380,7 +380,14 @@ pub async fn get_bridge_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{make_deposit_info, BridgeStatusFixture};
+    use std::{future::Future, task::Poll};
+
+    use bitcoin::hashes::Hash;
+
+    use crate::{
+        test_utils::{make_deposit_info, BridgeStatusFixture},
+        types::ChallengeStep,
+    };
 
     /// Runs the pairing step for completed deposits from the current pairing cursor.
     async fn pair_completed_deposits(
@@ -491,5 +498,79 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn terminal_reimbursement_txid_selects_txid_that_retires_the_row() {
+        let claim_txid = Txid::from_byte_array([1; 32]);
+        let payout_txid = Txid::from_byte_array([2; 32]);
+        let cases = [
+            (ReimbursementStatus::Slashed, Some(claim_txid)),
+            (ReimbursementStatus::Aborted, Some(claim_txid)),
+            (ReimbursementStatus::Complete, Some(payout_txid)),
+            (ReimbursementStatus::InProgress, None),
+            (ReimbursementStatus::NotStarted, None),
+        ];
+
+        for (status, expected) in cases {
+            let info = ReimbursementInfo {
+                claim_txid,
+                challenge_step: ChallengeStep::NotApplicable,
+                payout_txid: Some(payout_txid),
+                status,
+            };
+            assert_eq!(terminal_reimbursement_txid(&info), expected);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bridge_status_is_unavailable_before_first_status() {
+        // Paused time lets the readiness timeout elapse without waiting.
+        let fixture = BridgeStatusFixture::default();
+
+        let response = get_bridge_status(Arc::clone(fixture.context())).await;
+
+        assert_eq!(response.err(), Some(StatusCode::SERVICE_UNAVAILABLE));
+    }
+
+    #[tokio::test]
+    async fn bridge_status_is_served_after_first_status() {
+        let fixture = BridgeStatusFixture::default();
+        let info = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture.context().mark_status_available();
+
+        let status = get_bridge_status(Arc::clone(fixture.context()))
+            .await
+            .expect("bridge status")
+            .0;
+
+        assert_eq!(status.deposits.len(), 1);
+        assert_eq!(
+            status.deposits[0].deposit_request_txid,
+            info.deposit_request_txid
+        );
+        assert_eq!(status.deposits[0].deposit_txid, info.deposit_txid);
+    }
+
+    #[tokio::test]
+    async fn waiting_bridge_status_request_returns_status_once_available() {
+        let fixture = BridgeStatusFixture::default();
+        let mut request = std::pin::pin!(get_bridge_status(Arc::clone(fixture.context())));
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(request.as_mut().poll(cx).is_pending())).await,
+            "request must wait for first status"
+        );
+
+        let info = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture.context().mark_status_available();
+
+        let status = request.await.expect("bridge status").0;
+        assert_eq!(status.deposits.len(), 1);
+        assert_eq!(
+            status.deposits[0].deposit_request_txid,
+            info.deposit_request_txid
+        );
     }
 }
