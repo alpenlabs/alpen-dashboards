@@ -1,5 +1,8 @@
 use bitcoin::PublicKey;
 use serde::{Deserialize, Serialize};
+use strata_retry::RetryConfig;
+
+use crate::retry::RequestRetryConfig;
 
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
@@ -50,11 +53,20 @@ pub struct BridgeMonitoringConfig {
     #[serde(default = "default_withdrawal_pairing_batch_size")]
     withdrawal_pairing_batch_size: usize,
 
+    /// Request retry policy shared by bridge RPC and Esplora.
+    #[serde(default)]
+    retry: RequestRetryConfig,
+
     /// Bridge operators
     operators: Vec<BridgeOperator>,
 }
 
 impl BridgeMonitoringConfig {
+    /// Builds the shared request retry policy from `[bridge.retry]` settings.
+    pub fn retry_policy(&self) -> RetryConfig {
+        self.retry.policy()
+    }
+
     pub fn esplora_url(&self) -> &str {
         &self.esplora_url
     }
@@ -197,7 +209,61 @@ impl WithdrawalIndexerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::BridgeOperator;
+    use super::{BridgeMonitoringConfig, BridgeOperator};
+
+    fn make_config_with_retry(retry_table: &str) -> BridgeMonitoringConfig {
+        toml::from_str(&format!(
+            r#"
+            esplora_url = "http://localhost:3002"
+            max_tx_confirmations = 6
+            status_refetch_interval_s = 1
+            operators = []
+            {retry_table}
+            "#
+        ))
+        .expect("parse bridge config")
+    }
+
+    #[test]
+    fn bridge_retry_uses_defaults_for_missing_or_empty_table() {
+        // Existing config files and an explicitly empty table use the same policy.
+        for table in ["", "[retry]"] {
+            let policy = make_config_with_retry(table).retry_policy();
+            assert_eq!(policy.max_retries, 3);
+            assert_eq!(policy.base_delay_ms, 2_000);
+            assert_eq!(policy.max_delay_ms, 5_000);
+            assert_eq!(policy.multiplier, 150);
+            assert_eq!(policy.multiplier_base, 100);
+        }
+    }
+
+    #[test]
+    fn bridge_retry_preserves_overrides_across_config_roundtrip() {
+        let config = make_config_with_retry(
+            "[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900",
+        );
+        let policy = config.retry_policy();
+        assert_eq!(policy.max_retries, 2);
+        assert_eq!(policy.base_delay_ms, 100);
+        assert_eq!(policy.max_delay_ms, 900);
+        // Growth remains fixed at 1.5 while the operator controls the budget and cap.
+        assert_eq!(policy.multiplier, 150);
+        assert_eq!(policy.multiplier_base, 100);
+
+        let serialized = toml::to_string(&config).expect("serialize bridge config");
+        let restored: BridgeMonitoringConfig =
+            toml::from_str(&serialized).expect("restore bridge config");
+        assert_eq!(restored, config);
+    }
+
+    #[test]
+    fn bridge_retry_partial_override_can_disable_retries() {
+        // Zero retries still allows the initial request; omitted delay fields keep defaults.
+        let policy = make_config_with_retry("[retry]\nmax_retries = 0").retry_policy();
+        assert_eq!(policy.max_retries, 0);
+        assert_eq!(policy.base_delay_ms, 2_000);
+        assert_eq!(policy.max_delay_ms, 5_000);
+    }
 
     #[test]
     fn bridge_operator_requires_name() {
