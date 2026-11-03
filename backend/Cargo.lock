@@ -4290,7 +4290,6 @@ dependencies = [
  "strata-retry",
  "strata-tasks",
  "tokio",
- "toml",
  "tracing",
 ]
 

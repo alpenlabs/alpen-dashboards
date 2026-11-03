@@ -211,10 +211,10 @@ impl WithdrawalIndexerConfig {
 mod tests {
     use super::{BridgeMonitoringConfig, BridgeOperator};
 
-    fn make_bridge_config(retry_table: &str) -> BridgeMonitoringConfig {
+    fn make_config_with_retry(retry_table: &str) -> BridgeMonitoringConfig {
         toml::from_str(&format!(
             r#"
-            esplora_url = "http://localhost:3000"
+            esplora_url = "http://localhost:3002"
             max_tx_confirmations = 6
             status_refetch_interval_s = 1
             operators = []
@@ -228,7 +228,7 @@ mod tests {
     fn bridge_retry_uses_defaults_for_missing_or_empty_table() {
         // Existing config files and an explicitly empty table use the same policy.
         for table in ["", "[retry]"] {
-            let policy = make_bridge_config(table).retry_policy();
+            let policy = make_config_with_retry(table).retry_policy();
             assert_eq!(policy.max_retries, 3);
             assert_eq!(policy.base_delay_ms, 2_000);
             assert_eq!(policy.max_delay_ms, 5_000);
@@ -239,8 +239,9 @@ mod tests {
 
     #[test]
     fn bridge_retry_preserves_overrides_across_config_roundtrip() {
-        let config =
-            make_bridge_config("[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900");
+        let config = make_config_with_retry(
+            "[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900",
+        );
         let policy = config.retry_policy();
         assert_eq!(policy.max_retries, 2);
         assert_eq!(policy.base_delay_ms, 100);
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn bridge_retry_partial_override_can_disable_retries() {
         // Zero retries still allows the initial request; omitted delay fields keep defaults.
-        let policy = make_bridge_config("[retry]\nmax_retries = 0").retry_policy();
+        let policy = make_config_with_retry("[retry]\nmax_retries = 0").retry_policy();
         assert_eq!(policy.max_retries, 0);
         assert_eq!(policy.base_delay_ms, 2_000);
         assert_eq!(policy.max_delay_ms, 5_000);

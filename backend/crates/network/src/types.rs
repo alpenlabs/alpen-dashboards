@@ -97,25 +97,13 @@ impl NetworkMonitoringContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use status_config::test_utils::{make_network_config, LOCAL_NETWORK_URLS};
 
-    fn make_config() -> NetworkMonitoringConfig {
-        toml::from_str(
-            r#"
-            alpen_sequencer_url = "http://localhost:8545"
-            alpen_rpc_url = "http://localhost:8546"
-            strata_sequencer_url = "http://localhost:8432"
-            strata_rpc_url = "http://localhost:8433"
-            bundler_url = "http://localhost:3000/health"
-            status_refetch_interval_s = 1
-            "#,
-        )
-        .expect("test config should deserialize")
-    }
+    use super::*;
 
     #[tokio::test]
     async fn initial_status_wait_times_out_when_unavailable() {
-        let context = NetworkMonitoringContext::new(make_config());
+        let context = NetworkMonitoringContext::new(make_network_config(&LOCAL_NETWORK_URLS, None));
 
         assert!(tokio::time::timeout(
             Duration::from_millis(1),
@@ -127,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn initial_status_wait_returns_when_available() {
-        let context = NetworkMonitoringContext::new(make_config());
+        let context = NetworkMonitoringContext::new(make_network_config(&LOCAL_NETWORK_URLS, None));
 
         context.mark_status_available();
 

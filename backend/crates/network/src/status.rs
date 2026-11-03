@@ -189,6 +189,7 @@ pub async fn get_network_status(
 mod tests {
     use axum::{routing::get, Router};
     use serde_json::{json, Value};
+    use status_config::test_utils::{make_network_config, NetworkUrls};
     use status_utils::test_utils::{make_rpc_error_reply, TestRpcServer};
 
     use super::*;
@@ -198,38 +199,27 @@ mod tests {
         TestRpcServer::with_routes(replies, router).await
     }
 
-    fn make_network_config(
+    fn make_endpoint_config(
         endpoints: [&TestRpcServer; 4],
         max_retries: u16,
     ) -> NetworkMonitoringConfig {
-        toml::from_str(&format!(
-            r#"
-            alpen_sequencer_url = "{}"
-            alpen_rpc_url = "{}"
-            strata_sequencer_url = "{}"
-            strata_rpc_url = "{}"
-            bundler_url = "{}/health"
-            status_refetch_interval_s = 1
-
-            [retry]
-            max_retries = {max_retries}
-            base_delay_ms = 1
-            max_delay_ms = 1
-            "#,
-            endpoints[0].url(),
-            endpoints[1].url(),
-            endpoints[2].url(),
-            endpoints[3].url(),
-            endpoints[0].url(),
-        ))
-        .expect("parse network retry config")
+        let [alpen_sequencer, alpen_rpc, strata_sequencer, strata_rpc] = endpoints;
+        let bundler = format!("{}/health", alpen_sequencer.url());
+        let urls = NetworkUrls {
+            alpen_sequencer: alpen_sequencer.url(),
+            alpen_rpc: alpen_rpc.url(),
+            strata_sequencer: strata_sequencer.url(),
+            strata_rpc: strata_rpc.url(),
+            bundler: &bundler,
+        };
+        make_network_config(&urls, Some(max_retries))
     }
 
     #[tokio::test]
     async fn eth_status_recovers_after_transient_rpc_error() {
         let fixture =
             make_network_fixture(vec![make_rpc_error_reply(), json!({"result": "0x1a"})]).await;
-        let config = make_network_config([&fixture; 4], 2);
+        let config = make_endpoint_config([&fixture; 4], 2);
 
         assert!(matches!(
             call_eth_block_number(&fixture.client(), config.retry_policy()).await,
@@ -243,7 +233,7 @@ mod tests {
         let fixture =
             make_network_fixture(vec![make_rpc_error_reply(), json!({"result": {"tip": {}}})])
                 .await;
-        let config = make_network_config([&fixture; 4], 2);
+        let config = make_endpoint_config([&fixture; 4], 2);
 
         assert!(matches!(
             call_chain_status(&fixture.client(), config.retry_policy()).await,
@@ -255,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn rpc_status_is_offline_after_configured_retry_exhaustion() {
         let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
-        let config = make_network_config([&fixture; 4], 2);
+        let config = make_endpoint_config([&fixture; 4], 2);
 
         assert!(matches!(
             call_eth_block_number(&fixture.client(), config.retry_policy()).await,
@@ -268,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn rpc_status_has_one_attempt_when_retries_are_disabled() {
         let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
-        let config = make_network_config([&fixture; 4], 0);
+        let config = make_endpoint_config([&fixture; 4], 0);
 
         assert!(matches!(
             call_chain_status(&fixture.client(), config.retry_policy()).await,
@@ -280,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn eth_status_does_not_retry_successful_non_hex_response() {
         let fixture = make_network_fixture(vec![json!({"result": "latest"})]).await;
-        let config = make_network_config([&fixture; 4], 3);
+        let config = make_endpoint_config([&fixture; 4], 3);
 
         assert!(matches!(
             call_eth_block_number(&fixture.client(), config.retry_policy()).await,
@@ -292,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn chain_status_does_not_retry_successful_response_without_tip() {
         let fixture = make_network_fixture(vec![json!({"result": {"confirmed": {}}})]).await;
-        let config = make_network_config([&fixture; 4], 3);
+        let config = make_endpoint_config([&fixture; 4], 3);
 
         assert!(matches!(
             call_chain_status(&fixture.client(), config.retry_policy()).await,
@@ -314,7 +304,7 @@ mod tests {
             make_network_fixture(vec![make_rpc_error_reply(), json!({"result": {"tip": {}}})])
                 .await;
         let fixtures = [&sequencer, &rpc, &ol_sequencer, &ol_rpc];
-        let config = make_network_config(fixtures, 1);
+        let config = make_endpoint_config(fixtures, 1);
 
         // Every endpoint succeeds on its own retry; none can consume another endpoint's budget.
         let status = poll_network_status(&NetworkClients::new(&config), &config).await;
@@ -331,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn network_poll_publishes_status_after_all_retry_budgets_are_exhausted() {
         let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
-        let config = make_network_config([&fixture; 4], 1);
+        let config = make_endpoint_config([&fixture; 4], 1);
         let context = Arc::new(NetworkMonitoringContext::new(config.clone()));
 
         let status = poll_network_status(&NetworkClients::new(&config), &config).await;

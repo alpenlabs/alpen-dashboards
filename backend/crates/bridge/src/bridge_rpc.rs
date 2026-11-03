@@ -207,6 +207,8 @@ mod tests {
     use status_utils::test_utils::{make_rpc_error_reply, TestRpcServer};
 
     use super::*;
+    use status_config::test_utils::{make_bridge_config, make_bridge_operator, LOCAL_ESPLORA_URL};
+
     use crate::test_utils::make_retry_config;
 
     fn make_rpc_manager(fixtures: &[&TestRpcServer]) -> RpcClientManager {
@@ -221,21 +223,8 @@ mod tests {
     }
 
     fn make_configured_rpc_manager(fixture: &TestRpcServer, max_retries: u16) -> RpcClientManager {
-        let config: BridgeMonitoringConfig = toml::from_str(&format!(
-            r#"
-            esplora_url = "http://localhost:3000"
-            max_tx_confirmations = 6
-            status_refetch_interval_s = 1
-            operators = [{{ name = "Operator", public_key = "{}", rpc_url = "{}" }}]
-            [retry]
-            max_retries = {max_retries}
-            base_delay_ms = 1
-            max_delay_ms = 1
-        "#,
-            make_operator_key(),
-            fixture.url()
-        ))
-        .expect("parse configured retry budget");
+        let operator = make_bridge_operator("Operator", &make_operator_key(), fixture.url());
+        let config = make_bridge_config(LOCAL_ESPLORA_URL, &[operator], Some(max_retries));
         RpcClientManager::new(&config)
     }
 

@@ -253,15 +253,7 @@ mod tests {
     }
 
     fn cfg() -> WithdrawalIndexerConfig {
-        let toml = r#"
-eth_rpc_url = ""
-batch_size = 1000
-finality_lag = 0
-start_block = 0
-poll_interval_s = 0
-withdrawal_denomination_sats = 100000000
-"#;
-        toml::from_str(toml).expect("parse cfg")
+        cfg_with(1000)
     }
 
     #[tokio::test]

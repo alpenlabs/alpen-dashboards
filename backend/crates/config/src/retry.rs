@@ -4,7 +4,7 @@ use strata_retry::RetryConfig;
 /// Request retry settings used by network and bridge monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct RequestRetryConfig {
+pub struct RequestRetryConfig {
     /// Retries after the initial request; zero disables retries.
     max_retries: u16,
 
@@ -15,6 +15,7 @@ pub(crate) struct RequestRetryConfig {
     max_delay_ms: u64,
 }
 
+/// 3 retries, a 2 s first delay and a 5 s cap.
 impl Default for RequestRetryConfig {
     fn default() -> Self {
         Self {

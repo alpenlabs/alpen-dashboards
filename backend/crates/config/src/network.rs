@@ -95,16 +95,16 @@ impl NetworkMonitoringConfig {
 mod tests {
     use super::NetworkMonitoringConfig;
 
-    fn make_network_config(retry_settings: &str) -> NetworkMonitoringConfig {
+    fn make_config_with_retry(retry_table: &str) -> NetworkMonitoringConfig {
         toml::from_str(&format!(
             r#"
             alpen_sequencer_url = "http://localhost:8545"
             alpen_rpc_url = "http://localhost:8546"
             strata_sequencer_url = "http://localhost:8432"
             strata_rpc_url = "http://localhost:8433"
-            bundler_url = "http://localhost:3000/health"
+            bundler_url = "http://localhost:4337/health"
             status_refetch_interval_s = 1
-            {retry_settings}
+            {retry_table}
             "#
         ))
         .expect("parse network config")
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn network_retry_uses_shared_defaults_for_missing_or_empty_table() {
         for table in ["", "[retry]"] {
-            let policy = make_network_config(table).retry_policy();
+            let policy = make_config_with_retry(table).retry_policy();
             assert_eq!(policy.max_retries, 3);
             assert_eq!(policy.base_delay_ms, 2_000);
             assert_eq!(policy.max_delay_ms, 5_000);
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn network_retry_preserves_overrides_across_config_roundtrip() {
-        let config = make_network_config(
+        let config = make_config_with_retry(
             "[retry]\nmax_retries = 2\nbase_delay_ms = 100\nmax_delay_ms = 900",
         );
         let policy = config.retry_policy();
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn network_retry_partial_override_can_disable_retries() {
         // Omitting the delays keeps their defaults even when retries are disabled.
-        let policy = make_network_config("[retry]\nmax_retries = 0").retry_policy();
+        let policy = make_config_with_retry("[retry]\nmax_retries = 0").retry_policy();
         assert_eq!(policy.max_retries, 0);
         assert_eq!(policy.base_delay_ms, 2_000);
         assert_eq!(policy.max_delay_ms, 5_000);
@@ -151,7 +151,8 @@ mod tests {
 
     #[test]
     fn network_config_rejects_unknown_settings() {
-        let config = toml::to_string(&make_network_config("")).expect("serialize network config");
+        let config =
+            toml::to_string(&make_config_with_retry("")).expect("serialize network config");
 
         // Unknown keys must fail instead of being silently ignored.
         for key in ["retry_policy_max_retries", "retry_policy_total_time_s"] {

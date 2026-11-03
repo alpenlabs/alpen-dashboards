@@ -169,7 +169,7 @@ mod tests {
 
     use axum::{extract::State, http::Uri, routing::get, Router};
     use bitcoin::hashes::Hash;
-    use status_config::BridgeMonitoringConfig;
+    use status_config::test_utils::make_bridge_config;
     use status_utils::test_utils::TestHttpServer;
     use tokio::time::sleep;
 
@@ -470,20 +470,7 @@ mod tests {
     async fn esplora_requests_use_configured_retry_budget() {
         let fixture =
             EsploraFixture::new(vec![(StatusCode::INTERNAL_SERVER_ERROR, "unavailable")]).await;
-        let config: BridgeMonitoringConfig = toml::from_str(&format!(
-            r#"
-            esplora_url = "{}"
-            max_tx_confirmations = 6
-            status_refetch_interval_s = 1
-            operators = []
-            [retry]
-            max_retries = 1
-            base_delay_ms = 1
-            max_delay_ms = 1
-        "#,
-            fixture.server.url()
-        ))
-        .expect("parse configured retry budget");
+        let config = make_bridge_config(fixture.server.url(), &[], Some(1));
         let client = EsploraClient::new(
             config.esplora_url(),
             config.esplora_request_timeout_s(),
