@@ -15,8 +15,11 @@ mod withdrawal_status;
 pub use context::BridgeMonitoringContext;
 pub use db::{
     error::{DbError, DbResult, WithdrawalIndexConsistencyError},
-    traits::BridgeStatusDb,
-    types::{BridgeStatusDbSnapshot, DbWithdrawalEventKey, StatusCursors},
+    traits::{BridgeStatusDb, WithdrawalIndexerDb},
+    types::{
+        BridgeStatusDbSnapshot, DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalEventKey,
+        DbWithdrawalRequest, DbWithdrawalRequestRow, StatusCursors,
+    },
     BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
 pub use status::{bridge_monitoring_task, get_bridge_status};

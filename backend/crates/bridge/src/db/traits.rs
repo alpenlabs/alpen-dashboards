@@ -19,7 +19,7 @@ use crate::{
 /// This trait owns the FIFO sequence of expanded `WithdrawalIntentEvent`
 /// requests, idempotent insertion via the event-key reverse index, and the
 /// indexer's [`DbIndexerState`].
-pub(crate) trait WithdrawalIndexerDb: Send + Sync {
+pub trait WithdrawalIndexerDb: Send + Sync + 'static {
     /// Returns the stored state for an indexer task.
     fn get_indexer_state(&self, task: &str) -> DbResult<Option<DbIndexerState>>;
 

@@ -59,8 +59,14 @@ impl BridgeStatusDbSnapshot {
 /// Indexer checkpoint. Tracks the highest block number that has been fully
 /// processed; the next scan resumes from `last_scanned_block + 1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DbIndexerState {
+pub struct DbIndexerState {
     pub(crate) last_scanned_block: u64,
+}
+
+impl DbIndexerState {
+    pub fn new(last_scanned_block: u64) -> Self {
+        Self { last_scanned_block }
+    }
 }
 
 /// Identity of one `WithdrawalIntentEvent` emitted on the EVM chain.
@@ -91,14 +97,20 @@ impl From<&DbWithdrawalRequest> for DbWithdrawalEventKey {
 
 /// Reverse index entry for a fully persisted withdrawal-intent event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DbWithdrawalEventIndex {
+pub struct DbWithdrawalEventIndex {
     pub(crate) first_seq: u64,
     pub(crate) count: u32,
 }
 
+impl DbWithdrawalEventIndex {
+    pub fn new(first_seq: u64, count: u32) -> Self {
+        Self { first_seq, count }
+    }
+}
+
 /// One single-denom withdrawal request expanded from a withdrawal-intent event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DbWithdrawalRequest {
+pub struct DbWithdrawalRequest {
     /// EVM transaction hash that emitted the event.
     pub(crate) tx_hash: Buf32,
 
@@ -121,9 +133,37 @@ pub(crate) struct DbWithdrawalRequest {
     pub(crate) block_number: u64,
 }
 
+impl DbWithdrawalRequest {
+    pub fn new(
+        tx_hash: Buf32,
+        log_index: u64,
+        sub_idx: u32,
+        amount_sats: u64,
+        destination: Vec<u8>,
+        selected_operator: u32,
+        block_number: u64,
+    ) -> Self {
+        Self {
+            tx_hash,
+            log_index,
+            sub_idx,
+            amount_sats,
+            destination,
+            selected_operator,
+            block_number,
+        }
+    }
+}
+
 /// Indexed withdrawal request row returned from the withdrawal-index DB.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DbWithdrawalRequestRow {
+pub struct DbWithdrawalRequestRow {
     pub(crate) seq: u64,
     pub(crate) request: DbWithdrawalRequest,
+}
+
+impl DbWithdrawalRequestRow {
+    pub fn new(seq: u64, request: DbWithdrawalRequest) -> Self {
+        Self { seq, request }
+    }
 }

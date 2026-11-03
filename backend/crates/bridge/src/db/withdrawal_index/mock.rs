@@ -96,7 +96,7 @@ impl WithdrawalIndexerDb for MockWithdrawalIndexerDb {
                 .ok_or(WithdrawalIndexConsistencyError::SeqOverflow(*max))
                 .map_err(DbError::from)
         })?;
-        let index = DbWithdrawalEventIndex { first_seq, count };
+        let index = DbWithdrawalEventIndex::new(first_seq, count);
 
         for (offset, request) in event_requests.iter().enumerate() {
             let seq = first_seq
@@ -126,10 +126,7 @@ impl WithdrawalIndexerDb for MockWithdrawalIndexerDb {
             .expect("mock requests lock poisoned")
             .range(start_seq..)
             .take(limit)
-            .map(|(seq, request)| DbWithdrawalRequestRow {
-                seq: *seq,
-                request: request.clone(),
-            })
+            .map(|(seq, request)| DbWithdrawalRequestRow::new(*seq, request.clone()))
             .collect())
     }
 
