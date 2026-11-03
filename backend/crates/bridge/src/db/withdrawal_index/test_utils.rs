@@ -2,10 +2,14 @@
 
 use strata_primitives::buf::Buf32;
 
-use crate::db::traits::WithdrawalIndexerDb;
-
-use crate::db::types::{
-    DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest, DbWithdrawalRequestRow,
+use crate::{
+    db::{
+        traits::WithdrawalIndexerDb,
+        types::{
+            DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest, DbWithdrawalRequestRow,
+        },
+    },
+    withdrawal_indexer::TASK_NAME,
 };
 
 pub(crate) fn make_withdrawal_request(seed: u8) -> DbWithdrawalRequest {
@@ -20,35 +24,39 @@ pub(crate) fn make_withdrawal_request(seed: u8) -> DbWithdrawalRequest {
     }
 }
 
-pub(crate) fn assert_withdrawal_event_roundtrip<D: WithdrawalIndexerDb>(db: &D) {
-    let req_a = make_withdrawal_request(1);
-    let req_b = DbWithdrawalRequest {
-        sub_idx: 1,
-        ..req_a.clone()
-    };
+/// Requests of one withdrawal-intent event, one per sub-unit.
+pub(crate) fn make_withdrawal_event(seed: u8, count: u32) -> Vec<DbWithdrawalRequest> {
+    (0..count)
+        .map(|sub_idx| DbWithdrawalRequest {
+            sub_idx,
+            ..make_withdrawal_request(seed)
+        })
+        .collect()
+}
+
+/// Rows for `requests` stored from `first_seq` onwards.
+pub(crate) fn make_request_rows(
+    first_seq: u64,
+    requests: &[DbWithdrawalRequest],
+) -> Vec<DbWithdrawalRequestRow> {
+    (first_seq..)
+        .zip(requests.iter().cloned())
+        .map(|(seq, request)| DbWithdrawalRequestRow::new(seq, request))
+        .collect()
+}
+
+pub(crate) fn assert_returns_inserted_events_and_state(db: &impl WithdrawalIndexerDb) {
+    let requests = make_withdrawal_event(1, 2);
 
     assert_eq!(
-        db.insert_withdrawal_event(&[req_a.clone(), req_b.clone()])
-            .expect("insert event"),
-        DbWithdrawalEventIndex {
-            first_seq: 0,
-            count: 2
-        }
+        db.insert_withdrawal_event(&requests).expect("insert event"),
+        DbWithdrawalEventIndex::new(0, 2)
     );
 
     assert_eq!(
         db.fetch_withdrawal_requests_from(0, 2)
             .expect("fetch request rows"),
-        vec![
-            DbWithdrawalRequestRow {
-                seq: 0,
-                request: req_a.clone()
-            },
-            DbWithdrawalRequestRow {
-                seq: 1,
-                request: req_b.clone()
-            }
-        ]
+        make_request_rows(0, &requests)
     );
     assert!(db
         .fetch_withdrawal_requests_from(99, 1)
@@ -57,25 +65,17 @@ pub(crate) fn assert_withdrawal_event_roundtrip<D: WithdrawalIndexerDb>(db: &D) 
 
     assert_eq!(db.max_withdrawal_seq().expect("max"), Some(1));
 
-    let state = DbIndexerState {
-        last_scanned_block: 4242,
-    };
-    db.put_indexer_state("withdrawal_index", &state)
-        .expect("put state");
+    let state = DbIndexerState::new(4242);
+    db.put_indexer_state(TASK_NAME, &state).expect("put state");
     assert_eq!(
-        db.get_indexer_state("withdrawal_index").expect("get state"),
+        db.get_indexer_state(TASK_NAME).expect("get state"),
         Some(state)
     );
     assert_eq!(db.get_indexer_state("absent").expect("missing"), None);
 }
 
-pub(crate) fn assert_withdrawal_event_replay_is_idempotent<D: WithdrawalIndexerDb>(db: &D) {
-    let req_a = make_withdrawal_request(4);
-    let req_b = DbWithdrawalRequest {
-        sub_idx: 1,
-        ..req_a.clone()
-    };
-    let requests = [req_a.clone(), req_b.clone()];
+pub(crate) fn assert_withdrawal_event_replay_is_idempotent(db: &impl WithdrawalIndexerDb) {
+    let requests = make_withdrawal_event(4, 2);
 
     let first_index = db
         .insert_withdrawal_event(&requests)
@@ -89,15 +89,6 @@ pub(crate) fn assert_withdrawal_event_replay_is_idempotent<D: WithdrawalIndexerD
     assert_eq!(
         db.fetch_withdrawal_requests_from(first_index.first_seq, 2)
             .expect("fetch request rows"),
-        vec![
-            DbWithdrawalRequestRow {
-                seq: first_index.first_seq,
-                request: req_a
-            },
-            DbWithdrawalRequestRow {
-                seq: first_index.first_seq + 1,
-                request: req_b
-            }
-        ]
+        make_request_rows(first_index.first_seq, &requests)
     );
 }

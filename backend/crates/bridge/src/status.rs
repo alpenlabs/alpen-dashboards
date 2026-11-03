@@ -119,7 +119,7 @@ pub async fn bridge_monitoring_task(
             .filter(|(deposit_idx, _)| pairing_deposit_candidates.contains(deposit_idx))
             .collect::<Vec<_>>();
         let withdrawal_requests = fetch_withdrawal_requests(
-            context.withdrawal_index(),
+            context.withdrawal_index_db(),
             pairing_cursor.next_withdrawal_seq,
             pairing_deposit_candidates.len(),
             withdrawal_pairing_batch_size,
@@ -150,7 +150,7 @@ pub async fn bridge_monitoring_task(
         let withdrawal_candidates = context.state().select_withdrawal_status_candidates().await;
         let withdrawal_updates = get_withdrawal_updates(
             context.bridge_rpc(),
-            context.withdrawal_index(),
+            context.withdrawal_index_db(),
             context.esplora(),
             chain_tip_height,
             &withdrawal_candidates,

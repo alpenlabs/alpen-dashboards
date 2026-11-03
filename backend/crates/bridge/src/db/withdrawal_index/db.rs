@@ -122,7 +122,7 @@ impl WithdrawalIndexerDb for WithdrawalIndexerDbSled {
                 .ok_or(WithdrawalIndexConsistencyError::SeqOverflow(max))
                 .map_err(DbError::from)
         })?;
-        let index = DbWithdrawalEventIndex { first_seq, count };
+        let index = DbWithdrawalEventIndex::new(first_seq, count);
 
         // The indexer is single-writer. If another writer races anyway, the
         // transaction below catches the stale sequence with `SeqOccupied`.
@@ -187,7 +187,7 @@ impl WithdrawalIndexerDb for WithdrawalIndexerDbSled {
         let mut rows = Vec::new();
         for entry in self.requests.range(start_seq..)?.take(limit) {
             let (seq, request) = entry?;
-            rows.push(DbWithdrawalRequestRow { seq, request });
+            rows.push(DbWithdrawalRequestRow::new(seq, request));
         }
         Ok(rows)
     }
@@ -206,12 +206,15 @@ mod tests {
     };
 
     use super::*;
-    use crate::db::withdrawal_index::{
-        mock::MockWithdrawalIndexerDb,
-        test_utils::{
-            assert_withdrawal_event_replay_is_idempotent, assert_withdrawal_event_roundtrip,
-            make_withdrawal_request,
+    use crate::{
+        db::withdrawal_index::{
+            mock::MockWithdrawalIndexerDb,
+            test_utils::{
+                assert_returns_inserted_events_and_state,
+                assert_withdrawal_event_replay_is_idempotent, make_withdrawal_request,
+            },
         },
+        withdrawal_indexer::TASK_NAME,
     };
 
     fn make_unique_db_path(test_name: &str) -> PathBuf {
@@ -227,14 +230,14 @@ mod tests {
     }
 
     #[test]
-    fn withdrawal_event_roundtrip_sled() {
+    fn withdrawal_index_db_returns_inserted_events_and_state_sled() {
         let db = WithdrawalIndexerDbSled::open_temporary().expect("open db");
-        assert_withdrawal_event_roundtrip(&db);
+        assert_returns_inserted_events_and_state(&db);
     }
 
     #[test]
-    fn withdrawal_event_roundtrip_mock() {
-        assert_withdrawal_event_roundtrip(&MockWithdrawalIndexerDb::default());
+    fn withdrawal_index_db_returns_inserted_events_and_state_mock() {
+        assert_returns_inserted_events_and_state(&MockWithdrawalIndexerDb::default());
     }
 
     #[test]
@@ -252,16 +255,13 @@ mod tests {
     fn rows_persist_across_reopen() {
         let path = make_unique_db_path("reopen");
         let req = make_withdrawal_request(1);
-        let state = DbIndexerState {
-            last_scanned_block: 12345,
-        };
+        let state = DbIndexerState::new(12345);
 
         {
             let db = WithdrawalIndexerDbSled::open(&path).expect("open db");
             db.insert_withdrawal_event(std::slice::from_ref(&req))
                 .expect("insert event");
-            db.put_indexer_state("withdrawal_index", &state)
-                .expect("put state");
+            db.put_indexer_state(TASK_NAME, &state).expect("put state");
         }
 
         {
@@ -270,15 +270,10 @@ mod tests {
                 reopened
                     .fetch_withdrawal_requests_from(0, 1)
                     .expect("fetch request"),
-                vec![crate::db::types::DbWithdrawalRequestRow {
-                    seq: 0,
-                    request: req.clone()
-                }]
+                vec![DbWithdrawalRequestRow::new(0, req.clone())]
             );
             assert_eq!(
-                reopened
-                    .get_indexer_state("withdrawal_index")
-                    .expect("get state"),
+                reopened.get_indexer_state(TASK_NAME).expect("get state"),
                 Some(state)
             );
         }

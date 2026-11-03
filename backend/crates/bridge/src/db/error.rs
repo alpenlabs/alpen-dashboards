@@ -1,7 +1,8 @@
 use crate::db::types::DbWithdrawalEventKey;
 
+/// Violated withdrawal-index invariant.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(crate) enum WithdrawalIndexConsistencyError {
+pub enum WithdrawalIndexConsistencyError {
     #[error("withdrawal sequence overflow at {0}")]
     SeqOverflow(u64),
 
@@ -12,8 +13,9 @@ pub(crate) enum WithdrawalIndexConsistencyError {
     EventIndexInconsistent(DbWithdrawalEventKey, u64, u32),
 }
 
+/// Error returned by bridge database implementations.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum DbError {
+pub enum DbError {
     #[error("withdrawal event contains no requests")]
     EmptyWithdrawalEvent,
 
@@ -39,4 +41,5 @@ impl From<sled::Error> for DbError {
     }
 }
 
-pub(crate) type DbResult<T> = Result<T, DbError>;
+/// Result of a bridge database operation.
+pub type DbResult<T> = Result<T, DbError>;

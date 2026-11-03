@@ -9,10 +9,7 @@ use status_config::WithdrawalIndexerConfig;
 use strata_tasks::ShutdownGuard;
 use tracing::{debug, info, warn};
 
-use crate::db::{
-    error::DbError, traits::WithdrawalIndexerDb, types::DbIndexerState,
-    withdrawal_index::db::WithdrawalIndexerDbSled,
-};
+use crate::db::{error::DbError, traits::WithdrawalIndexerDb, types::DbIndexerState};
 
 use super::{
     decoder::{self, DecodeError},
@@ -54,10 +51,10 @@ pub(crate) enum TickOutcome {
 
 /// Run the withdrawal indexer until `shutdown` is signalled.
 ///
-/// Startup failures (DB open, RPC client) return an error so the caller
+/// RPC client construction failures return an error so the caller
 /// can treat the task as critical. Tick errors are logged and retried.
 pub async fn run_withdrawal_indexer(
-    db: Arc<WithdrawalIndexerDbSled>,
+    db: Arc<impl WithdrawalIndexerDb>,
     cfg: WithdrawalIndexerConfig,
     shutdown: ShutdownGuard,
 ) -> Result<()> {
