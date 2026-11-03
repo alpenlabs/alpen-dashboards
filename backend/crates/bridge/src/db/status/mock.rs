@@ -26,6 +26,26 @@ pub(crate) struct MockBridgeStatusDb {
     reimbursement_status_cursor: RwLock<ReimbursementStatusCursor>,
 }
 
+impl MockBridgeStatusDb {
+    /// Creates a database holding the records in `snapshot`.
+    pub(crate) fn from_snapshot(snapshot: BridgeStatusDbSnapshot) -> Self {
+        Self {
+            withdrawals: RwLock::new(snapshot.withdrawals.into_iter().collect()),
+            withdrawal_pairings: RwLock::new(
+                snapshot
+                    .withdrawal_pairings
+                    .into_iter()
+                    .map(|pairing| (pairing.deposit_idx, pairing.withdrawal_seq))
+                    .collect(),
+            ),
+            deposit_info_cursor: RwLock::new(snapshot.cursors.deposit_info),
+            withdrawal_pairing_cursor: RwLock::new(snapshot.cursors.withdrawal_pairing),
+            withdrawal_status_cursor: RwLock::new(snapshot.cursors.withdrawal_status),
+            reimbursement_status_cursor: RwLock::new(snapshot.cursors.reimbursement_status),
+        }
+    }
+}
+
 impl BridgeStatusDb for MockBridgeStatusDb {
     fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
         Ok(BridgeStatusDbSnapshot::new(

@@ -369,7 +369,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_deposit_indices_from_cursor() {
+    fn deposit_index_count_stops_at_first_gap_from_cursor() {
         let cases = [
             (&[0, 1, 3][..], 0, 2),
             (&[0, 1, 2, 3][..], 0, 4),
