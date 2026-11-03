@@ -4,7 +4,7 @@ use crate::{
     db::{
         error::DbResult,
         types::{
-            DbBridgeStatusSnapshot, DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest,
+            BridgeStatusDbSnapshot, DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest,
             DbWithdrawalRequestRow,
         },
     },
@@ -49,9 +49,9 @@ pub(crate) trait WithdrawalIndexerDb: Send + Sync {
 }
 
 /// Storage contract for bridge status rows, pairings, and cursors.
-pub(crate) trait BridgeStatusDb: Send + Sync {
+pub trait BridgeStatusDb: Send + Sync + 'static {
     /// Loads all persisted status rows, pairings, and cursors.
-    fn get_status_snapshot(&self) -> DbResult<DbBridgeStatusSnapshot>;
+    fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot>;
 
     /// Inserts or replaces one withdrawal status row.
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()>;

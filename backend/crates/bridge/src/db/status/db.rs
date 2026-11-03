@@ -8,7 +8,7 @@ use crate::{
     db::{
         error::{DbError, DbResult},
         traits::BridgeStatusDb,
-        types::{DbBridgeStatusSnapshot, StatusCursors},
+        types::{BridgeStatusDbSnapshot, StatusCursors},
     },
     types::{
         ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
@@ -75,48 +75,41 @@ impl BridgeStatusDbSled {
     }
 
     fn status_cursors(&self) -> DbResult<StatusCursors> {
-        Ok(StatusCursors {
-            deposit_info: self
-                .deposit_info_cursor
+        Ok(StatusCursors::new(
+            self.deposit_info_cursor
                 .get(&CURSOR_CELL_KEY)?
                 .unwrap_or_default(),
-            withdrawal_pairing: self
-                .withdrawal_pairing_cursor
+            self.withdrawal_pairing_cursor
                 .get(&CURSOR_CELL_KEY)?
                 .unwrap_or_default(),
-            withdrawal_status: self
-                .withdrawal_status_cursor
+            self.withdrawal_status_cursor
                 .get(&CURSOR_CELL_KEY)?
                 .unwrap_or_default(),
-            reimbursement_status: self
-                .reimbursement_status_cursor
+            self.reimbursement_status_cursor
                 .get(&CURSOR_CELL_KEY)?
                 .unwrap_or_default(),
-        })
+        ))
     }
 }
 
 impl BridgeStatusDb for BridgeStatusDbSled {
-    fn get_status_snapshot(&self) -> DbResult<DbBridgeStatusSnapshot> {
-        Ok(DbBridgeStatusSnapshot {
-            withdrawals: self
-                .withdrawals
+    fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
+        Ok(BridgeStatusDbSnapshot::new(
+            self.withdrawals
                 .iter()
                 .map(|result| result.map_err(DbError::from))
                 .collect::<DbResult<_>>()?,
-            withdrawal_pairings: self
-                .withdrawal_pairings
+            self.withdrawal_pairings
                 .iter()
                 .map(|result| result.map_err(DbError::from))
                 .map(|result| {
-                    result.map(|(deposit_idx, withdrawal_seq)| WithdrawalPairing {
-                        deposit_idx,
-                        withdrawal_seq,
+                    result.map(|(deposit_idx, withdrawal_seq)| {
+                        WithdrawalPairing::new(deposit_idx, withdrawal_seq)
                     })
                 })
                 .collect::<DbResult<_>>()?,
-            cursors: self.status_cursors()?,
-        })
+            self.status_cursors()?,
+        ))
     }
 
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()> {
@@ -197,7 +190,7 @@ mod tests {
         types::{WithdrawalInfo, WithdrawalPairing, WithdrawalStatus},
     };
 
-    fn txid(byte: u8) -> Txid {
+    fn make_txid(byte: u8) -> Txid {
         Txid::from_byte_array([byte; 32])
     }
 
@@ -213,19 +206,12 @@ mod tests {
         ))
     }
 
-    fn withdrawal_info(byte: u8, status: WithdrawalStatus) -> WithdrawalInfo {
+    fn make_withdrawal_info(byte: u8, status: WithdrawalStatus) -> WithdrawalInfo {
         WithdrawalInfo {
             withdrawal_request_txid: Buf32([byte; 32]),
-            fulfillment_txid: Some(txid(byte + 1)),
+            fulfillment_txid: Some(make_txid(byte + 1)),
             status,
         }
-    }
-
-    fn pairing(
-        deposit_idx: DepositIdx,
-        withdrawal_seq: crate::types::WithdrawalSeq,
-    ) -> WithdrawalPairing {
-        WithdrawalPairing::new(deposit_idx, withdrawal_seq)
     }
 
     fn assert_empty_snapshot(db: &impl BridgeStatusDb) {
@@ -235,8 +221,8 @@ mod tests {
         assert_eq!(snapshot.cursors, StatusCursors::default());
     }
 
-    fn assert_roundtrip(db: &impl BridgeStatusDb) {
-        let withdrawal = withdrawal_info(3, WithdrawalStatus::Complete);
+    fn assert_snapshot_reflects_puts_and_deletes(db: &impl BridgeStatusDb) {
+        let withdrawal = make_withdrawal_info(3, WithdrawalStatus::Complete);
         let cursors = StatusCursors {
             deposit_info: 11,
             withdrawal_pairing: WithdrawalPairingCursor {
@@ -253,8 +239,8 @@ mod tests {
 
         db.put_withdrawal_info(2, &withdrawal)
             .expect("put withdrawal");
-        db.put_withdrawal_pairings(&[pairing(1, 7), pairing(2, 8)])
-            .expect("put pairings");
+        let pairings = [WithdrawalPairing::new(1, 7), WithdrawalPairing::new(2, 8)];
+        db.put_withdrawal_pairings(&pairings).expect("put pairings");
         db.put_deposit_info_cursor(cursors.deposit_info)
             .expect("put deposit cursor");
         db.put_withdrawal_pairing_cursor(cursors.withdrawal_pairing)
@@ -271,10 +257,7 @@ mod tests {
             snapshot.withdrawals[0].1.withdrawal_request_txid,
             Buf32([3; 32])
         );
-        assert_eq!(
-            snapshot.withdrawal_pairings,
-            vec![pairing(1, 7), pairing(2, 8)]
-        );
+        assert_eq!(snapshot.withdrawal_pairings, pairings);
         assert_eq!(snapshot.cursors, cursors);
 
         db.del_withdrawal_pairings_range(0, 2)
@@ -284,18 +267,18 @@ mod tests {
 
         let snapshot = db.get_status_snapshot().expect("snapshot after deletes");
         assert!(snapshot.withdrawals.is_empty());
-        assert_eq!(snapshot.withdrawal_pairings, vec![pairing(2, 8)]);
+        assert_eq!(
+            snapshot.withdrawal_pairings,
+            vec![WithdrawalPairing::new(2, 8)]
+        );
         assert_eq!(snapshot.cursors, cursors);
     }
 
-    fn assert_pairing_range_delete(db: &impl BridgeStatusDb) {
-        db.put_withdrawal_pairings(&[
-            pairing(1, 10),
-            pairing(2, 20),
-            pairing(4, 40),
-            pairing(5, 50),
-        ])
-        .expect("put pairings");
+    fn assert_pairing_range_delete_removes_only_rows_in_range(db: &impl BridgeStatusDb) {
+        let pairings = [1, 2, 4, 5]
+            .map(|deposit_idx| WithdrawalPairing::new(deposit_idx, u64::from(deposit_idx) * 10));
+        db.put_withdrawal_pairings(&pairings).expect("put pairings");
+        let remaining = vec![WithdrawalPairing::new(1, 10), WithdrawalPairing::new(5, 50)];
 
         db.del_withdrawal_pairings_range(2, 5)
             .expect("delete middle range");
@@ -303,7 +286,7 @@ mod tests {
             db.get_status_snapshot()
                 .expect("snapshot")
                 .withdrawal_pairings,
-            vec![pairing(1, 10), pairing(5, 50)]
+            remaining
         );
 
         db.del_withdrawal_pairings_range(5, 5)
@@ -314,57 +297,54 @@ mod tests {
             db.get_status_snapshot()
                 .expect("snapshot")
                 .withdrawal_pairings,
-            vec![pairing(1, 10), pairing(5, 50)]
+            remaining
         );
     }
 
     #[test]
-    fn status_db_empty_snapshot_sled() {
+    fn new_status_db_returns_empty_snapshot_sled() {
         let db = BridgeStatusDbSled::open_temporary().expect("open db");
         assert_empty_snapshot(&db);
     }
 
     #[test]
-    fn status_db_empty_snapshot_mock() {
+    fn new_status_db_returns_empty_snapshot_mock() {
         assert_empty_snapshot(&MockBridgeStatusDb::default());
     }
 
     #[test]
-    fn status_db_roundtrip_sled() {
+    fn status_db_snapshot_reflects_puts_and_deletes_sled() {
         let db = BridgeStatusDbSled::open_temporary().expect("open db");
-        assert_roundtrip(&db);
+        assert_snapshot_reflects_puts_and_deletes(&db);
     }
 
     #[test]
-    fn status_db_roundtrip_mock() {
-        assert_roundtrip(&MockBridgeStatusDb::default());
+    fn status_db_snapshot_reflects_puts_and_deletes_mock() {
+        assert_snapshot_reflects_puts_and_deletes(&MockBridgeStatusDb::default());
     }
 
     #[test]
-    fn status_db_pairing_range_delete_sled() {
+    fn pairing_range_delete_removes_only_rows_in_range_sled() {
         let db = BridgeStatusDbSled::open_temporary().expect("open db");
-        assert_pairing_range_delete(&db);
+        assert_pairing_range_delete_removes_only_rows_in_range(&db);
     }
 
     #[test]
-    fn status_db_pairing_range_delete_mock() {
-        assert_pairing_range_delete(&MockBridgeStatusDb::default());
+    fn pairing_range_delete_removes_only_rows_in_range_mock() {
+        assert_pairing_range_delete_removes_only_rows_in_range(&MockBridgeStatusDb::default());
     }
 
     #[test]
     fn status_rows_persist_across_reopen() {
         let path = make_unique_db_path("reopen");
-        let withdrawal = withdrawal_info(9, WithdrawalStatus::Complete);
-        let cursor = StatusCursors {
-            deposit_info: 42,
-            ..StatusCursors::default()
-        };
+        let withdrawal = make_withdrawal_info(9, WithdrawalStatus::Complete);
+        let deposit_info_cursor = 42;
 
         {
             let db = BridgeStatusDbSled::open(&path).expect("open db");
             db.put_withdrawal_info(7, &withdrawal)
                 .expect("put withdrawal");
-            db.put_deposit_info_cursor(cursor.deposit_info)
+            db.put_deposit_info_cursor(deposit_info_cursor)
                 .expect("put cursor");
         }
 
@@ -377,7 +357,7 @@ mod tests {
                 snapshot.withdrawals[0].1.withdrawal_request_txid,
                 Buf32([9; 32])
             );
-            assert_eq!(snapshot.cursors.deposit_info, cursor.deposit_info);
+            assert_eq!(snapshot.cursors.deposit_info, deposit_info_cursor);
         }
 
         let _ = fs::remove_dir_all(path);

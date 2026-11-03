@@ -11,19 +11,49 @@ use crate::types::{
 
 /// Assembled snapshot of bridge-status cursors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct StatusCursors {
+pub struct StatusCursors {
     pub(crate) deposit_info: DepositIdx,
     pub(crate) withdrawal_pairing: WithdrawalPairingCursor,
     pub(crate) withdrawal_status: WithdrawalStatusCursor,
     pub(crate) reimbursement_status: ReimbursementStatusCursor,
 }
 
+impl StatusCursors {
+    pub fn new(
+        deposit_info: DepositIdx,
+        withdrawal_pairing: WithdrawalPairingCursor,
+        withdrawal_status: WithdrawalStatusCursor,
+        reimbursement_status: ReimbursementStatusCursor,
+    ) -> Self {
+        Self {
+            deposit_info,
+            withdrawal_pairing,
+            withdrawal_status,
+            reimbursement_status,
+        }
+    }
+}
+
 /// Snapshot of all persisted bridge-status rows and cursors.
 #[derive(Debug, Clone)]
-pub(crate) struct DbBridgeStatusSnapshot {
+pub struct BridgeStatusDbSnapshot {
     pub(crate) withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
     pub(crate) withdrawal_pairings: Vec<WithdrawalPairing>,
     pub(crate) cursors: StatusCursors,
+}
+
+impl BridgeStatusDbSnapshot {
+    pub fn new(
+        withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
+        withdrawal_pairings: Vec<WithdrawalPairing>,
+        cursors: StatusCursors,
+    ) -> Self {
+        Self {
+            withdrawals,
+            withdrawal_pairings,
+            cursors,
+        }
+    }
 }
 
 /// Indexer checkpoint. Tracks the highest block number that has been fully
@@ -39,9 +69,15 @@ pub(crate) struct DbIndexerState {
 /// event when re-scanned (e.g. after restart or overlap). `log_index` is the
 /// EVM RPC `logIndex` for the block log, not a transaction-local index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub(crate) struct DbWithdrawalEventKey {
+pub struct DbWithdrawalEventKey {
     pub(crate) tx_hash: Buf32,
     pub(crate) log_index: u64,
+}
+
+impl DbWithdrawalEventKey {
+    pub fn new(tx_hash: Buf32, log_index: u64) -> Self {
+        Self { tx_hash, log_index }
+    }
 }
 
 impl From<&DbWithdrawalRequest> for DbWithdrawalEventKey {
