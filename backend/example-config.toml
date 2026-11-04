@@ -8,12 +8,12 @@ datadir = "data"
 
 # Network monitoring configuration
 [network]
-  alpen_rpc_url                 = "https://alpen.testnet.alpen.org"
+  alpen_rpc_url                 = "https://alpen.staging.testnet.alpenlabs.dev"
   alpen_sequencer_url           = "http://localhost:56917/"
-  bundler_url                   = "https://bundler.testnet.alpen.org/health"
+  bundler_url                   = "https://bundler.staging.testnet.alpenlabs.dev/health"
   initial_status_wait_timeout_s = 30
   status_refetch_interval_s     = 10
-  strata_rpc_url                = "https://strata.testnet.alpen.org"
+  strata_rpc_url                = "https://strata.staging.testnet.alpenlabs.dev"
   strata_sequencer_url          = "http://localhost:56790/"
 
   # Request retry policy; growth is fixed at 1.5x, matching bridge retries.
@@ -25,9 +25,9 @@ datadir = "data"
 # Bridge monitoring configuration
 [bridge]
   esplora_request_timeout_s     = 5
-  esplora_url                   = "https://esplora.testnet-prod.alpenlabs.io"
+  esplora_url                   = "https://esplora.staging.testnet.alpenlabs.dev"
   initial_status_wait_timeout_s = 5
-  max_tx_confirmations          = 18
+  max_tx_confirmations          = 6
   status_refetch_interval_s     = 120
   withdrawal_pairing_batch_size = 1_000
 
@@ -40,31 +40,23 @@ datadir = "data"
   # Bridge operators configuration
   [[bridge.operators]]
     name       = "Alpen Labs #1"
-    public_key = "025a46d9052f64ad8f3a6ad65342ddead4f4f76f92ac184868ca402b8bed627cb8"
+    public_key = "025f9bfac3b160a0b9129d558ce29ab2df66ebbdd85dec1f5a2faf2e9de07acdfd"
     rpc_url    = "http://localhost:55936"
 
   [[bridge.operators]]
     name       = "Alpen Labs #2"
-    public_key = "02444d7dca618168c1c4963a1556c2cab7d9172f0702cc3498dff72015717c0968"
+    public_key = "027098a1e38159f586536fabcb5537cdbb1454b1464c5c4a1bfd48de6c794d28c4"
     rpc_url    = "http://localhost:56062"
 
   [[bridge.operators]]
     name       = "Alpen Labs #3"
-    public_key = "02bff82939acd1deaeed90d6620b64ec475c6ff80a30fd07fca05315ddb1df873d"
+    public_key = "0288610184701307eef5dbb81ce1d974bc6940d21601a9656b565dab485321a03f"
     rpc_url    = "http://localhost:56135"
-
-  [[bridge.operators]]
-    name       = "Stakely"
-    public_key = "02a96ec5406c02be9b6a7b254af44acf15b23b908b21619f9be583d82f943b6fb2"
-
-  [[bridge.operators]]
-    name       = "Chainflow"
-    public_key = "024fba11d351c5e3b988a938b82bf210c1e7736594f6924f8e8ebe0c462e03569b"
 
 # Withdrawal-intent indexer configuration
 [withdrawal_indexer]
   batch_size                   = 1_000
-  eth_rpc_url                  = "https://alpen.testnet.alpen.org"
+  eth_rpc_url                  = "https://alpen.staging.testnet.alpenlabs.dev"
   finality_lag                 = 12
   poll_interval_s              = 10
   start_block                  = 0
