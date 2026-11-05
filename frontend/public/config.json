@@ -1,7 +1,7 @@
 {
   "apiBaseUrl": "http://localhost:3000",
-  "bitcoinExplorerUrl": "https://bitcoin-staging.testnet-v2.alpenlabs.io",
-  "alpenExplorerUrl": "https://blockscout-staging.testnet-v2.alpenlabs.io",
+  "bitcoinExplorerUrl": "https://bitcoin.staging.testnet.alpenlabs.dev",
+  "alpenExplorerUrl": "https://explorer.staging.testnet.alpenlabs.dev",
   "networkStatusRefetchIntervalS": 60,
   "bridgeStatusRefetchIntervalS": 120,
   "balanceRefetchIntervalS": 30,

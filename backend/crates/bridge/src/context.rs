@@ -121,17 +121,15 @@ impl BridgeMonitoringContext {
 mod tests {
     use status_config::test_utils::{make_bridge_config, LOCAL_ESPLORA_URL};
 
-    use bitcoin::Txid;
-    use std::str::FromStr;
-
     use super::*;
     use crate::{
         db::{status::mock::MockBridgeStatusDb, withdrawal_index::mock::MockWithdrawalIndexerDb},
         state::DepositInfoUpdate,
-        types::{DepositInfo, DepositStatus},
+        test_utils::{make_deposit_info, TEST_MAX_CONFIRMATIONS},
+        types::DepositStatus,
     };
 
-    fn test_context() -> BridgeMonitoringContext {
+    fn make_context() -> BridgeMonitoringContext {
         BridgeMonitoringContext::new(
             make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
             Arc::new(MockWithdrawalIndexerDb::default()),
@@ -141,14 +139,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bridge_status_reflects_cached_state() {
-        let context = test_context();
-        let deposit_request_txid =
-            Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
-                .expect("valid txid");
-        let deposit_txid =
-            Txid::from_str("0202020202020202020202020202020202020202020202020202020202020202")
-                .expect("valid txid");
+    async fn bridge_status_includes_completed_deposit_below_confirmation_cutoff() {
+        // Drive a production update, then query it through the context used by HTTP.
+        let context = make_context();
+        let info = make_deposit_info(DepositStatus::Complete);
 
         context
             .state()
@@ -156,14 +150,10 @@ mod tests {
                 context.status_db(),
                 vec![DepositInfoUpdate {
                     deposit_idx: 0,
-                    info: DepositInfo {
-                        deposit_request_txid,
-                        deposit_txid: Some(deposit_txid),
-                        status: DepositStatus::Complete,
-                    },
+                    info,
                     confirmations: Some(1),
                 }],
-                6,
+                TEST_MAX_CONFIRMATIONS,
             )
             .await
             .expect("apply deposit update");
@@ -173,14 +163,14 @@ mod tests {
         assert_eq!(status.deposits.len(), 1);
         assert_eq!(
             status.deposits[0].deposit_request_txid,
-            deposit_request_txid
+            info.deposit_request_txid
         );
-        assert_eq!(status.deposits[0].deposit_txid, Some(deposit_txid));
+        assert_eq!(status.deposits[0].deposit_txid, info.deposit_txid);
     }
 
     #[tokio::test]
-    async fn wait_for_initial_status_times_out_when_unavailable() {
-        let context = test_context();
+    async fn initial_status_wait_times_out_when_unavailable() {
+        let context = make_context();
 
         assert!(tokio::time::timeout(
             Duration::from_millis(1),
@@ -191,8 +181,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_for_initial_status_returns_when_available() {
-        let context = test_context();
+    async fn initial_status_wait_returns_when_available() {
+        let context = make_context();
 
         context.mark_status_available();
 
