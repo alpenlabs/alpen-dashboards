@@ -4,13 +4,14 @@ use axum::Json;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::HttpClient;
 use std::sync::Arc;
+use strata_retry::{retry_with_backoff_async, RetryConfig};
 use strata_tasks::ShutdownGuard;
-use tokio::time::{interval, sleep, timeout, Duration};
-use tracing::{error, info};
+use tokio::time::{interval, timeout, Duration};
+use tracing::info;
 
 use super::types::{NetworkMonitoringContext, NetworkStatus, Status};
 use status_config::NetworkMonitoringConfig;
-use status_utils::{create_rpc_client, ExponentialBackoff};
+use status_utils::create_rpc_client;
 
 const STRATA_CHAIN_STATUS_METHOD: &str = "strata_getChainStatus";
 const ETH_BLOCK_NUMBER_METHOD: &str = "eth_blockNumber";
@@ -30,47 +31,29 @@ async fn call_json_rpc_status(
     client: &HttpClient,
     method: &'static str,
     is_online: impl Fn(&serde_json::Value) -> bool,
-    retry_policy: ExponentialBackoff,
+    retry_policy: RetryConfig,
 ) -> Status {
-    let mut retry_count: u64 = 0;
+    let backoff = retry_policy.backoff();
+    let response = retry_with_backoff_async(method, retry_policy.max_retries, &backoff, || {
+        client.request::<serde_json::Value, _>(method, Vec::<()>::new())
+    })
+    .await;
 
-    loop {
-        let response: Result<serde_json::Value, _> = client.request(method, Vec::<()>::new()).await;
-        match response {
-            Ok(json) => {
-                info!(?json, method, "rpc response");
-                if is_online(&json) {
-                    return Status::Online;
-                } else {
-                    return Status::Offline;
-                }
-            }
-            Err(e) => {
-                if retry_count < retry_policy.max_retries() {
-                    let delay_seconds = retry_policy.get_delay(retry_count);
-                    if delay_seconds > 0 {
-                        info!(
-                            delay_seconds,
-                            retry_count, method, "retrying rpc status request"
-                        );
-                        sleep(Duration::from_secs(delay_seconds)).await;
-                    }
-                    retry_count += 1;
-                } else {
-                    error!(
-                        error = %e,
-                        method,
-                        "could not get network status"
-                    );
-                    return Status::Offline;
-                }
+    match response {
+        Ok(json) => {
+            info!(?json, method, "rpc response");
+            if is_online(&json) {
+                Status::Online
+            } else {
+                Status::Offline
             }
         }
+        Err(_) => Status::Offline,
     }
 }
 
 /// Calls the OL `strata_getChainStatus` method.
-async fn call_chain_status(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+async fn call_chain_status(client: &HttpClient, retry_policy: RetryConfig) -> Status {
     call_json_rpc_status(
         client,
         STRATA_CHAIN_STATUS_METHOD,
@@ -81,7 +64,7 @@ async fn call_chain_status(client: &HttpClient, retry_policy: ExponentialBackoff
 }
 
 /// Calls the EVM `eth_blockNumber` method.
-async fn call_eth_block_number(client: &HttpClient, retry_policy: ExponentialBackoff) -> Status {
+async fn call_eth_block_number(client: &HttpClient, retry_policy: RetryConfig) -> Status {
     call_json_rpc_status(
         client,
         ETH_BLOCK_NUMBER_METHOD,
@@ -204,9 +187,160 @@ pub async fn get_network_status(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use axum::{routing::get, Router};
+    use serde_json::{json, Value};
+    use status_config::test_utils::{make_network_config, NetworkUrls};
+    use status_utils::test_utils::{make_rpc_error_reply, TestRpcServer};
 
-    use super::{is_chain_status_response_online, is_eth_block_number_response_online};
+    use super::*;
+
+    async fn make_network_fixture(replies: Vec<Value>) -> TestRpcServer {
+        let router = Router::new().route("/health", get(|| async { "ok" }));
+        TestRpcServer::with_routes(replies, router).await
+    }
+
+    fn make_endpoint_config(
+        endpoints: [&TestRpcServer; 4],
+        max_retries: u16,
+    ) -> NetworkMonitoringConfig {
+        let [alpen_sequencer, alpen_rpc, strata_sequencer, strata_rpc] = endpoints;
+        let bundler = format!("{}/health", alpen_sequencer.url());
+        let urls = NetworkUrls {
+            alpen_sequencer: alpen_sequencer.url(),
+            alpen_rpc: alpen_rpc.url(),
+            strata_sequencer: strata_sequencer.url(),
+            strata_rpc: strata_rpc.url(),
+            bundler: &bundler,
+        };
+        make_network_config(&urls, Some(max_retries))
+    }
+
+    #[tokio::test]
+    async fn eth_status_recovers_after_transient_rpc_error() {
+        let fixture =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": "0x1a"})]).await;
+        let config = make_endpoint_config([&fixture; 4], 2);
+
+        assert!(matches!(
+            call_eth_block_number(&fixture.client(), config.retry_policy()).await,
+            Status::Online
+        ));
+        assert_eq!(fixture.methods(), vec![ETH_BLOCK_NUMBER_METHOD; 2]);
+    }
+
+    #[tokio::test]
+    async fn chain_status_recovers_after_transient_rpc_error() {
+        let fixture =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": {"tip": {}}})])
+                .await;
+        let config = make_endpoint_config([&fixture; 4], 2);
+
+        assert!(matches!(
+            call_chain_status(&fixture.client(), config.retry_policy()).await,
+            Status::Online
+        ));
+        assert_eq!(fixture.methods(), vec![STRATA_CHAIN_STATUS_METHOD; 2]);
+    }
+
+    #[tokio::test]
+    async fn rpc_status_is_offline_after_configured_retry_exhaustion() {
+        let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
+        let config = make_endpoint_config([&fixture; 4], 2);
+
+        assert!(matches!(
+            call_eth_block_number(&fixture.client(), config.retry_policy()).await,
+            Status::Offline
+        ));
+        // Two retries permit the initial attempt plus two more requests.
+        assert_eq!(fixture.attempts(), 3);
+    }
+
+    #[tokio::test]
+    async fn rpc_status_has_one_attempt_when_retries_are_disabled() {
+        let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
+        let config = make_endpoint_config([&fixture; 4], 0);
+
+        assert!(matches!(
+            call_chain_status(&fixture.client(), config.retry_policy()).await,
+            Status::Offline
+        ));
+        assert_eq!(fixture.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn eth_status_does_not_retry_successful_non_hex_response() {
+        let fixture = make_network_fixture(vec![json!({"result": "latest"})]).await;
+        let config = make_endpoint_config([&fixture; 4], 3);
+
+        assert!(matches!(
+            call_eth_block_number(&fixture.client(), config.retry_policy()).await,
+            Status::Offline
+        ));
+        assert_eq!(fixture.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn chain_status_does_not_retry_successful_response_without_tip() {
+        let fixture = make_network_fixture(vec![json!({"result": {"confirmed": {}}})]).await;
+        let config = make_endpoint_config([&fixture; 4], 3);
+
+        assert!(matches!(
+            call_chain_status(&fixture.client(), config.retry_policy()).await,
+            Status::Offline
+        ));
+        assert_eq!(fixture.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn network_poll_retries_each_rpc_endpoint_independently() {
+        let sequencer =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": "0x1"})]).await;
+        let rpc =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": "0x2"})]).await;
+        let ol_sequencer =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": {"tip": {}}})])
+                .await;
+        let ol_rpc =
+            make_network_fixture(vec![make_rpc_error_reply(), json!({"result": {"tip": {}}})])
+                .await;
+        let fixtures = [&sequencer, &rpc, &ol_sequencer, &ol_rpc];
+        let config = make_endpoint_config(fixtures, 1);
+
+        // Every endpoint succeeds on its own retry; none can consume another endpoint's budget.
+        let status = poll_network_status(&NetworkClients::new(&config), &config).await;
+        assert!(matches!(status.alpen_sequencer, Status::Online));
+        assert!(matches!(status.alpen_rpc, Status::Online));
+        assert!(matches!(status.strata_sequencer, Status::Online));
+        assert!(matches!(status.strata_rpc, Status::Online));
+        assert!(matches!(status.alpen_bundler, Status::Online));
+        for fixture in fixtures {
+            assert_eq!(fixture.attempts(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn network_poll_publishes_status_after_all_retry_budgets_are_exhausted() {
+        let fixture = make_network_fixture(vec![make_rpc_error_reply()]).await;
+        let config = make_endpoint_config([&fixture; 4], 1);
+        let context = Arc::new(NetworkMonitoringContext::new(config.clone()));
+
+        let status = poll_network_status(&NetworkClients::new(&config), &config).await;
+        assert!(matches!(status.alpen_sequencer, Status::Offline));
+        assert!(matches!(status.alpen_rpc, Status::Offline));
+        assert!(matches!(status.strata_sequencer, Status::Offline));
+        assert!(matches!(status.strata_rpc, Status::Offline));
+        assert!(matches!(status.alpen_bundler, Status::Online));
+        assert_eq!(fixture.attempts(), 8);
+
+        // An exhausted poll is still complete and can be published to HTTP callers.
+        context.set_status(status).await;
+        context.mark_status_available();
+        let Json(published) = get_network_status(context)
+            .await
+            .expect("published network status");
+        assert!(matches!(published.alpen_rpc, Status::Offline));
+        assert!(matches!(published.alpen_bundler, Status::Online));
+    }
 
     #[test]
     fn chain_status_response_with_tip_is_online() {

@@ -8,7 +8,7 @@ use tokio::time::Duration;
 
 use super::{
     bridge_rpc::RpcClientManager,
-    db::{traits::BridgeStatusDb, BridgeStatusDbSled, WithdrawalIndexerDbSled},
+    db::traits::{BridgeStatusDb, WithdrawalIndexerDb},
     esplora::EsploraClient,
     state::BridgeMonitoringState,
     types::BridgeStatus,
@@ -20,8 +20,8 @@ pub struct BridgeMonitoringContext {
     config: BridgeMonitoringConfig,
     bridge_rpc: RpcClientManager,
     esplora_client: EsploraClient,
-    withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-    status_db: Arc<BridgeStatusDbSled>,
+    withdrawal_index_db: Arc<dyn WithdrawalIndexerDb>,
+    status_db: Arc<dyn BridgeStatusDb>,
     state: BridgeMonitoringState,
     status_available: AtomicBool,
     initial_status_query_complete: Notify,
@@ -30,12 +30,15 @@ pub struct BridgeMonitoringContext {
 impl BridgeMonitoringContext {
     pub fn new(
         config: BridgeMonitoringConfig,
-        withdrawal_index: Arc<WithdrawalIndexerDbSled>,
-        status_db: Arc<BridgeStatusDbSled>,
+        withdrawal_index_db: Arc<impl WithdrawalIndexerDb>,
+        status_db: Arc<impl BridgeStatusDb>,
     ) -> anyhow::Result<Self> {
         let bridge_rpc = RpcClientManager::new(&config);
-        let esplora_client =
-            EsploraClient::new(config.esplora_url(), config.esplora_request_timeout_s());
+        let esplora_client = EsploraClient::new(
+            config.esplora_url(),
+            config.esplora_request_timeout_s(),
+            config.retry_policy(),
+        );
         let snapshot = status_db
             .get_status_snapshot()
             .map_err(|e| anyhow::anyhow!("hydrate bridge status state: {e}"))?;
@@ -45,7 +48,7 @@ impl BridgeMonitoringContext {
             config,
             bridge_rpc,
             esplora_client,
-            withdrawal_index,
+            withdrawal_index_db,
             status_db,
             state,
             status_available: AtomicBool::new(false),
@@ -65,11 +68,11 @@ impl BridgeMonitoringContext {
         &self.esplora_client
     }
 
-    pub(crate) fn withdrawal_index(&self) -> &WithdrawalIndexerDbSled {
-        self.withdrawal_index.as_ref()
+    pub(crate) fn withdrawal_index_db(&self) -> &dyn WithdrawalIndexerDb {
+        self.withdrawal_index_db.as_ref()
     }
 
-    pub(crate) fn status_db(&self) -> &BridgeStatusDbSled {
+    pub(crate) fn status_db(&self) -> &dyn BridgeStatusDb {
         self.status_db.as_ref()
     }
 
@@ -116,44 +119,30 @@ impl BridgeMonitoringContext {
 
 #[cfg(test)]
 mod tests {
-    use bitcoin::Txid;
-    use std::str::FromStr;
+    use status_config::test_utils::{make_bridge_config, LOCAL_ESPLORA_URL};
 
     use super::*;
     use crate::{
+        db::{status::mock::MockBridgeStatusDb, withdrawal_index::mock::MockWithdrawalIndexerDb},
         state::DepositInfoUpdate,
-        types::{DepositInfo, DepositStatus},
+        test_utils::{make_deposit_info, TEST_MAX_CONFIRMATIONS},
+        types::DepositStatus,
     };
 
-    fn test_config() -> BridgeMonitoringConfig {
-        toml::from_str(
-            r#"
-            esplora_url = "http://localhost:3000"
-            max_tx_confirmations = 6
-            status_refetch_interval_s = 1
-            operators = []
-            "#,
+    fn make_context() -> BridgeMonitoringContext {
+        BridgeMonitoringContext::new(
+            make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
+            Arc::new(MockWithdrawalIndexerDb::default()),
+            Arc::new(MockBridgeStatusDb::default()),
         )
-        .expect("test config should deserialize")
-    }
-
-    fn test_context() -> BridgeMonitoringContext {
-        let withdrawal_index =
-            Arc::new(WithdrawalIndexerDbSled::open_temporary().expect("open db"));
-        let status_db = Arc::new(BridgeStatusDbSled::open_temporary().expect("open status db"));
-        BridgeMonitoringContext::new(test_config(), withdrawal_index, status_db)
-            .expect("create bridge monitoring context")
+        .expect("create bridge monitoring context")
     }
 
     #[tokio::test]
-    async fn bridge_status_reflects_cached_state() {
-        let context = test_context();
-        let deposit_request_txid =
-            Txid::from_str("0101010101010101010101010101010101010101010101010101010101010101")
-                .expect("valid txid");
-        let deposit_txid =
-            Txid::from_str("0202020202020202020202020202020202020202020202020202020202020202")
-                .expect("valid txid");
+    async fn bridge_status_includes_completed_deposit_below_confirmation_cutoff() {
+        // Drive a production update, then query it through the context used by HTTP.
+        let context = make_context();
+        let info = make_deposit_info(DepositStatus::Complete);
 
         context
             .state()
@@ -161,14 +150,10 @@ mod tests {
                 context.status_db(),
                 vec![DepositInfoUpdate {
                     deposit_idx: 0,
-                    info: DepositInfo {
-                        deposit_request_txid,
-                        deposit_txid: Some(deposit_txid),
-                        status: DepositStatus::Complete,
-                    },
+                    info,
                     confirmations: Some(1),
                 }],
-                6,
+                TEST_MAX_CONFIRMATIONS,
             )
             .await
             .expect("apply deposit update");
@@ -178,14 +163,14 @@ mod tests {
         assert_eq!(status.deposits.len(), 1);
         assert_eq!(
             status.deposits[0].deposit_request_txid,
-            deposit_request_txid
+            info.deposit_request_txid
         );
-        assert_eq!(status.deposits[0].deposit_txid, Some(deposit_txid));
+        assert_eq!(status.deposits[0].deposit_txid, info.deposit_txid);
     }
 
     #[tokio::test]
-    async fn wait_for_initial_status_times_out_when_unavailable() {
-        let context = test_context();
+    async fn initial_status_wait_times_out_when_unavailable() {
+        let context = make_context();
 
         assert!(tokio::time::timeout(
             Duration::from_millis(1),
@@ -196,8 +181,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_for_initial_status_returns_when_available() {
-        let context = test_context();
+    async fn initial_status_wait_returns_when_available() {
+        let context = make_context();
 
         context.mark_status_available();
 

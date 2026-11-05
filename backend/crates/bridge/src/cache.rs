@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use strata_bridge_primitives::types::DepositIdx;
 
 use super::{
-    db::types::DbBridgeStatusSnapshot,
+    db::types::BridgeStatusDbSnapshot,
     types::{
         DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
         WithdrawalPairing, WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
@@ -62,7 +62,7 @@ pub(crate) struct BridgeStatusCache {
 }
 
 impl BridgeStatusCache {
-    pub(crate) fn from_status_snapshot(snapshot: DbBridgeStatusSnapshot) -> Self {
+    pub(crate) fn from_status_snapshot(snapshot: BridgeStatusDbSnapshot) -> Self {
         let mut cache = Self::default();
 
         cache.apply_withdrawal_updates(

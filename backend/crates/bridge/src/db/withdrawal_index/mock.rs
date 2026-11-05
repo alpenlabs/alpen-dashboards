@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-use crate::db::{
-    error::{DbError, DbResult, WithdrawalIndexConsistencyError},
-    traits::WithdrawalIndexerDb,
+use crate::{
+    db::{
+        error::{DbError, DbResult, WithdrawalIndexConsistencyError},
+        traits::WithdrawalIndexerDb,
+    },
+    withdrawal_indexer::TASK_NAME,
 };
 
 use crate::db::types::{
@@ -17,6 +20,32 @@ pub(crate) struct MockWithdrawalIndexerDb {
     state: RwLock<BTreeMap<String, DbIndexerState>>,
     requests: RwLock<BTreeMap<u64, DbWithdrawalRequest>>,
     event_index: RwLock<BTreeMap<DbWithdrawalEventKey, DbWithdrawalEventIndex>>,
+}
+
+impl MockWithdrawalIndexerDb {
+    /// Creates a database holding `rows` and the indexer `state`, keeping each row's sequence.
+    pub(crate) fn from_snapshot(
+        rows: Vec<DbWithdrawalRequestRow>,
+        state: Option<DbIndexerState>,
+    ) -> Self {
+        let mut event_index = BTreeMap::<DbWithdrawalEventKey, DbWithdrawalEventIndex>::new();
+        for row in &rows {
+            event_index
+                .entry(DbWithdrawalEventKey::from(&row.request))
+                .or_insert(DbWithdrawalEventIndex::new(row.seq, 0))
+                .count += 1;
+        }
+        Self {
+            state: RwLock::new(
+                state
+                    .map(|state| (TASK_NAME.to_owned(), state))
+                    .into_iter()
+                    .collect(),
+            ),
+            requests: RwLock::new(rows.into_iter().map(|row| (row.seq, row.request)).collect()),
+            event_index: RwLock::new(event_index),
+        }
+    }
 }
 
 impl WithdrawalIndexerDb for MockWithdrawalIndexerDb {
@@ -96,7 +125,7 @@ impl WithdrawalIndexerDb for MockWithdrawalIndexerDb {
                 .ok_or(WithdrawalIndexConsistencyError::SeqOverflow(*max))
                 .map_err(DbError::from)
         })?;
-        let index = DbWithdrawalEventIndex { first_seq, count };
+        let index = DbWithdrawalEventIndex::new(first_seq, count);
 
         for (offset, request) in event_requests.iter().enumerate() {
             let seq = first_seq
@@ -126,10 +155,7 @@ impl WithdrawalIndexerDb for MockWithdrawalIndexerDb {
             .expect("mock requests lock poisoned")
             .range(start_seq..)
             .take(limit)
-            .map(|(seq, request)| DbWithdrawalRequestRow {
-                seq: *seq,
-                request: request.clone(),
-            })
+            .map(|(seq, request)| DbWithdrawalRequestRow::new(*seq, request.clone()))
             .collect())
     }
 

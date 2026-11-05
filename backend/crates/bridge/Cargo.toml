@@ -14,6 +14,7 @@
   strata-bridge-primitives.workspace = true
   strata-bridge-rpc.workspace        = true
   strata-primitives.workspace        = true
+  strata-retry.workspace             = true
   strata-tasks.workspace             = true
   typed-sled.workspace               = true
 
@@ -32,4 +33,7 @@
   tracing.workspace          = true
 
 [dev-dependencies]
+  status-config  = { workspace = true, features = [ "test-utils" ] }
+  status-utils   = { workspace = true, features = [ "test-utils" ] }
+  tokio          = { workspace = true, features = [ "test-util" ] }
   toml.workspace = true

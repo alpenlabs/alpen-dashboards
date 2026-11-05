@@ -14,7 +14,7 @@ use super::{
     state::{DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus,
+        ReimbursementStatus, WithdrawalPairing, WithdrawalPairingCursor,
     },
     withdrawal_requests::fetch_withdrawal_requests,
     withdrawal_status::get_withdrawal_updates,
@@ -75,11 +75,11 @@ pub async fn bridge_monitoring_task(
             .await;
         let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
         let withdrawal_pairing_batch_size = context.config().withdrawal_pairing_batch_size();
-        let pairing_deposit_candidates =
-            deposit_indices_from(&deposit_indices, pairing_cursor.next_deposit_idx)
-                .into_iter()
-                .take(withdrawal_pairing_batch_size)
-                .collect::<Vec<_>>();
+        let pairing_deposit_candidates = select_pairing_deposit_candidates(
+            &deposit_indices,
+            pairing_cursor,
+            withdrawal_pairing_batch_size,
+        );
         let all_deposit_candidates = deposit_candidates
             .iter()
             .chain(pairing_deposit_candidates.iter())
@@ -111,46 +111,19 @@ pub async fn bridge_monitoring_task(
             warn!(error = %e, "failed to persist deposit status updates");
         }
 
-        let pairing_deposit_candidates = pairing_deposit_candidates
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        let pairing_deposit_infos = deposit_infos
-            .into_iter()
-            .filter(|(deposit_idx, _)| pairing_deposit_candidates.contains(deposit_idx))
-            .collect::<Vec<_>>();
-        let withdrawal_requests = fetch_withdrawal_requests(
-            context.withdrawal_index(),
-            pairing_cursor.next_withdrawal_seq,
-            pairing_deposit_candidates.len(),
-            withdrawal_pairing_batch_size,
-        );
-        let new_pairings = match context
-            .state()
-            .advance_withdrawal_pairings(
-                context.status_db(),
-                &deposit_indices,
-                &pairing_deposit_infos,
-                &withdrawal_requests,
-            )
-            .await
-        {
-            Ok(pairings) => pairings,
-            Err(e) => {
-                warn!(error = %e, "failed to persist withdrawal pairings");
-                Vec::new()
-            }
-        };
-        if !new_pairings.is_empty() {
-            info!(
-                pairing_count = new_pairings.len(),
-                "paired indexed withdrawals with deposits"
-            );
-        }
+        pair_indexed_withdrawals(
+            &context,
+            &deposit_indices,
+            pairing_cursor,
+            pairing_deposit_candidates,
+            deposit_infos,
+        )
+        .await;
 
         let withdrawal_candidates = context.state().select_withdrawal_status_candidates().await;
         let withdrawal_updates = get_withdrawal_updates(
             context.bridge_rpc(),
-            context.withdrawal_index(),
+            context.withdrawal_index_db(),
             context.esplora(),
             chain_tip_height,
             &withdrawal_candidates,
@@ -198,26 +171,66 @@ pub async fn bridge_monitoring_task(
     Ok(())
 }
 
-#[cfg(test)]
-fn count_deposit_indices_from(
+/// Pairs indexed withdrawal requests with candidate deposits and persists the pairings.
+async fn pair_indexed_withdrawals(
+    context: &BridgeMonitoringContext,
     deposit_indices: &[DepositIdx],
-    next_deposit_idx: DepositIdx,
-) -> usize {
-    deposit_indices_from(deposit_indices, next_deposit_idx).len()
+    pairing_cursor: WithdrawalPairingCursor,
+    pairing_deposit_candidates: Vec<DepositIdx>,
+    deposit_infos: Vec<(DepositIdx, DepositInfo)>,
+) -> Vec<WithdrawalPairing> {
+    let pairing_deposit_candidates = pairing_deposit_candidates
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let pairing_deposit_infos = deposit_infos
+        .into_iter()
+        .filter(|(deposit_idx, _)| pairing_deposit_candidates.contains(deposit_idx))
+        .collect::<Vec<_>>();
+    let withdrawal_requests = fetch_withdrawal_requests(
+        context.withdrawal_index_db(),
+        pairing_cursor.next_withdrawal_seq,
+        pairing_deposit_candidates.len(),
+        context.config().withdrawal_pairing_batch_size(),
+    );
+    let new_pairings = match context
+        .state()
+        .advance_withdrawal_pairings(
+            context.status_db(),
+            deposit_indices,
+            &pairing_deposit_infos,
+            &withdrawal_requests,
+        )
+        .await
+    {
+        Ok(pairings) => pairings,
+        Err(e) => {
+            warn!(error = %e, "failed to persist withdrawal pairings");
+            Vec::new()
+        }
+    };
+    if !new_pairings.is_empty() {
+        info!(
+            pairing_count = new_pairings.len(),
+            "paired indexed withdrawals with deposits"
+        );
+    }
+    new_pairings
 }
 
-fn deposit_indices_from(
+/// Returns up to `batch_size` contiguous deposit indices starting at the pairing cursor.
+fn select_pairing_deposit_candidates(
     deposit_indices: &[DepositIdx],
-    next_deposit_idx: DepositIdx,
+    pairing_cursor: WithdrawalPairingCursor,
+    batch_size: usize,
 ) -> Vec<DepositIdx> {
     // This collects the contiguous deposit-index window known to the bridge.
     // The state pairing planner additionally checks deposit status and skips
     // failed deposits without consuming withdrawal requests.
     let deposit_indices = deposit_indices.iter().copied().collect::<BTreeSet<_>>();
-    let mut next_deposit_idx = next_deposit_idx;
+    let mut next_deposit_idx = pairing_cursor.next_deposit_idx;
     let mut indices = Vec::new();
 
-    while deposit_indices.contains(&next_deposit_idx) {
+    while indices.len() < batch_size && deposit_indices.contains(&next_deposit_idx) {
         indices.push(next_deposit_idx);
         let Some(next) = next_deposit_idx.checked_add(1) else {
             break;
@@ -367,20 +380,197 @@ pub async fn get_bridge_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{future::Future, task::Poll};
+
+    use bitcoin::hashes::Hash;
+
+    use crate::{
+        test_utils::{make_deposit_info, BridgeStatusFixture},
+        types::ChallengeStep,
+    };
+
+    /// Runs the pairing step for completed deposits from the current pairing cursor.
+    async fn pair_completed_deposits(
+        fixture: &BridgeStatusFixture,
+        deposit_indices: &[DepositIdx],
+    ) -> Vec<WithdrawalPairing> {
+        let pairing_cursor = fixture.state().withdrawal_pairing_cursor().await;
+        let candidates = select_pairing_deposit_candidates(
+            deposit_indices,
+            pairing_cursor,
+            fixture.context().config().withdrawal_pairing_batch_size(),
+        );
+        let deposit_infos = candidates
+            .iter()
+            .map(|deposit_idx| (*deposit_idx, make_deposit_info(DepositStatus::Complete)))
+            .collect();
+        pair_indexed_withdrawals(
+            fixture.context(),
+            deposit_indices,
+            pairing_cursor,
+            candidates,
+            deposit_infos,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn indexed_withdrawals_pair_with_completed_deposits() {
+        let fixture = BridgeStatusFixture::default();
+        fixture.index_withdrawal_event(1);
+        fixture.index_withdrawal_event(2);
+
+        let pairings = pair_completed_deposits(&fixture, &[0, 1]).await;
+
+        let expected = vec![WithdrawalPairing::new(0, 0), WithdrawalPairing::new(1, 1)];
+        assert_eq!(pairings, expected);
+        assert_eq!(fixture.snapshot().withdrawal_pairings, expected);
+        assert_eq!(
+            fixture.state().withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor::new(2, 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn pairing_waits_until_withdrawals_are_indexed() {
+        let fixture = BridgeStatusFixture::default();
+
+        let pairings = pair_completed_deposits(&fixture, &[0, 1]).await;
+
+        assert!(pairings.is_empty());
+        assert!(fixture.snapshot().withdrawal_pairings.is_empty());
+        assert_eq!(
+            fixture.state().withdrawal_pairing_cursor().await,
+            WithdrawalPairingCursor::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn pairing_resumes_from_cursor_withdrawal_seq() {
+        let fixture = BridgeStatusFixture::default();
+        fixture.index_withdrawal_event(1);
+        assert_eq!(
+            pair_completed_deposits(&fixture, &[0, 1]).await,
+            vec![WithdrawalPairing::new(0, 0)]
+        );
+
+        fixture.index_withdrawal_event(2);
+        let pairings = pair_completed_deposits(&fixture, &[0, 1]).await;
+
+        assert_eq!(pairings, vec![WithdrawalPairing::new(1, 1)]);
+        assert_eq!(
+            fixture.snapshot().withdrawal_pairings,
+            vec![WithdrawalPairing::new(0, 0), WithdrawalPairing::new(1, 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn indexed_withdrawals_survive_restart_and_pair() {
+        let mut fixture = BridgeStatusFixture::default();
+        fixture.index_withdrawal_event(1);
+        fixture.index_withdrawal_event(2);
+
+        fixture.restart();
+        let pairings = pair_completed_deposits(&fixture, &[0, 1]).await;
+
+        assert_eq!(
+            pairings,
+            vec![WithdrawalPairing::new(0, 0), WithdrawalPairing::new(1, 1)]
+        );
+    }
 
     #[test]
-    fn counts_deposit_indices_from_cursor() {
+    fn pairing_deposit_candidates_stop_at_first_gap_or_batch_size() {
         let cases = [
-            (&[0, 1, 3][..], 0, 2),
-            (&[0, 1, 2, 3][..], 0, 4),
-            (&[0, 1, 3][..], 2, 0),
+            (&[0, 1, 3][..], 0, 10, vec![0, 1]),
+            (&[0, 1, 2, 3][..], 0, 10, vec![0, 1, 2, 3]),
+            (&[0, 1, 2, 3][..], 1, 2, vec![1, 2]),
+            (&[0, 1, 3][..], 2, 10, vec![]),
         ];
 
-        for (deposit_indices, next_deposit_idx, expected) in cases {
+        for (deposit_indices, next_deposit_idx, batch_size, expected) in cases {
             assert_eq!(
-                count_deposit_indices_from(deposit_indices, next_deposit_idx),
+                select_pairing_deposit_candidates(
+                    deposit_indices,
+                    WithdrawalPairingCursor::new(next_deposit_idx, 0),
+                    batch_size,
+                ),
                 expected
             );
         }
+    }
+
+    #[test]
+    fn terminal_reimbursement_txid_selects_txid_that_retires_the_row() {
+        let claim_txid = Txid::from_byte_array([1; 32]);
+        let payout_txid = Txid::from_byte_array([2; 32]);
+        let cases = [
+            (ReimbursementStatus::Slashed, Some(claim_txid)),
+            (ReimbursementStatus::Aborted, Some(claim_txid)),
+            (ReimbursementStatus::Complete, Some(payout_txid)),
+            (ReimbursementStatus::InProgress, None),
+            (ReimbursementStatus::NotStarted, None),
+        ];
+
+        for (status, expected) in cases {
+            let info = ReimbursementInfo {
+                claim_txid,
+                challenge_step: ChallengeStep::NotApplicable,
+                payout_txid: Some(payout_txid),
+                status,
+            };
+            assert_eq!(terminal_reimbursement_txid(&info), expected);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bridge_status_is_unavailable_before_first_status() {
+        // Paused time lets the readiness timeout elapse without waiting.
+        let fixture = BridgeStatusFixture::default();
+
+        let response = get_bridge_status(Arc::clone(fixture.context())).await;
+
+        assert_eq!(response.err(), Some(StatusCode::SERVICE_UNAVAILABLE));
+    }
+
+    #[tokio::test]
+    async fn bridge_status_is_served_after_first_status() {
+        let fixture = BridgeStatusFixture::default();
+        let info = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture.context().mark_status_available();
+
+        let status = get_bridge_status(Arc::clone(fixture.context()))
+            .await
+            .expect("bridge status")
+            .0;
+
+        assert_eq!(status.deposits.len(), 1);
+        assert_eq!(
+            status.deposits[0].deposit_request_txid,
+            info.deposit_request_txid
+        );
+        assert_eq!(status.deposits[0].deposit_txid, info.deposit_txid);
+    }
+
+    #[tokio::test]
+    async fn waiting_bridge_status_request_returns_status_once_available() {
+        let fixture = BridgeStatusFixture::default();
+        let mut request = std::pin::pin!(get_bridge_status(Arc::clone(fixture.context())));
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(request.as_mut().poll(cx).is_pending())).await,
+            "request must wait for first status"
+        );
+
+        let info = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture.context().mark_status_available();
+
+        let status = request.await.expect("bridge status").0;
+        assert_eq!(status.deposits.len(), 1);
+        assert_eq!(
+            status.deposits[0].deposit_request_txid,
+            info.deposit_request_txid
+        );
     }
 }

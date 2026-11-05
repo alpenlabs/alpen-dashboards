@@ -7,37 +7,23 @@ use strata_bridge_rpc::traits::{StrataBridgeControlApiClient, StrataBridgeMonito
 use strata_bridge_rpc::types::{
     RpcDepositInfo, RpcOperatorStatus, RpcReimbursementStatus, RpcWithdrawalStatus,
 };
+use strata_retry::{retry_with_backoff_async, RetryConfig};
 use tracing::{debug, warn};
 
 use status_config::BridgeMonitoringConfig;
-use status_utils::{create_rpc_client, execute_with_retries};
+use status_utils::create_rpc_client;
 
-/// RPC client manager with connection pooling and retry logic.
+/// Pooled bridge RPC clients with bounded retries and deterministic endpoint failover.
 ///
-/// This manager maintains a pool of reusable HTTP clients for each bridge RPC endpoint,
-/// preventing connection exhaustion by reusing clients across requests. It implements
-/// automatic retry logic with exponential backoff to handle transient network failures.
-///
-/// # Design
-///
-/// - **Connection Pooling**: Creates one HTTP client per configured endpoint and reuses it
-/// - **Retry Logic**: Implements exponential backoff (3 retries over 10 seconds with 1.5x multiplier)
-/// - **Failover**: Tries all available clients in deterministic key order
-/// - **Graceful Degradation**: Returns `None` if all clients fail after retries
-///
-/// # Example Flow
-///
-/// For each RPC request:
-///
-/// 1. Try client 1 with up to 3 retries (exponential backoff between retries)
-/// 2. If client 1 fails after retries, try client 2 with up to 3 retries
-/// 3. Continue until a client succeeds or all fail
-/// 4. Return the first successful result or [`None`] if all fail
+/// Each endpoint uses the configured request retry policy before failing over.
+/// Request execution time is separate from backoff delays; each request retains
+/// the HTTP client's 30-second timeout.
 pub(crate) struct RpcClientManager {
     /// HTTP clients keyed by configured client key.
     ///
     /// [`BTreeMap`] ensures deterministic ordering.
     clients: BTreeMap<String, HttpClient>,
+    retry_config: RetryConfig,
 }
 
 impl RpcClientManager {
@@ -61,66 +47,33 @@ impl RpcClientManager {
             }
         }
 
-        Self { clients }
+        Self {
+            clients,
+            retry_config: config.retry_policy(),
+        }
     }
 
-    /// Execute an async operation across all available clients with retry logic
-    ///
-    /// This method tries the given operation on each client sequentially in sorted key
-    /// order. For each client, it retries up to 3 times with exponential
-    /// backoff between attempts using [`execute_with_retries`]. The first successful result
-    /// is returned immediately.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `T` - The expected return type of the operation
-    /// * `F` - A function that takes an [`HttpClient`] and returns a future
-    /// * `Fut` - The future returned by `F`
-    ///
-    /// # Arguments
-    ///
-    /// * `operation` - A closure that performs an RPC call using the provided client
-    ///
-    /// # Returns
-    ///
-    /// * [`Some(T)`](Some) - If any client succeeds (possibly after retries)
-    /// * [`None`] - If all clients fail after exhausting their retries
-    ///
-    /// # Retry Behavior
-    ///
-    /// Uses [`execute_with_retries`] for each client with exponential backoff:
-    ///
-    /// - **Attempt 0**: Immediate (no delay)
-    /// - **Attempt 1**: After ~2s delay
-    /// - **Attempt 2**: After ~3s delay
-    /// - **Attempt 3**: After ~5s delay
-    /// - Total: ~10 seconds per client
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let result = rpc_manager
-    ///     .query_clients_with_retry(|client| async move {
-    ///         client.get_deposit_indices().await.map_err(|e| e.into())
-    ///     })
-    ///     .await;
-    /// ```
+    /// Retries each endpoint in key order, stopping at the first successful response.
+    /// Returns `None` if no endpoint succeeds or none are configured.
+    /// A successful optional `None` is returned as `Some(None)` without retry or failover.
     async fn query_clients_with_retry<T, F, Fut>(&self, operation: F) -> Option<T>
     where
         F: Fn(HttpClient) -> Fut,
         Fut: Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
-        // BTreeMap maintains sorted order automatically.
         for (client_key, client) in self.clients.iter() {
             let client_clone = client.clone();
             let operation_name = format!("RPC request to bridge client {client_key}");
 
-            match execute_with_retries(
+            let backoff = self.retry_config.backoff();
+            match retry_with_backoff_async(
+                &operation_name,
+                self.retry_config.max_retries,
+                &backoff,
                 || {
                     let client = client_clone.clone();
                     operation(client)
                 },
-                &operation_name,
             )
             .await
             {
@@ -129,12 +82,11 @@ impl RpcClientManager {
                     return Some(result);
                 }
                 Err(e) => {
-                    warn!(
+                    debug!(
                         client_key = %client_key,
                         error = %e,
                         "rpc request failed after retries"
                     );
-                    // Continue to next client.
                 }
             }
         }
@@ -246,4 +198,156 @@ pub(crate) async fn get_reimbursement_status(
         .ok_or_else(|| {
             anyhow!("failed to fetch reimbursement status for deposit_idx {deposit_idx}")
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use bitcoin::secp256k1::{Secp256k1, SecretKey};
+    use serde_json::json;
+    use status_utils::test_utils::{make_rpc_error_reply, TestRpcServer};
+
+    use super::*;
+    use status_config::test_utils::{make_bridge_config, make_bridge_operator, LOCAL_ESPLORA_URL};
+
+    use crate::test_utils::make_retry_config;
+
+    fn make_rpc_manager(fixtures: &[&TestRpcServer]) -> RpcClientManager {
+        RpcClientManager {
+            clients: fixtures
+                .iter()
+                .enumerate()
+                .map(|(index, fixture)| (index.to_string(), create_rpc_client(fixture.url())))
+                .collect(),
+            retry_config: make_retry_config(),
+        }
+    }
+
+    fn make_configured_rpc_manager(fixture: &TestRpcServer, max_retries: u16) -> RpcClientManager {
+        let operator = make_bridge_operator("Operator", &make_operator_key(), fixture.url());
+        let config = make_bridge_config(LOCAL_ESPLORA_URL, &[operator], Some(max_retries));
+        RpcClientManager::new(&config)
+    }
+
+    fn make_operator_key() -> PublicKey {
+        let secret = SecretKey::from_slice(&[1; 32]).expect("test secret key");
+        PublicKey::new(secret.public_key(&Secp256k1::new()))
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_stop_after_first_success() {
+        let first = TestRpcServer::new(vec![json!({"result": [1, 2]})]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let manager = make_rpc_manager(&[&first, &second]);
+
+        assert_eq!(
+            get_deposit_indices(&manager)
+                .await
+                .expect("deposit indices"),
+            vec![1, 2]
+        );
+        assert_eq!(first.attempts(), 1);
+        assert_eq!(second.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_recover_after_failed_attempts() {
+        // Two failures must be retried against the same endpoint.
+        let fixture = TestRpcServer::new(vec![
+            make_rpc_error_reply(),
+            make_rpc_error_reply(),
+            json!({"result": [3]}),
+        ])
+        .await;
+        let manager = make_rpc_manager(&[&fixture]);
+
+        assert_eq!(
+            get_deposit_indices(&manager).await.expect("retry recovery"),
+            vec![3]
+        );
+        assert_eq!(fixture.attempts(), 3);
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_fail_over_after_exhausting_first_endpoint() {
+        let first = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let second = TestRpcServer::new(vec![json!({"result": [4]})]).await;
+        let manager = make_rpc_manager(&[&first, &second]);
+
+        assert_eq!(
+            get_deposit_indices(&manager)
+                .await
+                .expect("endpoint failover"),
+            vec![4]
+        );
+        // Each endpoint has its own budget: initial attempt plus three retries.
+        assert_eq!(first.attempts(), 4);
+        assert_eq!(second.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_return_error_after_all_endpoints_are_exhausted() {
+        let first = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let manager = make_rpc_manager(&[&first, &second]);
+
+        assert_eq!(
+            get_deposit_indices(&manager).await.unwrap_err().to_string(),
+            "failed to fetch deposit indices after retries"
+        );
+        assert_eq!(first.attempts(), 4);
+        assert_eq!(second.attempts(), 4);
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_return_missing_status_without_retry_or_failover() {
+        // A valid null result must retain its meaning instead of being treated as an RPC error.
+        let first = TestRpcServer::new(vec![json!({"result": null})]).await;
+        let second = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let manager = make_rpc_manager(&[&first, &second]);
+
+        assert!(get_withdrawal_status(&manager, 0)
+            .await
+            .expect("valid absent status")
+            .is_none());
+        assert_eq!(first.attempts(), 1);
+        assert_eq!(second.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn operator_without_endpoint_uses_peer_status_query() {
+        let fixture = TestRpcServer::new(vec![json!({"result": RpcOperatorStatus::Online})]).await;
+        let manager = make_rpc_manager(&[&fixture]);
+
+        assert!(matches!(
+            get_operator_status(&manager, make_operator_key()).await,
+            RpcOperatorStatus::Online
+        ));
+        assert_eq!(fixture.methods(), vec!["stratabridge_operatorStatus"]);
+    }
+
+    #[tokio::test]
+    async fn operator_with_endpoint_queries_uptime_once_on_failure() {
+        let fixture = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        // Query retries are enabled, but the configured operator uses a single uptime call.
+        let manager = make_configured_rpc_manager(&fixture, 3);
+
+        assert!(matches!(
+            get_operator_status(&manager, make_operator_key()).await,
+            RpcOperatorStatus::Offline
+        ));
+        // The failed lookup made one uptime request and did not fall back to peer status.
+        assert_eq!(fixture.methods(), vec!["stratabridge_uptime"]);
+    }
+
+    #[tokio::test]
+    async fn rpc_queries_stop_after_configured_retry_budget_is_exhausted() {
+        let fixture = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let manager = make_configured_rpc_manager(&fixture, 1);
+
+        assert_eq!(
+            get_deposit_indices(&manager).await.unwrap_err().to_string(),
+            "failed to fetch deposit indices after retries"
+        );
+        assert_eq!(fixture.attempts(), 2);
+    }
 }

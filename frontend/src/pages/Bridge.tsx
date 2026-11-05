@@ -22,11 +22,11 @@ export default function Bridge() {
       {/* Bridge Status Page */}
       {pathname === '/bridge' && (
         <div>
-          {!data || (error && <p className="error-text">Error loading data</p>)}
+          {error && <p className="error-text">Error loading data</p>}
           <Suspense fallback={<p className="loading-text">Loading...</p>}>
             {isLoading ? (
               <p className="loading-text">Loading...</p>
-            ) : (
+            ) : !data ? null : (
               <div className="bridge-container">
                 <div className="bridge-section">
                   <span className="bridge-title">BRIDGE OPERATOR STATUS</span>

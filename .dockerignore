@@ -1,0 +1,5 @@
+.git
+backend/target
+backend/data
+frontend/node_modules
+frontend/dist
