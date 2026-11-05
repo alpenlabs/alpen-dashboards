@@ -7,6 +7,9 @@ use crate::{BridgeMonitoringConfig, BridgeOperator, NetworkMonitoringConfig};
 
 pub const LOCAL_ESPLORA_URL: &str = "http://localhost:3002";
 
+/// Confirmation cutoff of configs built by [`make_bridge_config`].
+pub const TEST_MAX_CONFIRMATIONS: u64 = 6;
+
 /// Endpoints monitored by the network status task.
 pub struct NetworkUrls<'a> {
     pub alpen_sequencer: &'a str,
@@ -33,7 +36,10 @@ pub fn make_bridge_config(
 ) -> BridgeMonitoringConfig {
     let mut table = Table::new();
     table.insert("esplora_url".into(), esplora_url.into());
-    table.insert("max_tx_confirmations".into(), 6.into());
+    table.insert(
+        "max_tx_confirmations".into(),
+        Value::try_from(TEST_MAX_CONFIRMATIONS).expect("serialize confirmation cutoff"),
+    );
     table.insert("status_refetch_interval_s".into(), 1.into());
     table.insert(
         "operators".into(),

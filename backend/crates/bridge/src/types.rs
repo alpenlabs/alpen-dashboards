@@ -379,4 +379,63 @@ mod tests {
             assert_eq!(ChallengeStep::from(&rpc_phase), expected_step);
         }
     }
+
+    #[test]
+    fn deposit_info_carries_deposit_txid_only_when_complete() {
+        let deposit_request_txid = txid(1);
+        let deposit_txid = txid(2);
+        let cases = [
+            (
+                RpcDepositStatus::InProgress,
+                DepositStatus::InProgress,
+                None,
+            ),
+            (
+                RpcDepositStatus::Failed {
+                    reason: "expired".to_owned(),
+                },
+                DepositStatus::Failed,
+                None,
+            ),
+            (
+                RpcDepositStatus::Complete { deposit_txid },
+                DepositStatus::Complete,
+                Some(deposit_txid),
+            ),
+        ];
+
+        for (rpc_status, expected_status, expected_deposit_txid) in cases {
+            let info = DepositInfo::from(&RpcDepositInfo {
+                status: rpc_status,
+                deposit_idx: 0,
+                deposit_request_txid,
+            });
+            assert_eq!(
+                std::mem::discriminant(&info.status),
+                std::mem::discriminant(&expected_status)
+            );
+            assert_eq!(info.deposit_request_txid, deposit_request_txid);
+            assert_eq!(info.deposit_txid, expected_deposit_txid);
+        }
+    }
+
+    #[test]
+    fn withdrawal_info_carries_fulfillment_txid_only_when_complete() {
+        let withdrawal_request_txid = Buf32([1; 32]);
+        let fulfillment_txid = txid(2);
+
+        let in_progress =
+            WithdrawalInfo::from_status(withdrawal_request_txid, &RpcWithdrawalStatus::InProgress);
+        assert_eq!(in_progress.withdrawal_request_txid, withdrawal_request_txid);
+        assert_eq!(in_progress.fulfillment_txid, None);
+        assert!(matches!(in_progress.status, WithdrawalStatus::InProgress));
+
+        let complete = WithdrawalInfo::from_status(
+            withdrawal_request_txid,
+            &RpcWithdrawalStatus::Complete { fulfillment_txid },
+        );
+        assert_eq!(complete.withdrawal_request_txid, withdrawal_request_txid);
+        assert_eq!(complete.fulfillment_txid, Some(fulfillment_txid));
+        assert!(matches!(complete.status, WithdrawalStatus::Complete));
+    }
 }
