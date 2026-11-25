@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bitcoin::Txid;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -14,8 +13,9 @@ struct TxStatus {
     block_height: Option<L1Height>,
 }
 
+/// Request, response-decoding, or validation failure from Esplora.
 #[derive(Debug, Error)]
-enum EsploraError {
+pub enum EsploraError {
     #[error("Esplora request failed: {0}")]
     Request(#[from] reqwest::Error),
 
@@ -44,18 +44,20 @@ impl EsploraError {
     }
 }
 
-pub(crate) struct EsploraClient {
+/// Esplora HTTP client with configured request timeouts and bounded retries.
+pub struct EsploraClient {
     base_url: String,
     client: reqwest::Client,
     retry_config: RetryConfig,
 }
 
 impl EsploraClient {
-    pub(crate) fn new(
-        esplora_url: &str,
-        request_timeout_s: u64,
-        retry_config: RetryConfig,
-    ) -> Self {
+    /// Creates a client for the supplied Esplora endpoint.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP client cannot be initialized.
+    pub fn new(esplora_url: &str, request_timeout_s: u64, retry_config: RetryConfig) -> Self {
         Self {
             base_url: esplora_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::builder()
@@ -63,6 +65,34 @@ impl EsploraClient {
                 .build()
                 .expect("failed to create Esplora HTTP client"),
             retry_config,
+        }
+    }
+
+    /// Fetches the Bitcoin chain tip height.
+    pub async fn get_tip_height(&self) -> Result<L1Height, EsploraError> {
+        self.request_with_retry("esplora chain tip", || async {
+            let response = self
+                .client
+                .get(self.url("/blocks/tip/height"))
+                .send()
+                .await?
+                .error_for_status()?;
+            let text = response.text().await?;
+            Ok(text.trim().parse()?)
+        })
+        .await
+    }
+
+    /// Gets transaction confirmations; mempool transactions return `Some(0)`.
+    /// Returns `None` if the lookup fails or a confirmed transaction has no block height.
+    pub async fn get_tx_confirmations(
+        &self,
+        txid: Txid,
+        chain_tip_height: L1Height,
+    ) -> Option<u64> {
+        match self.get_tx_status(txid).await {
+            Ok(status) => confirmations_from_status(&status, chain_tip_height),
+            Err(_) => None,
         }
     }
 
@@ -95,20 +125,6 @@ impl EsploraClient {
         outcome
     }
 
-    async fn get_tip_height(&self) -> Result<L1Height, EsploraError> {
-        self.request_with_retry("esplora chain tip", || async {
-            let response = self
-                .client
-                .get(self.url("/blocks/tip/height"))
-                .send()
-                .await?
-                .error_for_status()?;
-            let text = response.text().await?;
-            Ok(text.trim().parse()?)
-        })
-        .await
-    }
-
     async fn get_tx_status(&self, txid: Txid) -> Result<TxStatus, EsploraError> {
         let operation_name = format!("esplora transaction {txid} status");
         self.request_with_retry(&operation_name, || async {
@@ -125,26 +141,6 @@ impl EsploraClient {
             Ok(status)
         })
         .await
-    }
-}
-
-/// Fetch bitcoin chain tip height.
-pub(crate) async fn get_bitcoin_chain_tip_height(
-    esplora_client: &EsploraClient,
-) -> Result<L1Height> {
-    Ok(esplora_client.get_tip_height().await?)
-}
-
-/// Gets transaction confirmations from Esplora; mempool transactions return `Some(0)`.
-/// Returns `None` if the lookup fails or a confirmed transaction has no block height.
-pub(crate) async fn get_tx_confirmations(
-    esplora_client: &EsploraClient,
-    txid: Txid,
-    chain_tip_height: L1Height,
-) -> Option<u64> {
-    match esplora_client.get_tx_status(txid).await {
-        Ok(status) => confirmations_from_status(&status, chain_tip_height),
-        Err(_) => None,
     }
 }
 
@@ -298,7 +294,9 @@ mod tests {
             let fixture =
                 EsploraFixture::new(vec![(status, "unavailable"), (StatusCode::OK, "100\n")]).await;
             assert_eq!(
-                get_bitcoin_chain_tip_height(&fixture.client())
+                fixture
+                    .client()
+                    .get_tip_height()
                     .await
                     .expect("tip after retry"),
                 100
@@ -321,7 +319,10 @@ mod tests {
             ])
             .await;
             assert_eq!(
-                get_tx_confirmations(&fixture.client(), make_txid(), 100).await,
+                fixture
+                    .client()
+                    .get_tx_confirmations(make_txid(), 100)
+                    .await,
                 Some(3)
             );
             assert_eq!(
@@ -351,7 +352,10 @@ mod tests {
         let fixture =
             EsploraFixture::new(vec![(StatusCode::INTERNAL_SERVER_ERROR, "unavailable")]).await;
         assert_eq!(
-            get_tx_confirmations(&fixture.client(), make_txid(), 100).await,
+            fixture
+                .client()
+                .get_tx_confirmations(make_txid(), 100)
+                .await,
             None
         );
         assert_eq!(fixture.attempts(), 4);
@@ -389,7 +393,10 @@ mod tests {
         ] {
             let fixture = EsploraFixture::new(vec![(status, r#"{"confirmed":false}"#)]).await;
             assert_eq!(
-                get_tx_confirmations(&fixture.client(), make_txid(), 100).await,
+                fixture
+                    .client()
+                    .get_tx_confirmations(make_txid(), 100)
+                    .await,
                 None
             );
             assert_eq!(fixture.attempts(), 1);
@@ -413,7 +420,10 @@ mod tests {
         for body in ["not JSON", r#"{"confirmed":true}"#] {
             let fixture = EsploraFixture::new(vec![(StatusCode::OK, body)]).await;
             assert_eq!(
-                get_tx_confirmations(&fixture.client(), make_txid(), 100).await,
+                fixture
+                    .client()
+                    .get_tx_confirmations(make_txid(), 100)
+                    .await,
                 None
             );
             assert_eq!(fixture.attempts(), 1);
@@ -424,7 +434,10 @@ mod tests {
     async fn esplora_transaction_status_returns_zero_for_mempool_response() {
         let fixture = EsploraFixture::new(vec![(StatusCode::OK, r#"{"confirmed":false}"#)]).await;
         assert_eq!(
-            get_tx_confirmations(&fixture.client(), make_txid(), 100).await,
+            fixture
+                .client()
+                .get_tx_confirmations(make_txid(), 100)
+                .await,
             Some(0)
         );
         assert_eq!(fixture.attempts(), 1);
@@ -441,7 +454,7 @@ mod tests {
             .build()
             .expect("short request timeout");
 
-        assert_eq!(get_tx_confirmations(&client, make_txid(), 100).await, None);
+        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
         assert_eq!(fixture.attempts(), 4);
     }
 
@@ -457,12 +470,9 @@ mod tests {
         ])
         .await;
         let client = fixture.client();
-        assert_eq!(get_tx_confirmations(&client, make_txid(), 100).await, None);
+        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
         assert_eq!(fixture.attempts(), 4);
-        assert_eq!(
-            get_tx_confirmations(&client, make_txid(), 100).await,
-            Some(3)
-        );
+        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, Some(3));
         assert_eq!(fixture.attempts(), 5);
     }
 
@@ -478,9 +488,9 @@ mod tests {
         );
 
         // One configured retry permits two attempts, independently for every request.
-        assert!(get_bitcoin_chain_tip_height(&client).await.is_err());
+        assert!(client.get_tip_height().await.is_err());
         assert_eq!(fixture.attempts(), 2);
-        assert_eq!(get_tx_confirmations(&client, make_txid(), 100).await, None);
+        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
         assert_eq!(fixture.attempts(), 4);
     }
 }

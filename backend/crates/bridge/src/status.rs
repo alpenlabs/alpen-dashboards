@@ -10,7 +10,7 @@ use strata_tasks::ShutdownGuard;
 use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
-    esplora::{self, get_bitcoin_chain_tip_height, EsploraClient},
+    l1::esplora::EsploraClient,
     state::{DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
@@ -52,7 +52,7 @@ pub async fn bridge_monitoring_task(
 
         context.state().update_operators(operator_statuses).await;
 
-        let chain_tip_height = match get_bitcoin_chain_tip_height(context.esplora()).await {
+        let chain_tip_height = match context.esplora().get_tip_height().await {
             Ok(height) => height,
             Err(e) => {
                 error!(error = %e, "failed to get Bitcoin chain tip");
@@ -293,8 +293,9 @@ async fn get_deposit_info_updates(
                 .unwrap_or(deposit_info.deposit_request_txid),
         };
 
-        let current_confirmations =
-            esplora::get_tx_confirmations(esplora_client, check_txid, chain_tip_height).await;
+        let current_confirmations = esplora_client
+            .get_tx_confirmations(check_txid, chain_tip_height)
+            .await;
         updates.push(DepositInfoUpdate {
             deposit_idx,
             info: deposit_info,
@@ -337,7 +338,9 @@ async fn get_reimbursement_updates(
                 let Some(txid) = terminal_reimbursement_txid(&info) else {
                     continue;
                 };
-                esplora::get_tx_confirmations(esplora_client, txid, chain_tip_height).await
+                esplora_client
+                    .get_tx_confirmations(txid, chain_tip_height)
+                    .await
             }
         };
 
