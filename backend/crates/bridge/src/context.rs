@@ -9,7 +9,7 @@ use tokio::time::Duration;
 use super::{
     bridge_rpc::RpcClientManager,
     db::traits::{BridgeStatusDb, WithdrawalIndexerDb},
-    esplora::EsploraClient,
+    l1::esplora::EsploraClient,
     state::BridgeMonitoringState,
     types::BridgeStatus,
 };

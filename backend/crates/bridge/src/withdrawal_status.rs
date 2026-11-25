@@ -6,7 +6,7 @@ use tracing::warn;
 use super::{
     bridge_rpc::{self, RpcClientManager},
     db::traits::WithdrawalIndexerDb,
-    esplora::{self, EsploraClient},
+    l1::esplora::EsploraClient,
     state::WithdrawalInfoUpdate,
     types::{WithdrawalInfo, WithdrawalPairing, WithdrawalStatus},
     withdrawal_requests,
@@ -76,7 +76,8 @@ pub(crate) async fn get_withdrawal_updates(
                 let Some(fulfillment_txid) = info.fulfillment_txid else {
                     continue;
                 };
-                esplora::get_tx_confirmations(esplora_client, fulfillment_txid, chain_tip_height)
+                esplora_client
+                    .get_tx_confirmations(fulfillment_txid, chain_tip_height)
                     .await
             }
         };
