@@ -20,10 +20,14 @@
     status-utils   = { path = "crates/utils" }
 
     alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
+    strata-asm-common = { git = "https://github.com/alpenlabs/asm", tag = "v0.3.0-rc.2" }
+    strata-asm-proto-bridge-v1-txs = { git = "https://github.com/alpenlabs/asm", tag = "v0.3.0-rc.2" }
     strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.4" }
     strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
       "client",
     ], tag = "v0.3.0-rc.4" }
+    strata-bridge-tx-graph = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.4" }
+    strata-l1-txfmt = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
     strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
     strata-retry = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.4.0" }
     strata-tasks = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
