@@ -2,13 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, trace};
 
-use crate::{BridgeMonitoringConfig, NetworkMonitoringConfig, WithdrawalIndexerConfig};
+use crate::{
+    BitcoinConfig, BitcoinObserverConfig, BridgeMonitoringConfig, NetworkMonitoringConfig,
+    WithdrawalIndexerConfig,
+};
 
 /// Main configuration struct containing all application settings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     /// Base directory for persisted dashboard data.
     datadir: PathBuf,
+
+    /// Path to the bridge parameters file.
+    params_path: PathBuf,
+
+    /// Bitcoin node connection settings.
+    bitcoin: BitcoinConfig,
+
+    /// Bitcoin block observer settings.
+    bitcoin_observer: BitcoinObserverConfig,
 
     /// API server configuration
     server: ApiServerConfig,
@@ -21,6 +33,49 @@ pub struct Config {
 
     /// Withdrawal-intent indexer configuration
     withdrawal_indexer: WithdrawalIndexerConfig,
+}
+
+impl Config {
+    /// Load configuration from the specified path
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be read or does not contain a valid TOML configuration.
+    pub fn load_from_path(path: &str) -> Self {
+        parse_toml::<Config>(path)
+    }
+
+    pub fn datadir(&self) -> &Path {
+        &self.datadir
+    }
+
+    pub fn params_path(&self) -> &Path {
+        &self.params_path
+    }
+
+    pub fn bitcoin(&self) -> &BitcoinConfig {
+        &self.bitcoin
+    }
+
+    pub fn bitcoin_observer(&self) -> &BitcoinObserverConfig {
+        &self.bitcoin_observer
+    }
+
+    pub fn server(&self) -> &ApiServerConfig {
+        &self.server
+    }
+
+    pub fn network(&self) -> &NetworkMonitoringConfig {
+        &self.network
+    }
+
+    pub fn bridge(&self) -> &BridgeMonitoringConfig {
+        &self.bridge
+    }
+
+    pub fn withdrawal_indexer(&self) -> &WithdrawalIndexerConfig {
+        &self.withdrawal_indexer
+    }
 }
 
 /// Configuration for the API server
@@ -42,37 +97,6 @@ impl ApiServerConfig {
     /// Get the port number
     pub fn port(&self) -> u16 {
         self.port
-    }
-}
-
-impl Config {
-    /// Load configuration from the specified path
-    ///
-    /// # Panics
-    ///
-    /// Panics if the file cannot be read or does not contain a valid TOML configuration.
-    pub fn load_from_path(path: &str) -> Self {
-        parse_toml::<Config>(path)
-    }
-
-    pub fn datadir(&self) -> &Path {
-        &self.datadir
-    }
-
-    pub fn server(&self) -> &ApiServerConfig {
-        &self.server
-    }
-
-    pub fn network(&self) -> &NetworkMonitoringConfig {
-        &self.network
-    }
-
-    pub fn bridge(&self) -> &BridgeMonitoringConfig {
-        &self.bridge
-    }
-
-    pub fn withdrawal_indexer(&self) -> &WithdrawalIndexerConfig {
-        &self.withdrawal_indexer
     }
 }
 
@@ -111,6 +135,16 @@ mod tests {
     fn make_config_toml() -> &'static str {
         r#"
 datadir = "data"
+params_path = "network-params.toml"
+
+[bitcoin.client]
+url = "http://127.0.0.1:18443"
+auth = { kind = "cookie", path = "/bitcoin/.cookie" }
+
+[bitcoin_observer]
+poll_interval_s = 4
+blocks_per_batch = 8
+reorg_safe_depth = 16
 
 [server]
 host = "127.0.0.1"
@@ -168,6 +202,29 @@ withdrawal_denomination_sats = 100000000
     }
 
     #[test]
+    fn config_requires_bitcoin_observer_inputs() {
+        for field in ["params_path", "bitcoin", "bitcoin_observer"] {
+            let mut input: toml::Table = toml::from_str(make_config_toml()).expect("test config");
+            input.remove(field);
+            let error = input
+                .try_into::<Config>()
+                .expect_err("missing required observer input");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("missing field `{field}`")),
+                "{field}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn example_config_parses() {
+        toml::from_str::<Config>(include_str!("../../../example-config.toml"))
+            .expect("valid example config");
+    }
+
+    #[test]
     fn config_preserves_settings_across_toml_roundtrip() {
         let config = make_config();
 
@@ -195,6 +252,11 @@ withdrawal_denomination_sats = 100000000
         let config = make_config();
         // Each public accessor must return the configured value, including the nested retry policy.
         assert_eq!(config.datadir(), Path::new("data"));
+        assert_eq!(config.params_path(), Path::new("network-params.toml"));
+        assert_eq!(config.bitcoin().client().url(), "http://127.0.0.1:18443");
+        assert_eq!(config.bitcoin_observer().poll_interval_s(), 4);
+        assert_eq!(config.bitcoin_observer().blocks_per_batch(), 8);
+        assert_eq!(config.bitcoin_observer().reorg_safe_depth(), 16);
         assert_eq!(config.server().host(), "127.0.0.1");
         assert_eq!(config.server().port(), 8080);
         assert_eq!(
@@ -263,11 +325,17 @@ withdrawal_denomination_sats = 100000000
     }
 
     #[test]
-    fn config_uses_defaults_for_omitted_optional_settings() {
-        // Minimal existing config files remain valid when new optional settings are added.
+    fn config_uses_defaults_for_omitted_settings() {
         let config: Config = toml::from_str(
             r#"
 datadir = "data"
+params_path = "network-params.toml"
+
+[bitcoin.client]
+url = "http://127.0.0.1:18443"
+auth = { kind = "cookie", path = "/bitcoin/.cookie" }
+
+[bitcoin_observer]
 
 [server]
 host = "127.0.0.1"

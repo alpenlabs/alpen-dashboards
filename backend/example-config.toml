@@ -1,5 +1,17 @@
 # Dashboard backend configuration
 datadir = "data"
+params_path = "bridge-params.toml"
+
+# Bitcoin Core connection
+[bitcoin.client]
+  url = "http://localhost:8332"
+  auth = { kind = "cookie", path = "/bitcoin/.cookie" }
+
+# Bitcoin block observer
+[bitcoin_observer]
+  poll_interval_s  = 10
+  blocks_per_batch = 64
+  reorg_safe_depth = 6
 
 # API server configuration
 [server]
