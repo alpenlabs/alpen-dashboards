@@ -1,6 +1,6 @@
 # Dashboard backend configuration
 datadir = "data"
-params_path = "bridge-params.toml"
+params_path = "bridge-params.regtest.toml"
 
 # Bitcoin Core connection
 [bitcoin.client]

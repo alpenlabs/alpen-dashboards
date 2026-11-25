@@ -1,3 +1,5 @@
+use strata_identifiers::L1BlockCommitment;
+
 use crate::db::types::DbWithdrawalEventKey;
 
 /// Violated withdrawal-index invariant.
@@ -11,6 +13,28 @@ pub enum WithdrawalIndexConsistencyError {
 
     #[error("withdrawal event index inconsistent for {0:?}: first_seq {1}, count {2}")]
     EventIndexInconsistent(DbWithdrawalEventKey, u64, u32),
+}
+
+/// Violated Bitcoin observer storage invariant.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum BitcoinObserverConsistencyError {
+    #[error("stored Bitcoin network genesis does not match the configured node")]
+    NetworkMismatch,
+
+    #[error("stored Bitcoin deposit parameters do not match the configured protocol parameters")]
+    ParamsMismatch,
+
+    #[error("Bitcoin observer state changed or block does not extend the last processed block")]
+    ObserverStateMismatch,
+
+    #[error("conflicting observations replayed for Bitcoin block {0}")]
+    ConflictingBlockReplay(L1BlockCommitment),
+
+    #[error("Bitcoin observer revision overflow")]
+    RevisionOverflow,
+
+    #[error("Bitcoin observer undo record is unavailable")]
+    MissingUndo,
 }
 
 /// Error returned by bridge database implementations.
@@ -29,7 +53,10 @@ pub enum DbError {
     },
 
     #[error(transparent)]
-    Consistency(#[from] WithdrawalIndexConsistencyError),
+    WithdrawalIndexConsistency(#[from] WithdrawalIndexConsistencyError),
+
+    #[error(transparent)]
+    BitcoinObserverConsistency(#[from] BitcoinObserverConsistencyError),
 
     #[error(transparent)]
     Sled(#[from] typed_sled::error::Error),

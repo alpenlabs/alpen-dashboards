@@ -5,6 +5,7 @@ use bitcoin::{
     taproot::Signature,
     Amount, OutPoint, ScriptBuf, Transaction, Txid, Witness, XOnlyPublicKey,
 };
+use serde::{Deserialize, Serialize};
 use strata_asm_common::TxInputRef;
 use strata_asm_proto_bridge_v1_txs::{
     constants::BridgeTxType,
@@ -65,18 +66,22 @@ impl DepositParams {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn magic(&self) -> MagicBytes {
         self.magic
     }
 
+    #[cfg(test)]
     pub(crate) fn covenant_key(&self) -> XOnlyPublicKey {
         self.covenant_key
     }
 
+    #[cfg(test)]
     pub(crate) fn deposit_amount(&self) -> Amount {
         self.deposit_amount
     }
 
+    #[cfg(test)]
     pub(crate) fn recovery_delay(&self) -> u16 {
         self.recovery_delay
     }
@@ -252,8 +257,8 @@ impl DepositRequest {
 }
 
 /// Classification of a transaction that spends a validated request output.
-#[derive(Debug)]
-pub(crate) enum DepositSpend {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DepositSpend {
     /// Bridge deposit transaction using the covenant's key-spend path.
     Deposit { txid: Txid, deposit_idx: u32 },
 
@@ -266,7 +271,7 @@ pub(crate) enum DepositSpend {
 
 /// Errors constructing deposit parameters or parsing and validating transactions.
 #[derive(Debug, Error)]
-pub(crate) enum DepositError {
+pub enum DepositError {
     #[error("invalid SPS-50 envelope: {0}")]
     Envelope(#[from] TxFmtError),
 

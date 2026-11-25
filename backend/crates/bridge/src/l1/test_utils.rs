@@ -26,6 +26,7 @@ pub(crate) const TEST_DEPOSIT_INDEX: u32 = 7;
 pub(crate) const TEST_DEPOSIT_DESTINATION: &[u8] = b"deposit destination";
 
 pub(crate) const TEST_ANNEX: &[u8] = &[0x50, 1];
+const TEST_MAGIC: MagicBytes = MagicBytes::new(*b"ALPN");
 const TEST_COVENANT_KEY_SEED: u8 = 1;
 const TEST_RECOVERY_KEY_SEED: u8 = 2;
 
@@ -38,14 +39,7 @@ pub(crate) struct DepositFixture {
 
 impl DepositFixture {
     pub(crate) fn new() -> Self {
-        let params = DepositParams::new(
-            MagicBytes::new(*b"ALPN"),
-            make_keypair(TEST_COVENANT_KEY_SEED).x_only_public_key().0,
-            Amount::from_sat(100_000_000),
-            144,
-        )
-        .expect("deposit parameters");
-        Self::with_params(params)
+        Self::with_params(make_deposit_params(144))
     }
 
     /// Builds signed transaction fixtures using the supplied protocol parameters.
@@ -274,6 +268,16 @@ impl DepositFixture {
             )
             .expect("spend signature verifies against the final witness");
     }
+}
+
+pub(crate) fn make_deposit_params(recovery_delay: u16) -> DepositParams {
+    DepositParams::new(
+        TEST_MAGIC,
+        make_keypair(TEST_COVENANT_KEY_SEED).x_only_public_key().0,
+        Amount::from_sat(100_000_000),
+        recovery_delay,
+    )
+    .expect("deposit parameters")
 }
 
 pub(crate) fn make_keypair(seed: u8) -> Keypair {

@@ -1,7 +1,9 @@
 //! Types shared by DB traits and implementations.
 
+use bitcoin::{hashes::sha256, BlockHash};
 use serde::{Deserialize, Serialize};
 use strata_bridge_primitives::types::DepositIdx;
+use strata_identifiers::L1BlockCommitment;
 use strata_primitives::buf::Buf32;
 
 use crate::types::{
@@ -165,5 +167,46 @@ pub struct DbWithdrawalRequestRow {
 impl DbWithdrawalRequestRow {
     pub fn new(seq: u64, request: DbWithdrawalRequest) -> Self {
         Self { seq, request }
+    }
+}
+
+/// Network and parsed protocol parameters bound to stored observations.
+/// Changing any of these requires an explicit rescan into a new database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BitcoinObserverDbMetadata {
+    pub(crate) genesis_hash: BlockHash,
+    pub(crate) params_hash: sha256::Hash,
+}
+
+impl BitcoinObserverDbMetadata {
+    pub fn new(genesis_hash: BlockHash, params_hash: sha256::Hash) -> Self {
+        Self {
+            genesis_hash,
+            params_hash,
+        }
+    }
+}
+
+/// Persisted observer state; the block advances atomically with its observations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BitcoinObserverState {
+    pub(crate) metadata: BitcoinObserverDbMetadata,
+    pub(crate) last_processed_block: Option<L1BlockCommitment>,
+
+    /// Increases on each new block apply or rollback; identical replay leaves it unchanged.
+    #[serde(default)]
+    pub(crate) revision: u64,
+}
+
+impl BitcoinObserverState {
+    pub fn new(
+        metadata: BitcoinObserverDbMetadata,
+        last_processed_block: Option<L1BlockCommitment>,
+    ) -> Self {
+        Self {
+            metadata,
+            last_processed_block,
+            revision: 0,
+        }
     }
 }

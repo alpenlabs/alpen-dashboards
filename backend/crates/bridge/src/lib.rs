@@ -14,15 +14,23 @@ mod withdrawal_status;
 
 pub use context::BridgeMonitoringContext;
 pub use db::{
-    error::{DbError, DbResult, WithdrawalIndexConsistencyError},
-    traits::{BridgeStatusDb, WithdrawalIndexerDb},
+    error::{BitcoinObserverConsistencyError, DbError, DbResult, WithdrawalIndexConsistencyError},
+    traits::{BitcoinObserverDb, BridgeStatusDb, WithdrawalIndexerDb},
     types::{
-        BridgeStatusDbSnapshot, DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalEventKey,
-        DbWithdrawalRequest, DbWithdrawalRequestRow, StatusCursors,
+        BitcoinObserverDbMetadata, BitcoinObserverState, BridgeStatusDbSnapshot, DbIndexerState,
+        DbWithdrawalEventIndex, DbWithdrawalEventKey, DbWithdrawalRequest, DbWithdrawalRequestRow,
+        StatusCursors,
     },
-    BridgeStatusDbSled, WithdrawalIndexerDbSled,
+    BitcoinObserverDbSled, BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
-pub use l1::esplora::{EsploraClient, EsploraError};
+pub use l1::{
+    deposits::{DepositError, DepositSpend},
+    esplora::{EsploraClient, EsploraError},
+    observations::{ObservedDeposit, ObservedDepositSpend, TransactionInclusion},
+    observer::{run_bitcoin_observer, BitcoinObserverError, BitcoinObserverStatus},
+    params::{BitcoinParams, BitcoinParamsError},
+    rpc::BitcoinRpcError,
+};
 pub use status::{bridge_monitoring_task, get_bridge_status};
 pub use types::{
     BridgeStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,

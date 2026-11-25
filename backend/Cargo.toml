@@ -20,13 +20,17 @@
     status-utils   = { path = "crates/utils" }
 
     alpen-reth-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
+    musig2 = { git = "https://github.com/alpenlabs/musig2", rev = "5b8319932ace352f14e08f391cf90929f3d4e53f" }
     strata-asm-common = { git = "https://github.com/alpenlabs/asm", tag = "v0.3.0-rc.2" }
     strata-asm-proto-bridge-v1-txs = { git = "https://github.com/alpenlabs/asm", tag = "v0.3.0-rc.2" }
+    strata-bridge-common = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.4.0-rc.2" }
     strata-bridge-primitives = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.4" }
     strata-bridge-rpc = { git = "https://github.com/alpenlabs/strata-bridge.git", features = [
       "client",
     ], tag = "v0.3.0-rc.4" }
     strata-bridge-tx-graph = { git = "https://github.com/alpenlabs/strata-bridge.git", tag = "v0.3.0-rc.4" }
+    strata-btc-types = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
+    strata-identifiers = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
     strata-l1-txfmt = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.3.0-rc.2" }
     strata-primitives = { git = "https://github.com/alpenlabs/alpen.git", tag = "v0.3.0-rc.3" }
     strata-retry = { git = "https://github.com/alpenlabs/strata-common", tag = "v0.4.0" }
@@ -37,7 +41,9 @@
     alloy-primitives = { version = "1.6.1", features = [ "serde" ] }
     alloy-sol-types = { version = "1.4.1" }
     anyhow = { version = "1.0.104" }
+    async-trait = "0.1"
     axum = { version = "0.8" }
+    bitcoind-async-client = { version = "0.16.1", default-features = false, features = [ "raw_rpc" ] }
     bitcoin = { version = "0.32.102", features = [ "serde" ] }
     hex = { version = "0.4" }
     jsonrpsee = { version = "0.26", features = [ "http-client" ] }

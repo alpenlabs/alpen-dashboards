@@ -3,13 +3,14 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use axum::{routing::get, Router};
 use status_bridge::{
-    bridge_monitoring_task, get_bridge_status, run_withdrawal_indexer, BridgeMonitoringContext,
+    bridge_monitoring_task, get_bridge_status, run_bitcoin_observer, run_withdrawal_indexer,
+    BitcoinObserverDbSled, BitcoinObserverStatus, BitcoinParams, BridgeMonitoringContext,
     BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
 use status_config::Config;
 use status_network::{get_network_status, network_monitoring_task, NetworkMonitoringContext};
 use strata_tasks::TaskManager;
-use tokio::{net::TcpListener, runtime};
+use tokio::{net::TcpListener, runtime, sync::watch};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
@@ -39,6 +40,10 @@ fn main() -> Result<()> {
         Arc::clone(&withdrawal_index_db),
         Arc::clone(&bridge_status_db),
     )?);
+
+    let bitcoin_params = BitcoinParams::from_path(config.params_path())?;
+    let bitcoin_observer_db = Arc::new(BitcoinObserverDbSled::open(config.datadir())?);
+    let (observer_status, _observer_status_rx) = watch::channel(BitcoinObserverStatus::default());
 
     let cors = CorsLayer::new().allow_origin(Any);
     let app = Router::new()
@@ -77,6 +82,26 @@ fn main() -> Result<()> {
     executor.spawn_critical_async_with_shutdown("bridge-monitoring", {
         let bridge_context = Arc::clone(&bridge_context);
         move |shutdown| async move { bridge_monitoring_task(bridge_context, shutdown).await }
+    });
+
+    executor.spawn_critical_async_with_shutdown("bitcoin-observer", {
+        let bitcoin = config.bitcoin().clone();
+        let observer = config.bitcoin_observer().clone();
+        let max_tx_confirmations = config.bridge().max_tx_confirmations();
+        move |shutdown| async move {
+            run_bitcoin_observer(
+                bitcoin_observer_db,
+                bitcoin,
+                observer,
+                bitcoin_params,
+                max_tx_confirmations,
+                observer_status,
+                shutdown,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Bitcoin observer failed: {error}"))?;
+            Ok(())
+        }
     });
 
     executor.spawn_critical_async_with_shutdown("http-server", {
