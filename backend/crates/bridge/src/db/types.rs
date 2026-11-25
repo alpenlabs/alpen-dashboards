@@ -1,14 +1,14 @@
 //! Types shared by DB traits and implementations.
 
-use bitcoin::{hashes::sha256, BlockHash};
+use bitcoin::{hashes::sha256, BlockHash, OutPoint};
 use serde::{Deserialize, Serialize};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_identifiers::L1BlockCommitment;
 use strata_primitives::buf::Buf32;
 
 use crate::types::{
-    ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
-    WithdrawalStatusCursor,
+    DepositStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,
+    WithdrawalPairingCursor, WithdrawalStatusCursor,
 };
 
 /// Assembled snapshot of bridge-status cursors.
@@ -36,9 +36,38 @@ impl StatusCursors {
     }
 }
 
+/// Last successful bridge answer for a deposit request, independent of dashboard labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DepositAnswer {
+    InProgress,
+    Failed,
+    Complete,
+}
+
+impl From<DepositStatus> for DepositAnswer {
+    fn from(status: DepositStatus) -> Self {
+        match status {
+            DepositStatus::InProgress => Self::InProgress,
+            DepositStatus::Failed => Self::Failed,
+            DepositStatus::Complete => Self::Complete,
+        }
+    }
+}
+
+impl From<DepositAnswer> for DepositStatus {
+    fn from(answer: DepositAnswer) -> Self {
+        match answer {
+            DepositAnswer::InProgress => Self::InProgress,
+            DepositAnswer::Failed => Self::Failed,
+            DepositAnswer::Complete => Self::Complete,
+        }
+    }
+}
+
 /// Snapshot of all persisted bridge-status rows and cursors.
 #[derive(Debug, Clone)]
 pub struct BridgeStatusDbSnapshot {
+    pub(crate) deposit_answers: Vec<(OutPoint, DepositAnswer)>,
     pub(crate) withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
     pub(crate) withdrawal_pairings: Vec<WithdrawalPairing>,
     pub(crate) cursors: StatusCursors,
@@ -46,11 +75,13 @@ pub struct BridgeStatusDbSnapshot {
 
 impl BridgeStatusDbSnapshot {
     pub fn new(
+        deposit_answers: Vec<(OutPoint, DepositAnswer)>,
         withdrawals: Vec<(DepositIdx, WithdrawalInfo)>,
         withdrawal_pairings: Vec<WithdrawalPairing>,
         cursors: StatusCursors,
     ) -> Self {
         Self {
+            deposit_answers,
             withdrawals,
             withdrawal_pairings,
             cursors,

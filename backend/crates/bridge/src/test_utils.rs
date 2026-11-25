@@ -1,6 +1,10 @@
 //! Shared constants, config, row factories and monitoring fixture for bridge tests.
 
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bitcoin::{hashes::Hash, Txid};
 pub(crate) use status_config::test_utils::TEST_MAX_CONFIRMATIONS;
@@ -16,12 +20,13 @@ use crate::{
         types::{BridgeStatusDbSnapshot, DbWithdrawalRequestRow},
         withdrawal_index::{mock::MockWithdrawalIndexerDb, test_utils::make_withdrawal_request},
     },
+    l1::deposits::deposit_request_outpoint,
     state::{
         BridgeMonitoringState, DepositInfoUpdate, ReimbursementInfoUpdate, WithdrawalInfoUpdate,
     },
     types::{
-        BridgeStatus, DepositInfo, DepositStatus, ReimbursementInfo, WithdrawalInfo,
-        WithdrawalPairing, WithdrawalSeq, WithdrawalStatus,
+        BridgeStatus, DepositInfo, DepositStatus, ObservedDepositStatusRow, ReimbursementInfo,
+        WithdrawalInfo, WithdrawalPairing, WithdrawalSeq, WithdrawalStatus,
     },
     withdrawal_indexer::TASK_NAME,
 };
@@ -226,4 +231,25 @@ pub(crate) fn make_withdrawal_request_row(seq: WithdrawalSeq, seed: u8) -> DbWit
         seq,
         request: make_withdrawal_request(seed),
     }
+}
+
+/// A published reader row for cache and HTTP tests.
+pub(crate) fn make_observed_deposit_status(info: DepositInfo) -> ObservedDepositStatusRow {
+    ObservedDepositStatusRow {
+        request_outpoint: deposit_request_outpoint(info.deposit_request_txid),
+        info,
+    }
+}
+
+/// Unique temporary path for a bridge status database.
+pub(crate) fn make_unique_db_path(test_name: &str) -> PathBuf {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("current time must be >= UNIX_EPOCH")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "bridge_status_db_{test_name}_{}_{}",
+        std::process::id(),
+        now_nanos
+    ))
 }

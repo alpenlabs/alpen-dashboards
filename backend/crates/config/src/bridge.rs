@@ -14,17 +14,20 @@ const DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 30;
 /// and indexed WRT rows fetched per withdrawal-index DB batch.
 const DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE: usize = 1_000;
 
-fn default_esplora_request_timeout_s() -> u64 {
-    DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
-}
+/// Default EVM logs batch size for the withdrawal indexer.
+const DEFAULT_ETH_LOGS_BATCH_SIZE: u64 = 1000;
 
-fn default_bridge_initial_status_wait_timeout_s() -> u64 {
-    DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S
-}
+/// Default finality lag (in blocks) the indexer keeps behind the chain head.
+const DEFAULT_ETH_LOGS_FINALITY_LAG: u64 = 12;
 
-fn default_withdrawal_pairing_batch_size() -> usize {
-    DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
-}
+/// Default starting block for the indexer when no checkpoint is persisted.
+const DEFAULT_ETH_LOGS_START_BLOCK: u64 = 0;
+
+/// Default poll interval for the indexer in seconds.
+const DEFAULT_ETH_LOGS_POLL_INTERVAL_S: u64 = 10;
+
+/// Default fixed withdrawal denomination in sats (1 BTC).
+const DEFAULT_WITHDRAWAL_DENOMINATION_SATS: u64 = 100_000_000;
 
 /// Configuration for bridge monitoring services
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,9 +39,8 @@ pub struct BridgeMonitoringConfig {
     #[serde(default = "default_esplora_request_timeout_s")]
     esplora_request_timeout_s: u64,
 
-    /// Confirmation cutoff for terminal rows in bridge status.
-    /// Rows with known confirmations below the cutoff are included; reaching it
-    /// permits purging and cursor progress.
+    /// Confirmations retained after a deposit becomes terminal, and the total
+    /// confirmation cutoff for terminal withdrawal and reimbursement transactions.
     max_tx_confirmations: u64,
 
     /// Bridge status refetch interval in seconds
@@ -123,37 +125,6 @@ impl BridgeOperator {
     }
 }
 
-/// Default EVM logs batch size for the withdrawal indexer.
-const DEFAULT_ETH_LOGS_BATCH_SIZE: u64 = 1000;
-
-/// Default finality lag (in blocks) the indexer keeps behind the chain head.
-const DEFAULT_ETH_LOGS_FINALITY_LAG: u64 = 12;
-
-/// Default starting block for the indexer when no checkpoint is persisted.
-const DEFAULT_ETH_LOGS_START_BLOCK: u64 = 0;
-
-/// Default poll interval for the indexer in seconds.
-const DEFAULT_ETH_LOGS_POLL_INTERVAL_S: u64 = 10;
-
-/// Default fixed withdrawal denomination in sats (1 BTC).
-const DEFAULT_WITHDRAWAL_DENOMINATION_SATS: u64 = 100_000_000;
-
-fn default_eth_logs_batch_size() -> u64 {
-    DEFAULT_ETH_LOGS_BATCH_SIZE
-}
-fn default_eth_logs_finality_lag() -> u64 {
-    DEFAULT_ETH_LOGS_FINALITY_LAG
-}
-fn default_eth_logs_start_block() -> u64 {
-    DEFAULT_ETH_LOGS_START_BLOCK
-}
-fn default_eth_logs_poll_interval_s() -> u64 {
-    DEFAULT_ETH_LOGS_POLL_INTERVAL_S
-}
-fn default_withdrawal_denomination_sats() -> u64 {
-    DEFAULT_WITHDRAWAL_DENOMINATION_SATS
-}
-
 /// Configuration for the EVM withdrawal-intent indexer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WithdrawalIndexerConfig {
@@ -205,6 +176,38 @@ impl WithdrawalIndexerConfig {
     pub fn withdrawal_denomination_sats(&self) -> u64 {
         self.withdrawal_denomination_sats
     }
+}
+
+fn default_esplora_request_timeout_s() -> u64 {
+    DEFAULT_ESPLORA_REQUEST_TIMEOUT_S
+}
+
+fn default_bridge_initial_status_wait_timeout_s() -> u64 {
+    DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S
+}
+
+fn default_withdrawal_pairing_batch_size() -> usize {
+    DEFAULT_WITHDRAWAL_PAIRING_BATCH_SIZE
+}
+
+fn default_eth_logs_batch_size() -> u64 {
+    DEFAULT_ETH_LOGS_BATCH_SIZE
+}
+
+fn default_eth_logs_finality_lag() -> u64 {
+    DEFAULT_ETH_LOGS_FINALITY_LAG
+}
+
+fn default_eth_logs_start_block() -> u64 {
+    DEFAULT_ETH_LOGS_START_BLOCK
+}
+
+fn default_eth_logs_poll_interval_s() -> u64 {
+    DEFAULT_ETH_LOGS_POLL_INTERVAL_S
+}
+
+fn default_withdrawal_denomination_sats() -> u64 {
+    DEFAULT_WITHDRAWAL_DENOMINATION_SATS
 }
 
 #[cfg(test)]

@@ -1,15 +1,20 @@
+use std::{collections::BTreeSet, sync::Arc};
+
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::Json;
 use bitcoin::Txid;
-use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_primitives::L1Height;
+use strata_retry::Backoff;
 use strata_tasks::ShutdownGuard;
+use tokio::time::{interval, sleep_until, timeout, Duration, Instant, MissedTickBehavior};
+use tracing::{debug, error, info, warn};
 
 use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
+    deposit_status::{DepositStatusError, DepositStatusReader},
     l1::esplora::EsploraClient,
     state::{DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
@@ -19,9 +24,6 @@ use super::{
     withdrawal_requests::fetch_withdrawal_requests,
     withdrawal_status::get_withdrawal_updates,
 };
-
-use tokio::time::{interval, timeout, Duration};
-use tracing::{error, info, warn};
 
 /// Periodically fetch bridge status and update bridge cache.
 pub async fn bridge_monitoring_task(
@@ -88,27 +90,47 @@ pub async fn bridge_monitoring_task(
             .into_iter()
             .collect::<Vec<_>>();
         let deposit_infos = get_deposits(context.bridge_rpc(), &all_deposit_candidates).await;
-        let deposit_candidates = deposit_candidates.into_iter().collect::<BTreeSet<_>>();
-        let deposit_info_updates = get_deposit_info_updates(
-            context.esplora(),
-            chain_tip_height,
-            deposit_infos
-                .iter()
-                .copied()
-                .filter(|(deposit_idx, _)| deposit_candidates.contains(deposit_idx))
-                .collect(),
-        )
-        .await;
-        if let Err(e) = context
+        let answers_recorded = match context
             .state()
-            .apply_deposit_info_updates(
+            .record_bridge_deposit_answers(
                 context.status_db(),
-                deposit_info_updates,
-                context.config().max_tx_confirmations(),
+                &deposit_infos
+                    .iter()
+                    .map(|(_, info)| *info)
+                    .collect::<Vec<_>>(),
             )
             .await
         {
-            warn!(error = %e, "failed to persist deposit status updates");
+            Ok(()) => true,
+            Err(error) => {
+                warn!(%error, "failed to persist bridge deposit answers; deposit status updates will retry");
+                false
+            }
+        };
+        // Keep the polling cursor behind any answer that has not been saved.
+        if answers_recorded {
+            let deposit_candidates = deposit_candidates.into_iter().collect::<BTreeSet<_>>();
+            let deposit_info_updates = get_deposit_info_updates(
+                context.esplora(),
+                chain_tip_height,
+                deposit_infos
+                    .iter()
+                    .copied()
+                    .filter(|(deposit_idx, _)| deposit_candidates.contains(deposit_idx))
+                    .collect(),
+            )
+            .await;
+            if let Err(e) = context
+                .state()
+                .apply_deposit_info_updates(
+                    context.status_db(),
+                    deposit_info_updates,
+                    context.config().max_tx_confirmations(),
+                )
+                .await
+            {
+                warn!(error = %e, "failed to persist deposit status updates");
+            }
         }
 
         pair_indexed_withdrawals(
@@ -164,10 +186,61 @@ pub async fn bridge_monitoring_task(
         {
             warn!(error = %e, "failed to persist reimbursement status updates");
         }
-
-        context.mark_status_available();
     }
 
+    Ok(())
+}
+
+/// Refreshes deposit rows on observer progress, periodic bridge updates, and read retries.
+pub async fn deposit_status_monitoring_task(
+    context: Arc<BridgeMonitoringContext>,
+    reader: DepositStatusReader,
+    shutdown: ShutdownGuard,
+) -> Result<()> {
+    let mut progress = reader.status();
+    let mut watch_open = true;
+    let mut refresh = interval(Duration::from_secs(
+        context.config().status_refetch_interval().max(1),
+    ));
+    refresh.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let backoff = context.config().retry_policy().backoff();
+    let base_delay_ms = backoff.base_delay_ms().max(1);
+    let mut retry_delay_ms = base_delay_ms;
+    let mut retry_at = None;
+    loop {
+        tokio::select! {
+            _ = shutdown.wait_for_shutdown() => break,
+            changed = progress.changed(), if watch_open => { watch_open = changed.is_ok(); },
+            _ = refresh.tick() => {},
+            _ = sleep_until(retry_at.unwrap_or_else(Instant::now)), if retry_at.is_some() => {},
+        }
+        // The initial interval tick reads the current watch value without waiting for a change.
+        let answers = context.state().bridge_deposit_answers().await;
+        let rows = tokio::select! {
+            _ = shutdown.wait_for_shutdown() => break,
+            result = reader.read(&answers) => match result {
+                Ok(rows) => Some(rows),
+                Err(error) => {
+                    match error {
+                        DepositStatusError::NotReady | DepositStatusError::SnapshotChanged => {
+                            debug!(%error, "observed deposit view will be retried");
+                        }
+                        _ => warn!(%error, "failed to refresh observed deposit status; retrying"),
+                    }
+                    None
+                }
+            },
+        };
+        if let Some(rows) = rows {
+            context.state().replace_observed_deposits(rows).await;
+            context.mark_status_available();
+            retry_at = None;
+            retry_delay_ms = base_delay_ms;
+        } else {
+            retry_at = Some(Instant::now() + Duration::from_millis(retry_delay_ms));
+            retry_delay_ms = backoff.next_delay_ms(retry_delay_ms).max(1);
+        }
+    }
     Ok(())
 }
 
@@ -388,7 +461,7 @@ mod tests {
     use bitcoin::hashes::Hash;
 
     use crate::{
-        test_utils::{make_deposit_info, BridgeStatusFixture},
+        test_utils::{make_deposit_info, make_observed_deposit_status, BridgeStatusFixture},
         types::ChallengeStep,
     };
 
@@ -540,7 +613,10 @@ mod tests {
     async fn bridge_status_is_served_after_first_status() {
         let fixture = BridgeStatusFixture::default();
         let info = make_deposit_info(DepositStatus::Complete);
-        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture
+            .state()
+            .replace_observed_deposits(vec![make_observed_deposit_status(info)])
+            .await;
         fixture.context().mark_status_available();
 
         let status = get_bridge_status(Arc::clone(fixture.context()))
@@ -566,7 +642,10 @@ mod tests {
         );
 
         let info = make_deposit_info(DepositStatus::Complete);
-        fixture.apply_deposit_update(0, info, Some(1)).await;
+        fixture
+            .state()
+            .replace_observed_deposits(vec![make_observed_deposit_status(info)])
+            .await;
         fixture.context().mark_status_available();
 
         let status = request.await.expect("bridge status").0;

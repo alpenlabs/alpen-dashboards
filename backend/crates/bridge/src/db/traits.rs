@@ -8,6 +8,7 @@ use crate::{
         types::{
             BitcoinObserverDbMetadata, BitcoinObserverState, BridgeStatusDbSnapshot,
             DbIndexerState, DbWithdrawalEventIndex, DbWithdrawalRequest, DbWithdrawalRequestRow,
+            DepositAnswer,
         },
     },
     l1::observations::ObservedDeposit,
@@ -55,6 +56,9 @@ pub trait WithdrawalIndexerDb: Send + Sync + 'static {
 pub trait BridgeStatusDb: Send + Sync + 'static {
     /// Loads all persisted status rows, pairings, and cursors.
     fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot>;
+
+    /// Durably inserts or replaces bridge answers keyed by request outpoint.
+    fn put_deposit_answers(&self, answers: &[(OutPoint, DepositAnswer)]) -> DbResult<()>;
 
     /// Inserts or replaces one withdrawal status row.
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()>;

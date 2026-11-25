@@ -415,20 +415,13 @@ async fn recover_request(
 mod tests {
     use std::{
         fs,
-        sync::{Arc, Mutex},
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use async_trait::async_trait;
-    use axum::{extract::State, routing::post, Json, Router};
-    use bitcoin::{
-        blockdata::constants::genesis_block, consensus::serialize, Block, BlockHash, Network,
-        ScriptBuf, Transaction, Txid,
-    };
+    use bitcoin::{blockdata::constants::genesis_block, Network, ScriptBuf};
     use bitcoind_async_client::error::ClientError;
-    use serde_json::{json, Value};
     use status_config::BitcoinObserverConfig;
-    use status_utils::test_utils::TestHttpServer;
     use strata_btc_types::BlockHashExt;
     use strata_identifiers::L1BlockCommitment;
     use tokio::sync::watch;
@@ -442,162 +435,15 @@ mod tests {
         db::{bitcoin_observer::mock::MockBitcoinObserverDb, traits::BitcoinObserverDb},
         l1::{
             deposits::{DepositParams, DepositSpend},
-            observations::{ObservedDeposit, TransactionInclusion},
+            observations::ObservedDeposit,
             params::BitcoinParams,
-            rpc::{
-                BitcoinChainInfo, BitcoinRpcClient, BitcoinRpcError, BitcoinSource,
-                BitcoinTransaction,
+            rpc::{BitcoinRpcClient, BitcoinRpcError, BitcoinSource},
+            test_utils::{
+                make_deposit_params, make_keypair, DepositFixture, MockBitcoinSource,
+                TEST_DEPOSIT_INDEX,
             },
-            test_utils::{make_deposit_params, make_keypair, DepositFixture, TEST_DEPOSIT_INDEX},
         },
     };
-
-    struct MockBitcoinSource {
-        blocks: Mutex<Vec<Block>>,
-        fetched: Mutex<Vec<u64>>,
-        fail_height: Mutex<Option<u64>>,
-        transaction_override: Mutex<Option<Result<Option<BitcoinTransaction>, BitcoinRpcError>>>,
-    }
-
-    impl MockBitcoinSource {
-        fn new() -> Self {
-            Self {
-                blocks: Mutex::new(vec![genesis_block(Network::Regtest)]),
-                fetched: Mutex::new(Vec::new()),
-                fail_height: Mutex::new(None),
-                transaction_override: Mutex::new(None),
-            }
-        }
-        fn append(&self, transactions: Vec<Transaction>) -> L1BlockCommitment {
-            let mut chain = self.blocks.lock().expect("chain");
-            let previous = chain.last().expect("genesis");
-            let mut block = Block {
-                header: previous.header,
-                txdata: transactions,
-            };
-            block.header.prev_blockhash = previous.block_hash();
-            block.header.time += 1;
-            block.header.nonce += 1;
-            if let Some(root) = block.compute_merkle_root() {
-                block.header.merkle_root = root;
-            }
-            let commitment = L1BlockCommitment::new(
-                chain.len().try_into().expect("test height"),
-                block.block_hash().to_l1_block_id(),
-            );
-            chain.push(block);
-            commitment
-        }
-        fn fork_after(&self, height: usize) {
-            self.blocks.lock().expect("chain").truncate(height + 1);
-        }
-    }
-
-    #[async_trait]
-    impl BitcoinSource for MockBitcoinSource {
-        async fn chain_info(&self) -> Result<BitcoinChainInfo, BitcoinRpcError> {
-            let chain = self.blocks.lock().expect("chain");
-            Ok(BitcoinChainInfo {
-                blocks: chain.len() as u64 - 1,
-                bestblockhash: chain.last().expect("tip").block_hash(),
-                chain: "regtest".into(),
-            })
-        }
-        async fn block_hash(&self, height: u64) -> Result<BlockHash, BitcoinRpcError> {
-            self.blocks
-                .lock()
-                .expect("chain")
-                .get(height as usize)
-                .map(Block::block_hash)
-                .ok_or(BitcoinRpcError::Client(ClientError::Server(
-                    -8,
-                    "height out of range".into(),
-                )))
-        }
-        async fn block(&self, height: u64) -> Result<Block, BitcoinRpcError> {
-            self.fetched.lock().expect("fetched").push(height);
-            if *self.fail_height.lock().expect("failure") == Some(height) {
-                return Err(BitcoinRpcError::Client(ClientError::Server(
-                    -28,
-                    "node warming up".into(),
-                )));
-            }
-            self.blocks
-                .lock()
-                .expect("chain")
-                .get(height as usize)
-                .cloned()
-                .ok_or(BitcoinRpcError::Client(ClientError::Server(
-                    -8,
-                    "height out of range".into(),
-                )))
-        }
-        async fn transaction(
-            &self,
-            txid: Txid,
-        ) -> Result<Option<BitcoinTransaction>, BitcoinRpcError> {
-            if let Some(result) = self
-                .transaction_override
-                .lock()
-                .expect("transaction override")
-                .take()
-            {
-                return result;
-            }
-            let chain = self.blocks.lock().expect("chain");
-            for (height, block) in chain.iter().enumerate() {
-                if let Some((position, tx)) = block
-                    .txdata
-                    .iter()
-                    .enumerate()
-                    .find(|(_, tx)| tx.compute_txid() == txid)
-                {
-                    return Ok(Some(BitcoinTransaction {
-                        tx: tx.clone(),
-                        inclusion: TransactionInclusion {
-                            block: L1BlockCommitment::new(
-                                height.try_into().expect("height"),
-                                block.block_hash().to_l1_block_id(),
-                            ),
-                            position: position.try_into().expect("position"),
-                        },
-                    }));
-                }
-            }
-            Ok(None)
-        }
-    }
-
-    async fn bitcoin_rpc_response(
-        State(source): State<Arc<MockBitcoinSource>>,
-        Json(request): Json<Value>,
-    ) -> Json<Value> {
-        let result = match request["method"].as_str().expect("RPC method") {
-            "getblockchaininfo" => {
-                let info = source.chain_info().await.expect("mock chain info");
-                json!({"blocks": info.blocks, "bestblockhash": info.bestblockhash, "chain": info.chain})
-            }
-            "getblockhash" => {
-                let height = request["params"][0].as_u64().expect("block height");
-                json!(source.block_hash(height).await.expect("mock block hash"))
-            }
-            "getblock" => {
-                let chain = source.blocks.lock().expect("chain");
-                let hash = request["params"][0].as_str().expect("block hash");
-                let block = chain
-                    .iter()
-                    .find(|block| block.block_hash().to_string() == hash)
-                    .expect("requested block");
-                json!(hex::encode(serialize(block)))
-            }
-            _ => {
-                return Json(
-                    json!({"id":request["id"], "error":{"code":-32601,"message":"unknown method"}}),
-                )
-            }
-        };
-        Json(json!({"id":request["id"], "result":result, "error":null}))
-    }
 
     struct ObserverFixture {
         deposits: DepositFixture,
@@ -743,18 +589,12 @@ mod tests {
             ScanOutcome::CaughtUp
         );
         assert_eq!(fixture.tip(), last);
-        assert_eq!(
-            *fixture.rpc.fetched.lock().expect("fetched blocks"),
-            vec![1, 2]
-        );
+        assert_eq!(fixture.rpc.fetched_blocks(), vec![1, 2]);
         assert_eq!(
             fixture.poll().await.expect("idempotent caught-up poll"),
             ScanOutcome::CaughtUp
         );
-        assert_eq!(
-            *fixture.rpc.fetched.lock().expect("fetched blocks"),
-            vec![1, 2]
-        );
+        assert_eq!(fixture.rpc.fetched_blocks(), vec![1, 2]);
     }
 
     #[tokio::test]
@@ -834,7 +674,7 @@ mod tests {
             .rpc
             .append(vec![fixture.deposits.request_tx().clone()]);
         fixture.rpc.append(vec![fixture.deposits.deposit_tx()]);
-        *fixture.rpc.fail_height.lock().expect("failure") = Some(2);
+        fixture.rpc.fail_at(Some(2));
         assert!(matches!(
             fixture.poll().await,
             Err(BitcoinObserverError::Rpc(_))
@@ -842,7 +682,7 @@ mod tests {
         assert_eq!(fixture.tip(), first);
         assert!(fixture.observed().expect("saved request").spend.is_none());
 
-        *fixture.rpc.fail_height.lock().expect("failure") = None;
+        fixture.rpc.fail_at(None);
         fixture.poll().await.expect("retry from block 2");
         assert!(fixture.observed().expect("saved request").spend.is_some());
     }
@@ -886,12 +726,7 @@ mod tests {
         let expected = fixture
             .rpc
             .append(vec![fixture.deposits.request_tx().clone()]);
-        let server = TestHttpServer::new(
-            Router::new()
-                .route("/", post(bitcoin_rpc_response))
-                .with_state(Arc::clone(&fixture.rpc)),
-        )
-        .await;
+        let server = fixture.rpc.serve().await;
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
@@ -1022,12 +857,7 @@ mod tests {
         let row = fixture.observed().expect("recovered request and deposit");
         assert_eq!(row.inclusion.block, request_block);
         assert_eq!(row.spend.expect("deposit").inclusion.block, deposit_block);
-        assert!(!fixture
-            .rpc
-            .fetched
-            .lock()
-            .expect("scanned blocks")
-            .contains(&1));
+        assert!(!fixture.rpc.fetched_blocks().contains(&1));
         assert!(fixture.status.borrow().caught_up);
 
         // The recovered row belongs to the DT block's atomic write and undo record.
@@ -1054,7 +884,7 @@ mod tests {
                 fixture.rpc.append(Vec::new());
             }
             let deposit_block = fixture.rpc.append(vec![fixture.deposits.deposit_tx()]);
-            *fixture.rpc.transaction_override.lock().expect("override") = Some(result);
+            fixture.rpc.override_transaction(result);
 
             assert!(fixture
                 .poll()
@@ -1096,7 +926,7 @@ mod tests {
                 .block_hash()
                 .to_l1_block_id(),
         );
-        *fixture.rpc.transaction_override.lock().expect("override") = Some(Ok(Some(recovered)));
+        fixture.rpc.override_transaction(Ok(Some(recovered)));
         assert!(matches!(
             fixture.poll().await,
             Err(BitcoinObserverError::ChainChanged)
@@ -1166,7 +996,7 @@ mod tests {
             }
         );
         let third = fixture.rpc.append(Vec::new());
-        *fixture.rpc.fail_height.lock().expect("failure") = Some(u64::from(third.height));
+        fixture.rpc.fail_at(Some(u64::from(third.height)));
         fixture.poll().await.expect_err("block fetch failed");
         let status = fixture.status.borrow().clone();
         assert_eq!(status.tip, Some(second));

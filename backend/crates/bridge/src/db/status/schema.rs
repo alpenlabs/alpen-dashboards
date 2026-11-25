@@ -1,17 +1,45 @@
 //! Schema and codec definitions for the bridge-status DB trees.
 
+use bitcoin::{
+    consensus::{deserialize, serialize},
+    OutPoint,
+};
 use typed_sled::{
-    codec::{CodecError, ValueCodec},
+    codec::{CodecError, KeyCodec, ValueCodec},
     schema::TreeName,
     Schema,
 };
 
 use strata_bridge_primitives::types::DepositIdx;
 
+use crate::db::types::DepositAnswer;
 use crate::types::{
     ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairingCursor, WithdrawalSeq,
     WithdrawalStatusCursor,
 };
+
+/// Last successful bridge answers keyed by request outpoint.
+#[derive(Debug)]
+pub(crate) struct DepositAnswerSchema;
+
+impl Schema for DepositAnswerSchema {
+    const TREE_NAME: TreeName = TreeName("deposit_answer");
+    type Key = OutPoint;
+    type Value = DepositAnswer;
+}
+
+impl KeyCodec<DepositAnswerSchema> for OutPoint {
+    fn encode_key(&self) -> Result<Vec<u8>, CodecError> {
+        Ok(serialize(self))
+    }
+
+    fn decode_key(bytes: &[u8]) -> Result<Self, CodecError> {
+        deserialize(bytes).map_err(|error| CodecError::DeserializationFailed {
+            schema: DepositAnswerSchema::TREE_NAME.0,
+            source: error.into(),
+        })
+    }
+}
 
 /// Withdrawal status rows keyed by bridge deposit index.
 #[derive(Debug)]
@@ -99,9 +127,30 @@ macro_rules! impl_json_value_codec {
     };
 }
 
+impl_json_value_codec!(DepositAnswerSchema, DepositAnswer);
 impl_json_value_codec!(WithdrawalInfoSchema, WithdrawalInfo);
 impl_json_value_codec!(WithdrawalPairingSchema, WithdrawalSeq);
 impl_json_value_codec!(DepositInfoCursorSchema, DepositIdx);
 impl_json_value_codec!(WithdrawalPairingCursorSchema, WithdrawalPairingCursor);
 impl_json_value_codec!(WithdrawalStatusCursorSchema, WithdrawalStatusCursor);
 impl_json_value_codec!(ReimbursementStatusCursorSchema, ReimbursementStatusCursor);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deposit_answers_use_storage_names() {
+        for (answer, bytes) in [
+            (DepositAnswer::InProgress, br#""InProgress""#.as_slice()),
+            (DepositAnswer::Failed, br#""Failed""#.as_slice()),
+            (DepositAnswer::Complete, br#""Complete""#.as_slice()),
+        ] {
+            assert_eq!(answer.encode_value().expect("encode storage answer"), bytes);
+            assert_eq!(
+                DepositAnswer::decode_value(bytes.into()).expect("decode stored answer"),
+                answer,
+            );
+        }
+    }
+}

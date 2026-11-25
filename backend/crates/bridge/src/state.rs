@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use bitcoin::OutPoint;
 use strata_bridge_primitives::types::DepositIdx;
 use tokio::sync::RwLock;
 use tracing::warn;
@@ -9,12 +10,14 @@ use super::{
     db::{
         error::DbResult,
         traits::BridgeStatusDb,
-        types::{BridgeStatusDbSnapshot, DbWithdrawalRequestRow},
+        types::{BridgeStatusDbSnapshot, DbWithdrawalRequestRow, DepositAnswer},
     },
+    l1::deposits::deposit_request_outpoint,
     types::{
-        BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
-        ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,
-        WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatus, WithdrawalStatusCursor,
+        BridgeStatus, DepositInfo, DepositStatus, ObservedDepositStatusRow, OperatorStatus,
+        ReimbursementInfo, ReimbursementStatus, ReimbursementStatusCursor, WithdrawalInfo,
+        WithdrawalPairing, WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatus,
+        WithdrawalStatusCursor,
     },
 };
 
@@ -62,6 +65,49 @@ impl BridgeMonitoringState {
         Self {
             cache: RwLock::new(BridgeStatusCache::from_status_snapshot(snapshot)),
         }
+    }
+
+    pub(crate) async fn bridge_deposit_answers(&self) -> BTreeMap<OutPoint, DepositStatus> {
+        self.cache
+            .read()
+            .await
+            .bridge_deposit_answers()
+            .into_iter()
+            .map(|(outpoint, answer)| (outpoint, answer.into()))
+            .collect()
+    }
+
+    pub(crate) async fn record_bridge_deposit_answers(
+        &self,
+        status_db: &(impl BridgeStatusDb + ?Sized),
+        infos: &[DepositInfo],
+    ) -> DbResult<()> {
+        let answers = {
+            let cache = self.cache.read().await;
+            infos
+                .iter()
+                .map(|info| {
+                    (
+                        deposit_request_outpoint(info.deposit_request_txid),
+                        DepositAnswer::from(info.status),
+                    )
+                })
+                .filter(|(outpoint, answer)| cache.bridge_deposit_answer(outpoint) != Some(*answer))
+                .collect::<Vec<_>>()
+        };
+        if answers.is_empty() {
+            return Ok(());
+        }
+        status_db.put_deposit_answers(&answers)?;
+        self.cache
+            .write()
+            .await
+            .record_bridge_deposit_answers(&answers);
+        Ok(())
+    }
+
+    pub(crate) async fn replace_observed_deposits(&self, rows: Vec<ObservedDepositStatusRow>) {
+        self.cache.write().await.replace_observed_deposits(rows);
     }
 
     pub(crate) async fn select_deposit_info_candidates(
@@ -338,15 +384,7 @@ impl BridgeMonitoringState {
 
         BridgeStatus {
             operators: cache.get_operators(),
-            deposits: cache
-                // Omit terminal rows whose confirmations reached `max_confirmations` or are unknown.
-                .filter_deposits(|_, info, confirmations| {
-                    !matches!(info.status, DepositStatus::Complete | DepositStatus::Failed)
-                        || is_below_confirmation_cutoff(confirmations, max_confirmations)
-                })
-                .into_iter()
-                .map(|(_, info)| info)
-                .collect(),
+            deposits: cache.deposit_statuses(),
             withdrawals: cache
                 // Complete withdrawals may be retained as reimbursement handoff state; omit
                 // them from this response at `max_confirmations` or when confirmations are unknown.
@@ -509,7 +547,7 @@ fn plan_withdrawal_pairings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use bitcoin::{hashes::Hash, Txid};
 
@@ -525,17 +563,34 @@ mod tests {
         types::ChallengeStep,
     };
 
-    /// Mock status database that fails the next pairing-row or pairing-cursor write.
+    /// Mock status database that fails selected writes once.
     #[derive(Default)]
-    struct FailingPairingWriteDb {
+    struct FailingStatusWriteDb {
         inner: MockBridgeStatusDb,
+        fail_next_deposit_answers: AtomicBool,
+        deposit_answer_write_count: AtomicUsize,
+        deposit_answer_row_count: AtomicUsize,
         fail_next_pairings: AtomicBool,
         fail_next_pairing_cursor: AtomicBool,
     }
 
-    impl BridgeStatusDb for FailingPairingWriteDb {
+    impl BridgeStatusDb for FailingStatusWriteDb {
         fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
             self.inner.get_status_snapshot()
+        }
+
+        fn put_deposit_answers(&self, answers: &[(OutPoint, DepositAnswer)]) -> DbResult<()> {
+            if self
+                .fail_next_deposit_answers
+                .swap(false, Ordering::Relaxed)
+            {
+                return Err(injected_write_failure());
+            }
+            self.deposit_answer_write_count
+                .fetch_add(1, Ordering::Relaxed);
+            self.deposit_answer_row_count
+                .fetch_add(answers.len(), Ordering::Relaxed);
+            self.inner.put_deposit_answers(answers)
         }
 
         fn put_withdrawal_info(
@@ -595,7 +650,7 @@ mod tests {
     }
 
     /// Pairs deposit 0 with withdrawal 0 after one failed write, then retries.
-    async fn assert_pairing_retry_after_failed_write(status_db: FailingPairingWriteDb) {
+    async fn assert_pairing_retry_after_failed_write(status_db: FailingStatusWriteDb) {
         let fixture = BridgeStatusFixture::new(status_db);
         let deposit_infos = [(0, make_deposit_info(DepositStatus::Complete))];
         let requests = [make_withdrawal_request_row(0, 1)];
@@ -827,6 +882,89 @@ mod tests {
 
         assert!(update.pairings.is_empty());
         assert_eq!(update.cursor, cursor);
+    }
+
+    #[tokio::test]
+    async fn deposit_answer_writes_include_only_changed_answers() {
+        let db = FailingStatusWriteDb::default();
+        let state = BridgeMonitoringState::default();
+        let first = make_deposit_info(DepositStatus::InProgress);
+        let mut second = first;
+        second.deposit_request_txid = Txid::from_byte_array([2; 32]);
+        state
+            .record_bridge_deposit_answers(&db, &[first, second])
+            .await
+            .expect("initial answers");
+        assert_eq!(db.deposit_answer_write_count.load(Ordering::Relaxed), 1);
+        assert_eq!(db.deposit_answer_row_count.load(Ordering::Relaxed), 2);
+
+        // Identical polls and polls without successful responses do no storage work.
+        state
+            .record_bridge_deposit_answers(&db, &[first, second])
+            .await
+            .expect("unchanged answers");
+        state
+            .record_bridge_deposit_answers(&db, &[])
+            .await
+            .expect("no answers");
+        assert_eq!(db.deposit_answer_write_count.load(Ordering::Relaxed), 1);
+
+        // A changed answer writes only that request, preserving the other cached answer.
+        second.status = DepositStatus::Failed;
+        state
+            .record_bridge_deposit_answers(&db, &[first, second])
+            .await
+            .expect("changed answer");
+        assert_eq!(db.deposit_answer_write_count.load(Ordering::Relaxed), 2);
+        assert_eq!(db.deposit_answer_row_count.load(Ordering::Relaxed), 3);
+
+        // Startup hydration provides the same comparison baseline after a restart.
+        let restored =
+            BridgeMonitoringState::from_snapshot(db.get_status_snapshot().expect("snapshot"));
+        restored
+            .record_bridge_deposit_answers(&db, &[first, second])
+            .await
+            .expect("unchanged after restart");
+        assert_eq!(db.deposit_answer_write_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_deposit_answer_write_preserves_the_previous_answer() {
+        let db = FailingStatusWriteDb::default();
+        let state = BridgeMonitoringState::default();
+        let mut info = make_deposit_info(DepositStatus::InProgress);
+        state
+            .record_bridge_deposit_answers(&db, &[info])
+            .await
+            .expect("initial answer");
+        info.status = DepositStatus::Failed;
+        db.fail_next_deposit_answers.store(true, Ordering::Relaxed);
+        assert!(state
+            .record_bridge_deposit_answers(&db, &[info])
+            .await
+            .is_err());
+        let outpoint = deposit_request_outpoint(info.deposit_request_txid);
+        assert!(matches!(
+            state.bridge_deposit_answers().await.get(&outpoint),
+            Some(DepositStatus::InProgress)
+        ));
+        let snapshot = db.get_status_snapshot().expect("snapshot");
+        assert!(matches!(
+            snapshot.deposit_answers[0].1,
+            DepositAnswer::InProgress
+        ));
+        assert_eq!(snapshot.cursors.deposit_info, 0);
+        state
+            .record_bridge_deposit_answers(&db, &[info])
+            .await
+            .expect("retry answer");
+        let restored = BridgeMonitoringState::from_snapshot(
+            db.get_status_snapshot().expect("restart snapshot"),
+        );
+        assert!(matches!(
+            restored.bridge_deposit_answers().await.get(&outpoint),
+            Some(DepositStatus::Failed)
+        ));
     }
 
     #[tokio::test]
@@ -1153,11 +1291,16 @@ mod tests {
         let snapshot = fixture.snapshot();
         assert_eq!(snapshot.cursors.deposit_info, 0);
         assert!(snapshot.withdrawals.is_empty());
-        let deposits = fixture.bridge_status().await.deposits;
+        let deposits = fixture
+            .state()
+            .cache
+            .read()
+            .await
+            .filter_deposits(|_, _, _| true);
         assert_eq!(deposits.len(), 1);
-        assert!(matches!(deposits[0].status, DepositStatus::InProgress));
+        assert!(matches!(deposits[0].1.status, DepositStatus::InProgress));
 
-        // Terminal deposits remain included below the cutoff and disappear at it.
+        // The legacy polling cache keeps terminal deposits until the cursor advances.
         for (confirmations, included) in [
             (TEST_MAX_CONFIRMATIONS - 1, true),
             (TEST_MAX_CONFIRMATIONS, false),
@@ -1165,11 +1308,16 @@ mod tests {
             fixture
                 .apply_deposit_update(0, complete, Some(confirmations))
                 .await;
-            let deposits = fixture.bridge_status().await.deposits;
+            let deposits = fixture
+                .state()
+                .cache
+                .read()
+                .await
+                .filter_deposits(|_, _, _| true);
             assert_eq!(deposits.len(), usize::from(included));
             if included {
                 assert_eq!(
-                    deposits[0].deposit_request_txid,
+                    deposits[0].1.deposit_request_txid,
                     complete.deposit_request_txid
                 );
             }
@@ -1674,9 +1822,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_pairing_row_write_keeps_cursor_and_retry_pairs_once() {
-        assert_pairing_retry_after_failed_write(FailingPairingWriteDb {
+        assert_pairing_retry_after_failed_write(FailingStatusWriteDb {
             fail_next_pairings: AtomicBool::new(true),
-            ..FailingPairingWriteDb::default()
+            ..FailingStatusWriteDb::default()
         })
         .await;
     }
@@ -1684,9 +1832,9 @@ mod tests {
     #[tokio::test]
     async fn failed_pairing_cursor_write_keeps_cursor_and_retry_pairs_once() {
         // The pairing rows are already written when the cursor write fails.
-        assert_pairing_retry_after_failed_write(FailingPairingWriteDb {
+        assert_pairing_retry_after_failed_write(FailingStatusWriteDb {
             fail_next_pairing_cursor: AtomicBool::new(true),
-            ..FailingPairingWriteDb::default()
+            ..FailingStatusWriteDb::default()
         })
         .await;
     }

@@ -3,10 +3,9 @@
 use bitcoin::{OutPoint, Transaction};
 use serde::{Deserialize, Serialize};
 use strata_asm_common::L1TxIndex;
-use strata_asm_proto_bridge_v1_txs::deposit_request::DRT_OUTPUT_INDEX;
 use strata_identifiers::L1BlockCommitment;
 
-use super::deposits::DepositSpend;
+use super::deposits::{deposit_request_outpoint, DepositSpend};
 
 /// Position of a transaction in its containing block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +55,6 @@ impl ObservedDeposit {
     }
 
     pub fn outpoint(&self) -> OutPoint {
-        OutPoint::new(self.request.compute_txid(), DRT_OUTPUT_INDEX as u32)
+        deposit_request_outpoint(self.request.compute_txid())
     }
 }

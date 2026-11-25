@@ -129,7 +129,7 @@ impl DepositParser {
         let info = parse_drt(tx)?;
         validate_request(&info, &self.params)?;
         Ok(Some(DepositRequest {
-            outpoint: OutPoint::new(tx.compute_txid(), DRT_OUTPUT_INDEX as u32),
+            outpoint: deposit_request_outpoint(tx.compute_txid()),
             magic: self.params.magic,
             info,
         }))
@@ -304,6 +304,11 @@ pub enum DepositError {
 
     #[error("deposit transaction output is not locked to the expected covenant")]
     DepositScriptMismatch,
+}
+
+/// Returns the bridge deposit request's funding outpoint.
+pub(crate) fn deposit_request_outpoint(txid: Txid) -> OutPoint {
+    OutPoint::new(txid, DRT_OUTPUT_INDEX as u32)
 }
 
 fn validate_request(info: &DepositRequestInfo, params: &DepositParams) -> Result<(), DepositError> {

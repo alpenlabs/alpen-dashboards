@@ -1,14 +1,18 @@
 use std::path::Path;
 
 use anyhow::Context;
+use bitcoin::OutPoint;
+use sled::transaction::{TransactionError, TransactionResult};
 use strata_bridge_primitives::types::DepositIdx;
-use typed_sled::{SledDb, SledTree};
+use typed_sled::{
+    error::Error as TypedSledError, transaction::SledTransactional, SledDb, SledTree,
+};
 
 use crate::{
     db::{
         error::{DbError, DbResult},
         traits::BridgeStatusDb,
-        types::{BridgeStatusDbSnapshot, StatusCursors},
+        types::{BridgeStatusDbSnapshot, DepositAnswer, StatusCursors},
     },
     types::{
         ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
@@ -17,8 +21,9 @@ use crate::{
 };
 
 use super::schema::{
-    DepositInfoCursorSchema, ReimbursementStatusCursorSchema, WithdrawalInfoSchema,
-    WithdrawalPairingCursorSchema, WithdrawalPairingSchema, WithdrawalStatusCursorSchema,
+    DepositAnswerSchema, DepositInfoCursorSchema, ReimbursementStatusCursorSchema,
+    WithdrawalInfoSchema, WithdrawalPairingCursorSchema, WithdrawalPairingSchema,
+    WithdrawalStatusCursorSchema,
 };
 
 const CURSOR_CELL_KEY: u8 = 0;
@@ -27,6 +32,7 @@ const CURSOR_CELL_KEY: u8 = 0;
 #[derive(Debug)]
 pub struct BridgeStatusDbSled {
     _db: SledDb,
+    deposit_answers: SledTree<DepositAnswerSchema>,
     withdrawals: SledTree<WithdrawalInfoSchema>,
     withdrawal_pairings: SledTree<WithdrawalPairingSchema>,
     deposit_info_cursor: SledTree<DepositInfoCursorSchema>,
@@ -64,6 +70,7 @@ impl BridgeStatusDbSled {
         let db = SledDb::new(sled_db)?;
 
         Ok(Self {
+            deposit_answers: db.get_tree::<DepositAnswerSchema>()?,
             withdrawals: db.get_tree::<WithdrawalInfoSchema>()?,
             withdrawal_pairings: db.get_tree::<WithdrawalPairingSchema>()?,
             deposit_info_cursor: db.get_tree::<DepositInfoCursorSchema>()?,
@@ -95,6 +102,10 @@ impl BridgeStatusDbSled {
 impl BridgeStatusDb for BridgeStatusDbSled {
     fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
         Ok(BridgeStatusDbSnapshot::new(
+            self.deposit_answers
+                .iter()
+                .map(|result| result.map_err(DbError::from))
+                .collect::<DbResult<_>>()?,
             self.withdrawals
                 .iter()
                 .map(|result| result.map_err(DbError::from))
@@ -110,6 +121,25 @@ impl BridgeStatusDb for BridgeStatusDbSled {
                 .collect::<DbResult<_>>()?,
             self.status_cursors()?,
         ))
+    }
+
+    fn put_deposit_answers(&self, answers: &[(OutPoint, DepositAnswer)]) -> DbResult<()> {
+        if answers.is_empty() {
+            return Ok(());
+        }
+        // Transactional inserts request a single flush at commit and propagate its error.
+        let result: TransactionResult<(), TypedSledError> =
+            (&self.deposit_answers,).transaction(|(deposits,)| {
+                for (outpoint, answer) in answers {
+                    deposits.insert(outpoint, answer)?;
+                }
+                Ok(())
+            });
+        match result {
+            Ok(()) => Ok(()),
+            Err(TransactionError::Storage(error)) => Err(error.into()),
+            Err(TransactionError::Abort(error)) => Err(error.into()),
+        }
     }
 
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()> {
@@ -175,11 +205,7 @@ impl BridgeStatusDb for BridgeStatusDbSled {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::{collections::BTreeMap, fs};
 
     use bitcoin::{hashes::Hash, Txid};
     use strata_primitives::buf::Buf32;
@@ -187,23 +213,13 @@ mod tests {
     use super::*;
     use crate::{
         db::status::mock::MockBridgeStatusDb,
+        l1::deposits::deposit_request_outpoint,
+        test_utils::make_unique_db_path,
         types::{WithdrawalInfo, WithdrawalPairing, WithdrawalStatus},
     };
 
     fn make_txid(byte: u8) -> Txid {
         Txid::from_byte_array([byte; 32])
-    }
-
-    fn make_unique_db_path(test_name: &str) -> PathBuf {
-        let now_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("current time must be >= UNIX_EPOCH")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "bridge_status_db_{test_name}_{}_{}",
-            std::process::id(),
-            now_nanos
-        ))
     }
 
     fn make_withdrawal_info(byte: u8, status: WithdrawalStatus) -> WithdrawalInfo {
@@ -216,6 +232,7 @@ mod tests {
 
     fn assert_empty_snapshot(db: &impl BridgeStatusDb) {
         let snapshot = db.get_status_snapshot().expect("snapshot");
+        assert!(snapshot.deposit_answers.is_empty());
         assert!(snapshot.withdrawals.is_empty());
         assert!(snapshot.withdrawal_pairings.is_empty());
         assert_eq!(snapshot.cursors, StatusCursors::default());
@@ -299,6 +316,44 @@ mod tests {
                 .withdrawal_pairings,
             remaining
         );
+    }
+
+    fn assert_deposit_answers_survive_cursor_updates(db: &impl BridgeStatusDb) {
+        let request = deposit_request_outpoint(make_txid(1));
+        let other_request = deposit_request_outpoint(make_txid(2));
+        db.put_deposit_answers(&[
+            (request, DepositAnswer::InProgress),
+            (other_request, DepositAnswer::Complete),
+        ])
+        .expect("record answers");
+        db.put_deposit_answers(&[(request, DepositAnswer::Failed)])
+            .expect("replace answer");
+        db.put_deposit_info_cursor(2).expect("advance cursor");
+        db.put_deposit_answers(&[])
+            .expect("no successful responses");
+        let snapshot = db.get_status_snapshot().expect("snapshot");
+        let answers = snapshot
+            .deposit_answers
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(answers.len(), 2);
+        assert!(matches!(answers.get(&request), Some(DepositAnswer::Failed)));
+        assert!(matches!(
+            answers.get(&other_request),
+            Some(DepositAnswer::Complete)
+        ));
+        assert_eq!(snapshot.cursors.deposit_info, 2);
+    }
+
+    #[test]
+    fn deposit_answers_survive_cursor_updates_sled() {
+        let db = BridgeStatusDbSled::open_temporary().expect("open db");
+        assert_deposit_answers_survive_cursor_updates(&db);
+    }
+
+    #[test]
+    fn deposit_answers_survive_cursor_updates_mock() {
+        assert_deposit_answers_survive_cursor_updates(&MockBridgeStatusDb::default());
     }
 
     #[test]

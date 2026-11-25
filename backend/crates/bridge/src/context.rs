@@ -124,8 +124,7 @@ mod tests {
     use super::*;
     use crate::{
         db::{status::mock::MockBridgeStatusDb, withdrawal_index::mock::MockWithdrawalIndexerDb},
-        state::DepositInfoUpdate,
-        test_utils::{make_deposit_info, TEST_MAX_CONFIRMATIONS},
+        test_utils::{make_deposit_info, make_observed_deposit_status},
         types::DepositStatus,
     };
 
@@ -139,24 +138,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bridge_status_includes_completed_deposit_below_confirmation_cutoff() {
-        // Drive a production update, then query it through the context used by HTTP.
+    async fn bridge_status_includes_observed_deposits() {
+        // Publish the reader snapshot, then query it through the context used by HTTP.
         let context = make_context();
         let info = make_deposit_info(DepositStatus::Complete);
 
         context
             .state()
-            .apply_deposit_info_updates(
-                context.status_db(),
-                vec![DepositInfoUpdate {
-                    deposit_idx: 0,
-                    info,
-                    confirmations: Some(1),
-                }],
-                TEST_MAX_CONFIRMATIONS,
-            )
-            .await
-            .expect("apply deposit update");
+            .replace_observed_deposits(vec![make_observed_deposit_status(info)])
+            .await;
 
         let status = context.bridge_status().await;
 

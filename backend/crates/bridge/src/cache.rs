@@ -1,12 +1,17 @@
-use std::collections::{BTreeMap, HashMap};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use bitcoin::OutPoint;
 use strata_bridge_primitives::types::DepositIdx;
 
 use super::{
-    db::types::BridgeStatusDbSnapshot,
+    db::types::{BridgeStatusDbSnapshot, DepositAnswer},
     types::{
-        DepositInfo, OperatorStatus, ReimbursementInfo, ReimbursementStatusCursor, WithdrawalInfo,
-        WithdrawalPairing, WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatusCursor,
+        DepositInfo, ObservedDepositStatusRow, OperatorStatus, ReimbursementInfo,
+        ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
+        WithdrawalSeq, WithdrawalStatusCursor,
     },
 };
 
@@ -52,6 +57,8 @@ pub(crate) struct WithdrawalPairingState {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct BridgeStatusCache {
     deposits: HashMap<DepositIdx, CacheEntry<DepositInfo>>,
+    observed_deposits: BTreeMap<OutPoint, DepositInfo>,
+    bridge_deposit_answers: BTreeMap<OutPoint, DepositAnswer>,
     deposit_info_cursor: DepositIdx,
     withdrawal_pairing: WithdrawalPairingState,
     withdrawal_status_cursor: WithdrawalStatusCursor,
@@ -63,7 +70,10 @@ pub(crate) struct BridgeStatusCache {
 
 impl BridgeStatusCache {
     pub(crate) fn from_status_snapshot(snapshot: BridgeStatusDbSnapshot) -> Self {
-        let mut cache = Self::default();
+        let mut cache = Self {
+            bridge_deposit_answers: snapshot.deposit_answers.into_iter().collect(),
+            ..Self::default()
+        };
 
         cache.apply_withdrawal_updates(
             snapshot
@@ -153,6 +163,29 @@ impl BridgeStatusCache {
         self.reimbursement_status_cursor = cursor;
     }
 
+    pub(crate) fn bridge_deposit_answers(&self) -> BTreeMap<OutPoint, DepositAnswer> {
+        self.bridge_deposit_answers.clone()
+    }
+
+    pub(crate) fn bridge_deposit_answer(&self, outpoint: &OutPoint) -> Option<DepositAnswer> {
+        self.bridge_deposit_answers.get(outpoint).copied()
+    }
+
+    pub(crate) fn record_bridge_deposit_answers(&mut self, answers: &[(OutPoint, DepositAnswer)]) {
+        self.bridge_deposit_answers.extend(answers.iter().copied());
+    }
+
+    pub(crate) fn replace_observed_deposits(&mut self, rows: Vec<ObservedDepositStatusRow>) {
+        self.observed_deposits = rows
+            .into_iter()
+            .map(|row| (row.request_outpoint, row.info))
+            .collect();
+    }
+
+    pub(crate) fn deposit_statuses(&self) -> Vec<DepositInfo> {
+        self.observed_deposits.values().copied().collect()
+    }
+
     /// Update deposit cache entry
     pub(crate) fn update_deposit(
         &mut self,
@@ -239,6 +272,7 @@ impl BridgeStatusCache {
     }
 
     /// Filter deposits based on deposit index, row value, and confirmations.
+    #[cfg(test)]
     pub(crate) fn filter_deposits<F>(&self, filter: F) -> Vec<(DepositIdx, DepositInfo)>
     where
         F: Fn(DepositIdx, &DepositInfo, Option<u64>) -> bool,

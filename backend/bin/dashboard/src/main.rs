@@ -3,9 +3,10 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use axum::{routing::get, Router};
 use status_bridge::{
-    bridge_monitoring_task, get_bridge_status, run_bitcoin_observer, run_withdrawal_indexer,
-    BitcoinObserverDbSled, BitcoinObserverStatus, BitcoinParams, BridgeMonitoringContext,
-    BridgeStatusDbSled, WithdrawalIndexerDbSled,
+    bridge_monitoring_task, deposit_status_monitoring_task, get_bridge_status,
+    run_bitcoin_observer, run_withdrawal_indexer, BitcoinObserverDbSled, BitcoinObserverStatus,
+    BitcoinParams, BridgeMonitoringContext, BridgeStatusDbSled, DepositStatusReader,
+    WithdrawalIndexerDbSled,
 };
 use status_config::Config;
 use status_network::{get_network_status, network_monitoring_task, NetworkMonitoringContext};
@@ -35,15 +36,21 @@ fn main() -> Result<()> {
     let withdrawal_index_db = Arc::new(WithdrawalIndexerDbSled::open(config.datadir())?);
     let bridge_status_db = Arc::new(BridgeStatusDbSled::open(config.datadir())?);
     let network_context = Arc::new(NetworkMonitoringContext::new(config.network().clone()));
+    let bitcoin_params = BitcoinParams::from_path(config.params_path())?;
+    let bitcoin_observer_db = Arc::new(BitcoinObserverDbSled::open(config.datadir())?);
+    let (observer_status, observer_status_rx) = watch::channel(BitcoinObserverStatus::default());
+    let deposit_status_reader = DepositStatusReader::new(
+        config.bitcoin_observer(),
+        &bitcoin_params,
+        config.bridge().max_tx_confirmations(),
+        Arc::clone(&bitcoin_observer_db),
+        observer_status_rx,
+    );
     let bridge_context = Arc::new(BridgeMonitoringContext::new(
         config.bridge().clone(),
         Arc::clone(&withdrawal_index_db),
         Arc::clone(&bridge_status_db),
     )?);
-
-    let bitcoin_params = BitcoinParams::from_path(config.params_path())?;
-    let bitcoin_observer_db = Arc::new(BitcoinObserverDbSled::open(config.datadir())?);
-    let (observer_status, _observer_status_rx) = watch::channel(BitcoinObserverStatus::default());
 
     let cors = CorsLayer::new().allow_origin(Any);
     let app = Router::new()
@@ -82,6 +89,13 @@ fn main() -> Result<()> {
     executor.spawn_critical_async_with_shutdown("bridge-monitoring", {
         let bridge_context = Arc::clone(&bridge_context);
         move |shutdown| async move { bridge_monitoring_task(bridge_context, shutdown).await }
+    });
+
+    executor.spawn_critical_async_with_shutdown("deposit-status", {
+        let bridge_context = Arc::clone(&bridge_context);
+        move |shutdown| async move {
+            deposit_status_monitoring_task(bridge_context, deposit_status_reader, shutdown).await
+        }
     });
 
     executor.spawn_critical_async_with_shutdown("bitcoin-observer", {

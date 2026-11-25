@@ -1,4 +1,4 @@
-use bitcoin::{PublicKey, Txid};
+use bitcoin::{OutPoint, PublicKey, Txid};
 use serde::{Deserialize, Serialize};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_bridge_rpc::types::{
@@ -134,6 +134,13 @@ impl From<&RpcDepositInfo> for DepositInfo {
             },
         }
     }
+}
+
+/// One canonical observer-backed deposit row prepared for the display cache.
+#[derive(Debug)]
+pub(crate) struct ObservedDepositStatusRow {
+    pub(crate) request_outpoint: OutPoint,
+    pub(crate) info: DepositInfo,
 }
 
 /// Withdrawal status

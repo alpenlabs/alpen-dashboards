@@ -1,15 +1,25 @@
-//! Signed deposit fixtures shared by recognition and observer tests.
+//! Signed deposit fixtures and mock Bitcoin sources shared by parsing, observer and status tests.
 
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use axum::{extract::State, routing::post, Json, Router};
 use bitcoin::{
     absolute::LockTime,
+    blockdata::constants::genesis_block,
+    consensus::serialize,
     hashes::Hash,
     key::TapTweak,
     secp256k1::{Keypair, Message, SecretKey, SECP256K1},
     sighash::{Annex, Prevouts, SighashCache, TapSighashType},
     taproot::{Signature, TapLeafHash},
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
+    Amount, Block, BlockHash, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
+    Txid, Witness, XOnlyPublicKey,
 };
+use bitcoind_async_client::error::ClientError;
+use serde_json::{json, Value};
+use status_utils::test_utils::TestHttpServer;
 use strata_asm_proto_bridge_v1_txs::{
     deposit::DepositTxHeaderAux,
     deposit_request::{
@@ -18,9 +28,15 @@ use strata_asm_proto_bridge_v1_txs::{
     },
 };
 use strata_bridge_tx_graph::transactions::deposit::DepositTx;
+use strata_btc_types::BlockHashExt;
+use strata_identifiers::L1BlockCommitment;
 use strata_l1_txfmt::{MagicBytes, ParseConfig, TagData};
 
-use super::deposits::{DepositParams, DepositParser, DepositRequest};
+use super::{
+    deposits::{DepositParams, DepositParser, DepositRequest},
+    observations::TransactionInclusion,
+    rpc::{BitcoinChainInfo, BitcoinRpcError, BitcoinSource, BitcoinTransaction},
+};
 
 pub(crate) const TEST_DEPOSIT_INDEX: u32 = 7;
 pub(crate) const TEST_DEPOSIT_DESTINATION: &[u8] = b"deposit destination";
@@ -268,6 +284,177 @@ impl DepositFixture {
             )
             .expect("spend signature verifies against the final witness");
     }
+}
+
+pub(crate) struct MockBitcoinSource {
+    blocks: Mutex<Vec<Block>>,
+    fetched: Mutex<Vec<u64>>,
+    fail_height: Mutex<Option<u64>>,
+    transaction_override: Mutex<Option<Result<Option<BitcoinTransaction>, BitcoinRpcError>>>,
+}
+
+impl MockBitcoinSource {
+    pub(crate) fn new() -> Self {
+        Self {
+            blocks: Mutex::new(vec![genesis_block(Network::Regtest)]),
+            fetched: Mutex::new(Vec::new()),
+            fail_height: Mutex::new(None),
+            transaction_override: Mutex::new(None),
+        }
+    }
+    pub(crate) fn append(&self, transactions: Vec<Transaction>) -> L1BlockCommitment {
+        let mut chain = self.blocks.lock().expect("chain");
+        let previous = chain.last().expect("genesis");
+        let mut block = Block {
+            header: previous.header,
+            txdata: transactions,
+        };
+        block.header.prev_blockhash = previous.block_hash();
+        block.header.time += 1;
+        block.header.nonce += 1;
+        if let Some(root) = block.compute_merkle_root() {
+            block.header.merkle_root = root;
+        }
+        let commitment = L1BlockCommitment::new(
+            chain.len().try_into().expect("test height"),
+            block.block_hash().to_l1_block_id(),
+        );
+        chain.push(block);
+        commitment
+    }
+    pub(crate) fn fetched_blocks(&self) -> Vec<u64> {
+        self.fetched.lock().expect("fetched blocks").clone()
+    }
+
+    pub(crate) fn fail_at(&self, height: Option<u64>) {
+        *self.fail_height.lock().expect("failure height") = height;
+    }
+
+    pub(crate) fn override_transaction(
+        &self,
+        result: Result<Option<BitcoinTransaction>, BitcoinRpcError>,
+    ) {
+        *self
+            .transaction_override
+            .lock()
+            .expect("transaction override") = Some(result);
+    }
+
+    pub(crate) async fn serve(self: &Arc<Self>) -> TestHttpServer {
+        TestHttpServer::new(
+            Router::new()
+                .route("/", post(bitcoin_rpc_response))
+                .with_state(Arc::clone(self)),
+        )
+        .await
+    }
+
+    pub(crate) fn fork_after(&self, height: usize) {
+        self.blocks.lock().expect("chain").truncate(height + 1);
+    }
+}
+
+#[async_trait]
+impl BitcoinSource for MockBitcoinSource {
+    async fn chain_info(&self) -> Result<BitcoinChainInfo, BitcoinRpcError> {
+        let chain = self.blocks.lock().expect("chain");
+        Ok(BitcoinChainInfo {
+            blocks: chain.len() as u64 - 1,
+            bestblockhash: chain.last().expect("tip").block_hash(),
+            chain: "regtest".into(),
+        })
+    }
+    async fn block_hash(&self, height: u64) -> Result<BlockHash, BitcoinRpcError> {
+        self.blocks
+            .lock()
+            .expect("chain")
+            .get(height as usize)
+            .map(Block::block_hash)
+            .ok_or(BitcoinRpcError::Client(ClientError::Server(
+                -8,
+                "height out of range".into(),
+            )))
+    }
+    async fn block(&self, height: u64) -> Result<Block, BitcoinRpcError> {
+        self.fetched.lock().expect("fetched").push(height);
+        if *self.fail_height.lock().expect("failure") == Some(height) {
+            return Err(BitcoinRpcError::Client(ClientError::Server(
+                -28,
+                "node warming up".into(),
+            )));
+        }
+        self.blocks
+            .lock()
+            .expect("chain")
+            .get(height as usize)
+            .cloned()
+            .ok_or(BitcoinRpcError::Client(ClientError::Server(
+                -8,
+                "height out of range".into(),
+            )))
+    }
+    async fn transaction(&self, txid: Txid) -> Result<Option<BitcoinTransaction>, BitcoinRpcError> {
+        if let Some(result) = self
+            .transaction_override
+            .lock()
+            .expect("transaction override")
+            .take()
+        {
+            return result;
+        }
+        let chain = self.blocks.lock().expect("chain");
+        for (height, block) in chain.iter().enumerate() {
+            if let Some((position, tx)) = block
+                .txdata
+                .iter()
+                .enumerate()
+                .find(|(_, tx)| tx.compute_txid() == txid)
+            {
+                return Ok(Some(BitcoinTransaction {
+                    tx: tx.clone(),
+                    inclusion: TransactionInclusion {
+                        block: L1BlockCommitment::new(
+                            height.try_into().expect("height"),
+                            block.block_hash().to_l1_block_id(),
+                        ),
+                        position: position.try_into().expect("position"),
+                    },
+                }));
+            }
+        }
+        Ok(None)
+    }
+}
+
+async fn bitcoin_rpc_response(
+    State(source): State<Arc<MockBitcoinSource>>,
+    Json(request): Json<Value>,
+) -> Json<Value> {
+    let result = match request["method"].as_str().expect("RPC method") {
+        "getblockchaininfo" => {
+            let info = source.chain_info().await.expect("mock chain info");
+            json!({"blocks": info.blocks, "bestblockhash": info.bestblockhash, "chain": info.chain})
+        }
+        "getblockhash" => {
+            let height = request["params"][0].as_u64().expect("block height");
+            json!(source.block_hash(height).await.expect("mock block hash"))
+        }
+        "getblock" => {
+            let chain = source.blocks.lock().expect("chain");
+            let hash = request["params"][0].as_str().expect("block hash");
+            let block = chain
+                .iter()
+                .find(|block| block.block_hash().to_string() == hash)
+                .expect("requested block");
+            json!(hex::encode(serialize(block)))
+        }
+        _ => {
+            return Json(
+                json!({"id":request["id"], "error":{"code":-32601,"message":"unknown method"}}),
+            )
+        }
+    };
+    Json(json!({"id":request["id"], "result":result, "error":null}))
 }
 
 pub(crate) fn make_deposit_params(recovery_delay: u16) -> DepositParams {

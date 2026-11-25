@@ -2,6 +2,7 @@ mod bridge_rpc;
 mod cache;
 mod context;
 mod db;
+mod deposit_status;
 mod l1;
 mod state;
 mod status;
@@ -19,10 +20,11 @@ pub use db::{
     types::{
         BitcoinObserverDbMetadata, BitcoinObserverState, BridgeStatusDbSnapshot, DbIndexerState,
         DbWithdrawalEventIndex, DbWithdrawalEventKey, DbWithdrawalRequest, DbWithdrawalRequestRow,
-        StatusCursors,
+        DepositAnswer, StatusCursors,
     },
     BitcoinObserverDbSled, BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
+pub use deposit_status::DepositStatusReader;
 pub use l1::{
     deposits::{DepositError, DepositSpend},
     esplora::{EsploraClient, EsploraError},
@@ -31,7 +33,7 @@ pub use l1::{
     params::{BitcoinParams, BitcoinParamsError},
     rpc::BitcoinRpcError,
 };
-pub use status::{bridge_monitoring_task, get_bridge_status};
+pub use status::{bridge_monitoring_task, deposit_status_monitoring_task, get_bridge_status};
 pub use types::{
     BridgeStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,
     WithdrawalPairingCursor, WithdrawalSeq, WithdrawalStatus, WithdrawalStatusCursor,

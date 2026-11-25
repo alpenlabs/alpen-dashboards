@@ -124,7 +124,7 @@ impl BitcoinParams {
     }
 
     #[cfg(test)]
-    pub(super) fn for_test(network: Network, genesis_height: u64, params: DepositParams) -> Self {
+    pub(crate) fn for_test(network: Network, genesis_height: u64, params: DepositParams) -> Self {
         Self {
             network,
             genesis_height,

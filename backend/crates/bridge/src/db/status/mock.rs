@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
+use bitcoin::OutPoint;
 use strata_bridge_primitives::types::DepositIdx;
 
 use crate::{
     db::{
         error::DbResult,
         traits::BridgeStatusDb,
-        types::{BridgeStatusDbSnapshot, StatusCursors},
+        types::{BridgeStatusDbSnapshot, DepositAnswer, StatusCursors},
     },
     types::{
         ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing, WithdrawalPairingCursor,
@@ -18,6 +19,7 @@ use crate::{
 /// In-memory bridge-status database for tests.
 #[derive(Debug, Default)]
 pub(crate) struct MockBridgeStatusDb {
+    deposit_answers: RwLock<BTreeMap<OutPoint, DepositAnswer>>,
     withdrawals: RwLock<BTreeMap<DepositIdx, WithdrawalInfo>>,
     withdrawal_pairings: RwLock<BTreeMap<DepositIdx, WithdrawalSeq>>,
     deposit_info_cursor: RwLock<DepositIdx>,
@@ -30,6 +32,7 @@ impl MockBridgeStatusDb {
     /// Creates a database holding the records in `snapshot`.
     pub(crate) fn from_snapshot(snapshot: BridgeStatusDbSnapshot) -> Self {
         Self {
+            deposit_answers: RwLock::new(snapshot.deposit_answers.into_iter().collect()),
             withdrawals: RwLock::new(snapshot.withdrawals.into_iter().collect()),
             withdrawal_pairings: RwLock::new(
                 snapshot
@@ -49,6 +52,12 @@ impl MockBridgeStatusDb {
 impl BridgeStatusDb for MockBridgeStatusDb {
     fn get_status_snapshot(&self) -> DbResult<BridgeStatusDbSnapshot> {
         Ok(BridgeStatusDbSnapshot::new(
+            self.deposit_answers
+                .read()
+                .expect("mock deposit answers lock poisoned")
+                .iter()
+                .map(|(outpoint, status)| (*outpoint, *status))
+                .collect(),
             self.withdrawals
                 .read()
                 .expect("mock withdrawals lock poisoned")
@@ -82,6 +91,14 @@ impl BridgeStatusDb for MockBridgeStatusDb {
                     .expect("mock reimbursement_status_cursor lock poisoned"),
             ),
         ))
+    }
+
+    fn put_deposit_answers(&self, answers: &[(OutPoint, DepositAnswer)]) -> DbResult<()> {
+        self.deposit_answers
+            .write()
+            .expect("mock deposit answers lock poisoned")
+            .extend(answers.iter().copied());
+        Ok(())
     }
 
     fn put_withdrawal_info(&self, deposit_idx: DepositIdx, info: &WithdrawalInfo) -> DbResult<()> {
