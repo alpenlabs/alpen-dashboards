@@ -7,7 +7,7 @@ use crate::retry::RequestRetryConfig;
 /// Default timeout for Esplora HTTP requests in seconds.
 const DEFAULT_ESPLORA_REQUEST_TIMEOUT_S: u64 = 5;
 
-/// Default time a bridge status request waits for the first poll result.
+/// Default time a bridge status request waits for the first poll to complete.
 const DEFAULT_BRIDGE_INITIAL_STATUS_WAIT_TIMEOUT_S: u64 = 30;
 
 /// Default limit for deposit indices considered for new pairings per cycle
@@ -44,7 +44,7 @@ pub struct BridgeMonitoringConfig {
     /// Bridge status refetch interval in seconds
     status_refetch_interval_s: u64,
 
-    /// Timeout for HTTP status requests waiting on the first poll result.
+    /// Timeout for HTTP status requests waiting for the first poll to complete.
     #[serde(default = "default_bridge_initial_status_wait_timeout_s")]
     initial_status_wait_timeout_s: u64,
 
@@ -89,6 +89,12 @@ impl BridgeMonitoringConfig {
 
     pub fn withdrawal_pairing_batch_size(&self) -> usize {
         self.withdrawal_pairing_batch_size
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_withdrawal_pairing_batch_size(mut self, batch_size: usize) -> Self {
+        self.withdrawal_pairing_batch_size = batch_size;
+        self
     }
 
     pub fn operators(&self) -> &Vec<BridgeOperator> {

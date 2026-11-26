@@ -23,8 +23,8 @@ pub struct BridgeMonitoringContext {
     withdrawal_index_db: Arc<dyn WithdrawalIndexerDb>,
     status_db: Arc<dyn BridgeStatusDb>,
     state: BridgeMonitoringState,
-    status_available: AtomicBool,
-    initial_status_query_complete: Notify,
+    initial_status_poll_completed: AtomicBool,
+    initial_status_poll_complete: Notify,
 }
 
 impl BridgeMonitoringContext {
@@ -51,8 +51,8 @@ impl BridgeMonitoringContext {
             withdrawal_index_db,
             status_db,
             state,
-            status_available: AtomicBool::new(false),
-            initial_status_query_complete: Notify::new(),
+            initial_status_poll_completed: AtomicBool::new(false),
+            initial_status_poll_complete: Notify::new(),
         })
     }
 
@@ -80,13 +80,14 @@ impl BridgeMonitoringContext {
         &self.state
     }
 
-    pub(crate) fn mark_status_available(&self) {
+    /// Marks the first status poll as complete.
+    pub(crate) fn mark_initial_status_poll_completed(&self) {
         if self
-            .status_available
+            .initial_status_poll_completed
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
-            self.initial_status_query_complete.notify_waiters();
+            self.initial_status_poll_complete.notify_waiters();
         }
     }
 
@@ -94,16 +95,20 @@ impl BridgeMonitoringContext {
         Duration::from_secs(self.config.initial_status_wait_timeout_s().max(1))
     }
 
+    fn is_status_available(&self) -> bool {
+        self.initial_status_poll_completed.load(Ordering::Acquire)
+    }
+
     pub(crate) async fn wait_until_initial_status(&self) {
-        if self.status_available.load(Ordering::Acquire) {
+        if self.is_status_available() {
             return;
         }
 
-        let notified = self.initial_status_query_complete.notified();
+        let notified = self.initial_status_poll_complete.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
 
-        if self.status_available.load(Ordering::Acquire) {
+        if self.is_status_available() {
             return;
         }
 
@@ -184,7 +189,7 @@ mod tests {
     async fn initial_status_wait_returns_when_available() {
         let context = make_context();
 
-        context.mark_status_available();
+        context.mark_initial_status_poll_completed();
 
         assert!(tokio::time::timeout(
             Duration::from_millis(1),

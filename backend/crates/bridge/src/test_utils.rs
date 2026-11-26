@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use bitcoin::{hashes::Hash, Txid};
 pub(crate) use status_config::test_utils::TEST_MAX_CONFIRMATIONS;
-use status_config::test_utils::{make_bridge_config, LOCAL_ESPLORA_URL};
+use status_config::{
+    test_utils::{make_bridge_config, LOCAL_ESPLORA_URL},
+    BridgeMonitoringConfig,
+};
 use strata_bridge_primitives::types::DepositIdx;
 use strata_retry::RetryConfig;
 
@@ -39,17 +42,30 @@ impl Default for BridgeStatusFixture {
 
 impl BridgeStatusFixture {
     pub(crate) fn new(status_db: impl BridgeStatusDb) -> Self {
-        Self::with_dbs(MockWithdrawalIndexerDb::default(), status_db)
+        Self::with_dbs(
+            make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
+            MockWithdrawalIndexerDb::default(),
+            status_db,
+        )
+    }
+
+    pub(crate) fn with_config(config: BridgeMonitoringConfig) -> Self {
+        Self::with_dbs(
+            config,
+            MockWithdrawalIndexerDb::default(),
+            MockBridgeStatusDb::default(),
+        )
     }
 
     fn with_dbs(
+        config: BridgeMonitoringConfig,
         withdrawal_index_db: impl WithdrawalIndexerDb,
         status_db: impl BridgeStatusDb,
     ) -> Self {
         Self {
             context: Arc::new(
                 BridgeMonitoringContext::new(
-                    make_bridge_config(LOCAL_ESPLORA_URL, &[], None),
+                    config,
                     Arc::new(withdrawal_index_db),
                     Arc::new(status_db),
                 )
@@ -86,6 +102,7 @@ impl BridgeStatusFixture {
             .get_indexer_state(TASK_NAME)
             .expect("read indexer state");
         *self = Self::with_dbs(
+            self.context.config().clone(),
             MockWithdrawalIndexerDb::from_snapshot(rows, state),
             MockBridgeStatusDb::from_snapshot(self.snapshot()),
         );
