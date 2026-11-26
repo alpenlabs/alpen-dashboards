@@ -231,7 +231,7 @@ mod tests {
             bitcoin_observer::mock::MockBitcoinObserverDb,
             error::DbResult,
             status::{db::BridgeStatusDbSled, mock::MockBridgeStatusDb},
-            traits::BitcoinObserverDb,
+            traits::{BitcoinObserverDb, BridgeStatusDb},
             types::{BitcoinObserverDbMetadata, BitcoinObserverState},
             withdrawal_index::mock::MockWithdrawalIndexerDb,
         },
@@ -246,8 +246,11 @@ mod tests {
         },
         state::{BridgeMonitoringState, DepositInfoUpdate},
         status::{deposit_status_monitoring_task, get_bridge_status},
-        test_utils::make_unique_db_path,
-        types::{DepositInfo, DepositStatus, ObservedDepositStatusRow},
+        test_utils::{make_unique_db_path, make_withdrawal_request_row, BridgeStatusFixture},
+        types::{
+            DepositInfo, DepositStatus, ObservedDepositStatusRow, WithdrawalPairing,
+            WithdrawalPairingCursor,
+        },
     };
 
     const DISPLAY_CONFIRMATION_CUTOFF: u64 = 100;
@@ -587,6 +590,124 @@ mod tests {
         let row = fixture.row().await;
         assert!(row.info.deposit_txid.is_none());
         assert!(matches!(row.info.status, DepositStatus::InProgress));
+    }
+
+    #[tokio::test]
+    async fn deposit_status_completion_does_not_advance_protocol_pairing() {
+        let fixture = DepositStatusFixture::new();
+        fixture.mine_request();
+        fixture.mine_deposit();
+        let remaining_confirmations = fixture
+            .observer
+            .reorg_safe_depth()
+            .checked_sub(1)
+            .expect("positive completion depth");
+        fixture.mine_empty_blocks(remaining_confirmations);
+        let protocol_info = DepositInfo {
+            deposit_request_txid: fixture.deposit.request_tx().compute_txid(),
+            deposit_txid: None,
+            status: DepositStatus::InProgress,
+        };
+
+        // Earlier deposit indices have been processed. A withdrawal is waiting
+        // for this deposit, whose DT is complete only from the observer's view.
+        let status_db = MockBridgeStatusDb::default();
+        let cursor = WithdrawalPairingCursor::new(TEST_DEPOSIT_INDEX, 0);
+        status_db
+            .put_withdrawal_pairing_cursor(cursor)
+            .expect("seed pairing cursor");
+        status_db
+            .put_deposit_info_cursor(TEST_DEPOSIT_INDEX)
+            .expect("seed deposit cursor");
+        let monitoring = BridgeStatusFixture::new(status_db);
+        monitoring
+            .state()
+            .record_bridge_deposit_answers(monitoring.status_db(), &[protocol_info])
+            .await
+            .expect("record bridge answer");
+        monitoring
+            .apply_deposit_update(TEST_DEPOSIT_INDEX, protocol_info, None)
+            .await;
+        let rows = fixture
+            .reader()
+            .read(&monitoring.state().bridge_deposit_answers().await)
+            .await
+            .expect("observed completion");
+        monitoring.state().replace_observed_deposits(rows).await;
+
+        let displayed = monitoring
+            .state()
+            .bridge_status(DISPLAY_CONFIRMATION_CUTOFF)
+            .await
+            .deposits;
+        assert_eq!(displayed.len(), 1);
+        assert!(matches!(displayed[0].status, DepositStatus::Complete));
+        assert_eq!(
+            displayed[0].deposit_txid,
+            Some(fixture.deposit.deposit_tx().compute_txid())
+        );
+        let answers = monitoring.state().bridge_deposit_answers().await;
+        assert_eq!(answers.len(), 1);
+        assert!(matches!(
+            answers.get(&fixture.deposit.request().outpoint()),
+            Some(DepositStatus::InProgress)
+        ));
+
+        let requests = [make_withdrawal_request_row(0, 1)];
+        assert!(monitoring
+            .advance_withdrawal_pairings(
+                &[TEST_DEPOSIT_INDEX],
+                &[(TEST_DEPOSIT_INDEX, protocol_info)],
+                &requests,
+            )
+            .await
+            .is_empty());
+        assert_eq!(monitoring.state().withdrawal_pairing_cursor().await, cursor);
+        let snapshot = monitoring.snapshot();
+        assert!(snapshot.withdrawal_pairings.is_empty());
+        assert_eq!(snapshot.cursors.withdrawal_pairing, cursor);
+        assert_eq!(snapshot.cursors.deposit_info, TEST_DEPOSIT_INDEX);
+        assert_eq!(
+            monitoring
+                .state()
+                .select_deposit_info_candidates(&[TEST_DEPOSIT_INDEX])
+                .await,
+            vec![TEST_DEPOSIT_INDEX]
+        );
+
+        // Bridge completion, rather than display completion, releases the pairing.
+        let protocol_complete = DepositInfo {
+            deposit_txid: Some(fixture.deposit.deposit_tx().compute_txid()),
+            status: DepositStatus::Complete,
+            ..protocol_info
+        };
+        monitoring
+            .state()
+            .record_bridge_deposit_answers(monitoring.status_db(), &[protocol_complete])
+            .await
+            .expect("record bridge completion");
+        monitoring
+            .apply_deposit_update(TEST_DEPOSIT_INDEX, protocol_complete, None)
+            .await;
+        let expected = vec![WithdrawalPairing::new(TEST_DEPOSIT_INDEX, 0)];
+        assert_eq!(
+            monitoring
+                .advance_withdrawal_pairings(
+                    &[TEST_DEPOSIT_INDEX],
+                    &[(TEST_DEPOSIT_INDEX, protocol_complete)],
+                    &requests,
+                )
+                .await,
+            expected
+        );
+        let next_cursor = WithdrawalPairingCursor::new(TEST_DEPOSIT_INDEX + 1, 1);
+        assert_eq!(
+            monitoring.state().withdrawal_pairing_cursor().await,
+            next_cursor
+        );
+        let snapshot = monitoring.snapshot();
+        assert_eq!(snapshot.withdrawal_pairings, expected);
+        assert_eq!(snapshot.cursors.withdrawal_pairing, next_cursor);
     }
 
     #[tokio::test]

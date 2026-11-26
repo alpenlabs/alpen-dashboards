@@ -302,6 +302,7 @@ mod tests {
         },
         error::DbError,
     };
+    use crate::l1::test_utils::DepositFixture;
 
     #[test]
     fn observer_db_pages_in_encoded_outpoint_order_sled() {
@@ -415,7 +416,7 @@ mod tests {
             std::env::temp_dir().join(format!("bitcoin_observer_{}_{unique}", std::process::id()));
         let anchor = make_block(0, 0);
         let first = make_block(1, 0);
-        let request = make_observation(first);
+        let request = make_observation(DepositFixture::new().request_tx().clone(), first);
         {
             let db = BitcoinObserverDbSled::open(&path).expect("open DB");
             db.initialize(&make_metadata(), Some(anchor))
@@ -490,7 +491,7 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 let block = make_block(1, branch);
-                let row = make_observation(block);
+                let row = make_observation(DepositFixture::new().request_tx().clone(), block);
                 barrier.wait();
                 db.apply_block(Some(anchor), block, &[row], 4).is_ok()
             })
@@ -505,7 +506,8 @@ mod tests {
             .get_observer_state()
             .expect("state")
             .expect("initialized");
-        let key = make_observation(make_block(1, 0)).outpoint();
+        let key = make_observation(DepositFixture::new().request_tx().clone(), make_block(1, 0))
+            .outpoint();
         assert_eq!(
             db.get_deposit(key)
                 .expect("winner's request")

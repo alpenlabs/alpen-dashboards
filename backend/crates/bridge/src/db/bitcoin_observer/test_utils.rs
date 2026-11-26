@@ -4,7 +4,7 @@ use bitcoin::{
     blockdata::constants::genesis_block,
     consensus::serialize,
     hashes::{sha256, Hash},
-    Network,
+    Network, Transaction,
 };
 use strata_btc_types::BlockHashExt;
 use strata_identifiers::L1BlockCommitment;
@@ -36,9 +36,9 @@ pub(super) fn make_block(height: u32, branch: u8) -> L1BlockCommitment {
     L1BlockCommitment::new(height, hash.to_l1_block_id())
 }
 
-pub(super) fn make_observation(block: L1BlockCommitment) -> ObservedDeposit {
+pub(super) fn make_observation(request: Transaction, block: L1BlockCommitment) -> ObservedDeposit {
     ObservedDeposit {
-        request: DepositFixture::new().request_tx().clone(),
+        request,
         inclusion: TransactionInclusion { block, position: 0 },
         spend: None,
     }
@@ -56,13 +56,11 @@ pub(super) fn assert_paging_uses_exclusive_encoded_outpoint_order(db: &impl Bitc
 
     // Insert in transaction order; storage pages must instead follow encoded outpoints.
     let mut rows = (0..5)
-        .map(|seed| ObservedDeposit {
-            request: DepositFixture::with_request_seed(seed).request_tx().clone(),
-            inclusion: TransactionInclusion {
-                block,
-                position: u32::from(seed),
-            },
-            spend: None,
+        .map(|seed| {
+            let request = DepositFixture::with_request_seed(seed).request_tx().clone();
+            let mut row = make_observation(request, block);
+            row.inclusion.position = u32::from(seed);
+            row
         })
         .collect::<Vec<_>>();
     db.apply_block(Some(anchor), block, &rows, 4)
@@ -110,7 +108,7 @@ pub(super) fn assert_revision_tracks_writes_and_rollback(db: &impl BitcoinObserv
     assert_eq!(state().revision, 0);
 
     let first = make_block(1, 0);
-    let request = make_observation(first);
+    let request = make_observation(DepositFixture::new().request_tx().clone(), first);
     db.apply_block(Some(anchor), first, std::slice::from_ref(&request), 4)
         .expect("request block");
     let applied = state();
@@ -152,7 +150,7 @@ pub(super) fn assert_block_writes_and_rollback_are_atomic(db: &impl BitcoinObser
     db.initialize(&metadata, Some(anchor))
         .expect("initialize observer state");
     let first = make_block(1, 0);
-    let request = make_observation(first);
+    let request = make_observation(DepositFixture::new().request_tx().clone(), first);
     db.apply_block(Some(anchor), first, std::slice::from_ref(&request), 4)
         .expect("request block");
 
@@ -210,7 +208,7 @@ pub(super) fn assert_duplicate_rows_abort_the_entire_block(db: &impl BitcoinObse
     db.initialize(&make_metadata(), Some(anchor))
         .expect("initialize");
     let first = make_block(1, 0);
-    let request = make_observation(first);
+    let request = make_observation(DepositFixture::new().request_tx().clone(), first);
     let result = db.apply_block(Some(anchor), first, &[request.clone(), request.clone()], 4);
     assert!(matches!(
         result,
@@ -244,7 +242,7 @@ pub(super) fn assert_replay_is_idempotent_and_conflicting_blocks_are_rejected(
     let anchor = make_block(0, 0);
     db.initialize(&metadata, Some(anchor)).expect("initialize");
     let first = make_block(1, 0);
-    let request = make_observation(first);
+    let request = make_observation(DepositFixture::new().request_tx().clone(), first);
     db.apply_block(Some(anchor), first, std::slice::from_ref(&request), 4)
         .expect("first block");
     db.apply_block(Some(anchor), first, std::slice::from_ref(&request), 4)
@@ -302,7 +300,7 @@ pub(super) fn assert_conflicting_block_replay_is_rejected(db: &impl BitcoinObser
     let block = make_block(1, 0);
     db.initialize(&make_metadata(), Some(anchor))
         .expect("initialize");
-    let first = make_observation(block);
+    let first = make_observation(DepositFixture::new().request_tx().clone(), block);
     let mut second = first.clone();
     second.request = DepositFixture::with_request_seed(4).request_tx().clone();
     second.inclusion.position = 1;
