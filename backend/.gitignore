@@ -6,7 +6,8 @@
 #Cargo.lock
 
 # Ignore dependencies from Cargo
-/.cargo/
+/.cargo/*
+!/.cargo/audit.toml
 
 # Ignore IntelliJ Rust, CLion and other IDE files
 .idea/
