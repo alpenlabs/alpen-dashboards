@@ -1,0 +1,19 @@
+[advisories]
+ignore = [
+  # crypto-bigint 0.5.5 via strata-bridge -> strata-predicate -> k256 0.13.4
+  # -> elliptic-curve 0.13.8. Fixed in crypto-bigint >=0.7.6.
+  # Update strata-bridge dependencies to v0.4.0-rc.2, whose strata-predicate
+  # 0.6.0 uses k256 0.14.0 -> elliptic-curve 0.14.3 -> crypto-bigint 0.7.10.
+  # Temporary exception pending that update; secret-value exposure has not
+  # been assessed. Remove once Cargo.lock no longer has an affected version.
+  "RUSTSEC-2026-0387",
+
+  # url 2.5.8 via jsonrpsee clients/transports, reqwest, and tower-http.
+  # Fixed in 2.5.9, but that release is younger than the 14-day
+  # min-publish-age cooldown in the repository's .cargo/config.toml.
+  # Only Url::origin and url::quirks::origin are affected; no calls were
+  # found in the dashboard or these resolved direct dependents of url.
+  # Remove after upgrading Cargo.lock once the cooldown clears at
+  # 2026-12-04 23:03:07 UTC (December 5 in Nepal).
+  "RUSTSEC-2026-0592",
+]
