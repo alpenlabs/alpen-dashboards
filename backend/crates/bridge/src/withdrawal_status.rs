@@ -76,9 +76,22 @@ pub(crate) async fn get_withdrawal_updates(
                 let Some(fulfillment_txid) = info.fulfillment_txid else {
                     continue;
                 };
-                esplora_client
+                match esplora_client
                     .get_tx_confirmations(fulfillment_txid, chain_tip_height)
                     .await
+                {
+                    Ok(confirmations) => Some(confirmations),
+                    Err(error) => {
+                        warn!(
+                            deposit_idx = candidate.deposit_idx,
+                            %fulfillment_txid,
+                            %error,
+                            "failed to fetch withdrawal confirmations"
+                        );
+                        // Keep completion, but replace the previous count with unknown.
+                        None
+                    }
+                }
             }
         };
 

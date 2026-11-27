@@ -4,6 +4,7 @@ use axum::Json;
 use bitcoin::Txid;
 use std::{collections::BTreeSet, sync::Arc};
 use strata_bridge_primitives::types::DepositIdx;
+use strata_bridge_rpc::types::RpcOperatorStatus;
 use strata_primitives::L1Height;
 use strata_tasks::ShutdownGuard;
 
@@ -54,7 +55,15 @@ async fn refresh_bridge_status(context: &BridgeMonitoringContext) -> Result<()> 
 
     for operator in context.config().operators() {
         let operator_pk = *operator.public_key();
-        let status = bridge_rpc::get_operator_status(context.bridge_rpc(), operator_pk).await;
+        let status = match bridge_rpc::get_operator_status(context.bridge_rpc(), operator_pk).await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                warn!(%operator_pk, %error, "failed to fetch bridge operator status");
+                // Operator status has no unknown value; failed checks are reported as offline.
+                RpcOperatorStatus::Offline
+            }
+        };
         operator_statuses.push(OperatorStatus::new(
             operator.name().to_owned(),
             operator_pk,
@@ -310,9 +319,17 @@ async fn get_deposit_info_updates(
                 .unwrap_or(deposit_info.deposit_request_txid),
         };
 
-        let current_confirmations = esplora_client
+        let current_confirmations = match esplora_client
             .get_tx_confirmations(check_txid, chain_tip_height)
-            .await;
+            .await
+        {
+            Ok(confirmations) => Some(confirmations),
+            Err(error) => {
+                warn!(deposit_idx, %check_txid, %error, "failed to fetch deposit confirmations");
+                // Keep the observed status, but replace the previous count with unknown.
+                None
+            }
+        };
         updates.push(DepositInfoUpdate {
             deposit_idx,
             info: deposit_info,
@@ -355,9 +372,17 @@ async fn get_reimbursement_updates(
                 let Some(txid) = terminal_reimbursement_txid(&info) else {
                     continue;
                 };
-                esplora_client
+                match esplora_client
                     .get_tx_confirmations(txid, chain_tip_height)
                     .await
+                {
+                    Ok(confirmations) => Some(confirmations),
+                    Err(error) => {
+                        warn!(deposit_idx, %txid, %error, "failed to fetch reimbursement confirmations");
+                        // Keep the observed status, but replace the previous count with unknown.
+                        None
+                    }
+                }
             }
         };
 
@@ -478,6 +503,237 @@ mod tests {
             deposit_idx: 0,
             deposit_request_txid: info.deposit_request_txid,
         }})
+    }
+
+    #[tokio::test]
+    async fn operator_failure_reports_offline_and_continues_refresh() {
+        let server = make_monitoring_server(
+            vec![
+                make_rpc_error_reply(),
+                json!({"result": [0]}),
+                make_completed_deposit_reply(),
+            ],
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+        let fixture = make_monitoring_fixture(&server);
+
+        // The configured operator's uptime call fails, but deposit monitoring still succeeds.
+        refresh_bridge_status(fixture.context())
+            .await
+            .expect("refresh after operator failure");
+        let status = fixture.bridge_status().await;
+        assert_eq!(status.operators.len(), 1);
+        assert!(matches!(
+            status.operators[0].status,
+            RpcOperatorStatus::Offline
+        ));
+        assert_eq!(status.deposits.len(), 1);
+        assert!(matches!(status.deposits[0].status, DepositStatus::Complete));
+    }
+
+    // Verifies that RPC failures leave the dashboard's previously known statuses visible.
+    #[tokio::test]
+    async fn failed_status_lookups_keep_rows_and_cursors() {
+        let claim_txid = Txid::from_byte_array([4; 32]);
+        // Keep the tip and deposit indices available so the poll attempts all three status queries.
+        let server = make_monitoring_server(
+            vec![
+                json!({"result": 1}),   // Operator uptime.
+                json!({"result": [0]}), // Known deposit indices.
+                make_rpc_error_reply(), // Deposit info lookup fails.
+                make_rpc_error_reply(), // Withdrawal status lookup fails.
+                make_rpc_error_reply(), // Reimbursement status lookup fails.
+            ],
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+        let fixture = make_monitoring_fixture(&server);
+
+        // Seed what an earlier poll observed: a completed deposit and withdrawal still visible
+        // at one confirmation, and a reimbursement whose claim is in progress.
+        fixture.index_withdrawal_event(1);
+        let deposit = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, deposit, Some(1)).await;
+        let previous_withdrawal = fixture.seed_completed_withdrawal(1).await;
+        let previous_reimbursement = ReimbursementInfo {
+            claim_txid,
+            challenge_step: ChallengeStep::Claimed,
+            payout_txid: None,
+            status: ReimbursementStatus::InProgress,
+        };
+        fixture
+            .apply_reimbursement_update(0, previous_reimbursement, None)
+            .await;
+        let cursors = fixture.snapshot().cursors;
+
+        // Run one poll with failed status queries against the existing state.
+        refresh_bridge_status(fixture.context())
+            .await
+            .expect("refresh after failed lookups");
+
+        // The previous rows must remain visible with the same transaction IDs and statuses.
+        let status = fixture.bridge_status().await;
+        assert_eq!(status.deposits.len(), 1);
+        assert_eq!(
+            status.deposits[0].deposit_request_txid,
+            deposit.deposit_request_txid
+        );
+        assert_eq!(status.deposits[0].deposit_txid, deposit.deposit_txid);
+        assert!(matches!(status.deposits[0].status, DepositStatus::Complete));
+        assert_eq!(status.withdrawals.len(), 1);
+        assert_eq!(
+            status.withdrawals[0].withdrawal_request_txid,
+            previous_withdrawal.withdrawal_request_txid
+        );
+        assert_eq!(
+            status.withdrawals[0].fulfillment_txid,
+            previous_withdrawal.fulfillment_txid
+        );
+        assert!(matches!(
+            status.withdrawals[0].status,
+            WithdrawalStatus::Complete
+        ));
+        assert_eq!(status.reimbursements, vec![previous_reimbursement]);
+
+        // With no new status results, the polling cursors must also remain unchanged.
+        assert_eq!(fixture.snapshot().cursors, cursors);
+    }
+
+    // Verifies that null RPC responses leave previously cached withdrawal and reimbursement
+    // statuses unchanged.
+    #[tokio::test]
+    async fn absent_status_answers_keep_rows_and_cursors() {
+        let claim_txid = Txid::from_byte_array([4; 32]);
+        // Return valid null responses for withdrawal and reimbursement queries, not RPC errors.
+        let server = make_monitoring_server(
+            vec![
+                json!({"result": 1}),    // Operator uptime.
+                json!({"result": []}),   // No deposit info queries this poll.
+                json!({"result": null}), // No withdrawal status returned.
+                json!({"result": null}), // No reimbursement status returned.
+            ],
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+        let fixture = make_monitoring_fixture(&server);
+
+        // Seed a completed withdrawal still visible at one confirmation and an in-progress claim.
+        // These existing records remain query candidates even when no deposit indices are returned.
+        fixture.index_withdrawal_event(1);
+        let previous_withdrawal = fixture.seed_completed_withdrawal(1).await;
+        let previous_reimbursement = ReimbursementInfo {
+            claim_txid,
+            challenge_step: ChallengeStep::Claimed,
+            payout_txid: None,
+            status: ReimbursementStatus::InProgress,
+        };
+        fixture
+            .apply_reimbursement_update(0, previous_reimbursement, None)
+            .await;
+        let cursors = fixture.snapshot().cursors;
+
+        // Run one poll whose status queries succeed but return no status.
+        refresh_bridge_status(fixture.context())
+            .await
+            .expect("refresh with absent answers");
+
+        // Neither null response should remove a row or replace its known transaction IDs or status.
+        let status = fixture.bridge_status().await;
+        assert_eq!(status.withdrawals.len(), 1);
+        assert_eq!(
+            status.withdrawals[0].withdrawal_request_txid,
+            previous_withdrawal.withdrawal_request_txid
+        );
+        assert_eq!(
+            status.withdrawals[0].fulfillment_txid,
+            previous_withdrawal.fulfillment_txid
+        );
+        assert!(matches!(
+            status.withdrawals[0].status,
+            WithdrawalStatus::Complete
+        ));
+        assert_eq!(status.reimbursements, vec![previous_reimbursement]);
+
+        // With no new status results, the polling cursors must also remain unchanged.
+        assert_eq!(fixture.snapshot().cursors, cursors);
+    }
+
+    #[tokio::test]
+    async fn failed_confirmations_keep_completion_without_advancing_cursors() {
+        let fulfillment_txid = Txid::from_byte_array([3; 32]);
+        let claim_txid = Txid::from_byte_array([4; 32]);
+        let payout_txid = Txid::from_byte_array([5; 32]);
+        let withdrawal = json!({"result": RpcWithdrawalStatus::Complete { fulfillment_txid }});
+        let reimbursement =
+            json!({"result": RpcReimbursementStatus::Complete { claim_txid, payout_txid }});
+        let server = TestRpcServer::with_routes(
+            // One poll: uptime, indices, then successful deposit, withdrawal and reimbursement statuses.
+            vec![
+                json!({"result": 1}),
+                json!({"result": [0]}),
+                make_completed_deposit_reply(),
+                withdrawal,
+                reimbursement,
+            ],
+            // The tip is available, but transaction confirmation requests return HTTP 404.
+            Router::new().route(
+                "/blocks/tip/height",
+                get(|| async { TEST_CHAIN_TIP_HEIGHT.to_string() }),
+            ),
+        )
+        .await;
+        let fixture = make_monitoring_fixture(&server);
+        fixture.index_withdrawal_event(1);
+        let deposit = make_deposit_info(DepositStatus::Complete);
+        fixture.apply_deposit_update(0, deposit, Some(1)).await;
+        fixture.seed_completed_withdrawal(1).await;
+        let previous_reimbursement = ReimbursementInfo {
+            claim_txid,
+            challenge_step: ChallengeStep::Claimed,
+            payout_txid: None,
+            status: ReimbursementStatus::InProgress,
+        };
+        fixture
+            .apply_reimbursement_update(0, previous_reimbursement, None)
+            .await;
+        let cursors = fixture.snapshot().cursors;
+
+        // Successful completion answers with failed confirmations replace the old counts with
+        // unknown. Terminal rows are hidden, but remain eligible for the next poll.
+        refresh_bridge_status(fixture.context())
+            .await
+            .expect("completion refresh");
+        let status = fixture.bridge_status().await;
+        assert!(status.deposits.is_empty());
+        assert!(status.withdrawals.is_empty());
+        assert!(status.reimbursements.is_empty());
+        let snapshot = fixture.snapshot();
+        assert_eq!(snapshot.cursors, cursors);
+        assert_eq!(snapshot.withdrawals.len(), 1);
+        assert_eq!(
+            snapshot.withdrawals[0].1.fulfillment_txid,
+            Some(fulfillment_txid)
+        );
+        assert!(matches!(
+            snapshot.withdrawals[0].1.status,
+            WithdrawalStatus::Complete
+        ));
+        assert_eq!(
+            fixture.state().select_deposit_info_candidates(&[0]).await,
+            vec![0]
+        );
+        assert_eq!(
+            fixture.state().select_withdrawal_status_candidates().await,
+            vec![WithdrawalPairing::new(0, 0)]
+        );
+        assert_eq!(
+            fixture
+                .state()
+                .select_reimbursement_status_candidates()
+                .await,
+            vec![0]
+        );
     }
 
     #[tokio::test]

@@ -5,7 +5,6 @@ use std::{future::Future, num::ParseIntError, time::Duration};
 use strata_primitives::L1Height;
 use strata_retry::{retry_with_backoff_async, RetryConfig};
 use thiserror::Error;
-use tracing::warn;
 
 #[derive(Deserialize)]
 struct TxStatus {
@@ -83,17 +82,15 @@ impl EsploraClient {
         .await
     }
 
-    /// Gets transaction confirmations; mempool transactions return `Some(0)`.
-    /// Returns `None` if the lookup fails or a confirmed transaction has no block height.
+    /// Gets transaction confirmations; mempool transactions return zero.
+    /// Returns an error if the lookup fails or a confirmed transaction has no block height.
     pub async fn get_tx_confirmations(
         &self,
         txid: Txid,
         chain_tip_height: L1Height,
-    ) -> Option<u64> {
-        match self.get_tx_status(txid).await {
-            Ok(status) => confirmations_from_status(&status, chain_tip_height),
-            Err(_) => None,
-        }
+    ) -> Result<u64, EsploraError> {
+        let status = self.get_tx_status(txid).await?;
+        confirmations_from_status(&status, chain_tip_height)
     }
 
     fn url(&self, path: &str) -> String {
@@ -111,18 +108,13 @@ impl EsploraClient {
         Fut: Future<Output = Result<T, EsploraError>>,
     {
         let backoff = self.retry_config.backoff();
-        let outcome =
-            retry_with_backoff_async(name, self.retry_config.max_retries, &backoff, || async {
-                match operation().await {
-                    Err(error) if error.is_retryable() => Err(error),
-                    outcome => Ok(outcome),
-                }
-            })
-            .await?;
-        if let Err(error) = &outcome {
-            warn!(operation = name, error = %error, "Esplora request failed");
-        }
-        outcome
+        retry_with_backoff_async(name, self.retry_config.max_retries, &backoff, || async {
+            match operation().await {
+                Err(error) if error.is_retryable() => Err(error),
+                outcome => Ok(outcome),
+            }
+        })
+        .await?
     }
 
     async fn get_tx_status(&self, txid: Txid) -> Result<TxStatus, EsploraError> {
@@ -145,13 +137,17 @@ impl EsploraClient {
 }
 
 /// An unconfirmed (mempool) transaction has zero confirmations.
-fn confirmations_from_status(status: &TxStatus, chain_tip_height: L1Height) -> Option<u64> {
+fn confirmations_from_status(
+    status: &TxStatus,
+    chain_tip_height: L1Height,
+) -> Result<u64, EsploraError> {
     if !status.confirmed {
-        return Some(0);
+        return Ok(0);
     }
     status
         .block_height
         .map(|height| confirmations_from_block_height(chain_tip_height, height))
+        .ok_or(EsploraError::MissingBlockHeight)
 }
 
 fn confirmations_from_block_height(chain_tip_height: L1Height, block_height: L1Height) -> u64 {
@@ -322,8 +318,9 @@ mod tests {
                 fixture
                     .client()
                     .get_tx_confirmations(make_txid(), 100)
-                    .await,
-                Some(3)
+                    .await
+                    .expect("transaction confirmations"),
+                3
             );
             assert_eq!(
                 fixture.paths(),
@@ -347,17 +344,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn esplora_transaction_status_returns_unknown_after_retry_exhaustion() {
+    async fn esplora_transaction_status_returns_error_after_retry_exhaustion() {
         // Exhaustion must not be converted into zero confirmations.
         let fixture =
             EsploraFixture::new(vec![(StatusCode::INTERNAL_SERVER_ERROR, "unavailable")]).await;
-        assert_eq!(
-            fixture
-                .client()
-                .get_tx_confirmations(make_txid(), 100)
-                .await,
-            None
-        );
+        let error = fixture
+            .client()
+            .get_tx_confirmations(make_txid(), 100)
+            .await
+            .expect_err("confirmation request must fail");
+        assert!(matches!(error, EsploraError::Request(error)
+            if error.status() == Some(StatusCode::INTERNAL_SERVER_ERROR)));
         assert_eq!(fixture.attempts(), 4);
     }
 
@@ -392,12 +389,13 @@ mod tests {
             StatusCode::NOT_FOUND,
         ] {
             let fixture = EsploraFixture::new(vec![(status, r#"{"confirmed":false}"#)]).await;
-            assert_eq!(
-                fixture
-                    .client()
-                    .get_tx_confirmations(make_txid(), 100)
-                    .await,
-                None
+            let error = fixture
+                .client()
+                .get_tx_confirmations(make_txid(), 100)
+                .await
+                .expect_err("HTTP failure");
+            assert!(
+                matches!(error, EsploraError::Request(error) if error.status() == Some(status))
             );
             assert_eq!(fixture.attempts(), 1);
         }
@@ -419,13 +417,17 @@ mod tests {
     async fn esplora_transaction_status_does_not_retry_invalid_payloads() {
         for body in ["not JSON", r#"{"confirmed":true}"#] {
             let fixture = EsploraFixture::new(vec![(StatusCode::OK, body)]).await;
-            assert_eq!(
-                fixture
-                    .client()
-                    .get_tx_confirmations(make_txid(), 100)
-                    .await,
-                None
-            );
+            let error = fixture
+                .client()
+                .get_tx_confirmations(make_txid(), 100)
+                .await
+                .expect_err("invalid transaction status");
+            match body {
+                "not JSON" => {
+                    assert!(matches!(error, EsploraError::Request(error) if error.is_decode()))
+                }
+                _ => assert!(matches!(error, EsploraError::MissingBlockHeight)),
+            }
             assert_eq!(fixture.attempts(), 1);
         }
     }
@@ -437,8 +439,9 @@ mod tests {
             fixture
                 .client()
                 .get_tx_confirmations(make_txid(), 100)
-                .await,
-            Some(0)
+                .await
+                .expect("mempool confirmations"),
+            0
         );
         assert_eq!(fixture.attempts(), 1);
     }
@@ -454,7 +457,7 @@ mod tests {
             .build()
             .expect("short request timeout");
 
-        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
+        assert!(client.get_tx_confirmations(make_txid(), 100).await.is_err());
         assert_eq!(fixture.attempts(), 4);
     }
 
@@ -470,9 +473,15 @@ mod tests {
         ])
         .await;
         let client = fixture.client();
-        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
+        assert!(client.get_tx_confirmations(make_txid(), 100).await.is_err());
         assert_eq!(fixture.attempts(), 4);
-        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, Some(3));
+        assert_eq!(
+            client
+                .get_tx_confirmations(make_txid(), 100)
+                .await
+                .expect("recovered confirmations"),
+            3
+        );
         assert_eq!(fixture.attempts(), 5);
     }
 
@@ -490,7 +499,7 @@ mod tests {
         // One configured retry permits two attempts, independently for every request.
         assert!(client.get_tip_height().await.is_err());
         assert_eq!(fixture.attempts(), 2);
-        assert_eq!(client.get_tx_confirmations(make_txid(), 100).await, None);
+        assert!(client.get_tx_confirmations(make_txid(), 100).await.is_err());
         assert_eq!(fixture.attempts(), 4);
     }
 }
