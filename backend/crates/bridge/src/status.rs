@@ -12,7 +12,7 @@ use super::{
     bridge_rpc,
     context::BridgeMonitoringContext,
     l1::esplora::EsploraClient,
-    state::{DepositInfoUpdate, ReimbursementInfoUpdate},
+    state::{BridgeMonitoringState, DepositInfoUpdate, ReimbursementInfoUpdate},
     types::{
         BridgeStatus, DepositInfo, DepositStatus, OperatorStatus, ReimbursementInfo,
         ReimbursementStatus, WithdrawalPairing, WithdrawalPairingCursor,
@@ -23,6 +23,28 @@ use super::{
 
 use tokio::time::{interval, timeout, Duration};
 use tracing::{error, info, warn};
+
+/// Deposit indices selected for status updates and withdrawal pairing.
+struct DepositRefreshCandidates {
+    status_candidates: BTreeSet<DepositIdx>,
+    pairing_candidates: WithdrawalPairingCandidates,
+}
+
+impl DepositRefreshCandidates {
+    /// Returns the deduplicated indices needed by status refresh and pairing.
+    fn deposit_indices(&self) -> Vec<DepositIdx> {
+        self.status_candidates
+            .union(&self.pairing_candidates.deposit_indices)
+            .copied()
+            .collect()
+    }
+}
+
+/// Pairing cursor and candidate deposit indices.
+struct WithdrawalPairingCandidates {
+    cursor: WithdrawalPairingCursor,
+    deposit_indices: BTreeSet<DepositIdx>,
+}
 
 /// Periodically fetch bridge status and update bridge cache.
 pub async fn bridge_monitoring_task(
@@ -39,9 +61,7 @@ pub async fn bridge_monitoring_task(
             _ = interval.tick() => {}
         }
 
-        if refresh_bridge_status(&context).await.is_err() {
-            warn!("bridge status refresh will retry on the next poll");
-        }
+        refresh_bridge_status(&context).await;
 
         context.mark_initial_status_poll_completed();
     }
@@ -49,8 +69,56 @@ pub async fn bridge_monitoring_task(
     Ok(())
 }
 
-/// Refreshes independent monitoring sections using the available source data.
-async fn refresh_bridge_status(context: &BridgeMonitoringContext) -> Result<()> {
+/// Refreshes operator, deposit, withdrawal, and reimbursement statuses.
+async fn refresh_bridge_status(context: &BridgeMonitoringContext) {
+    refresh_operator_statuses(context).await;
+
+    let tip = fetch_chain_tip(context).await;
+    let indices = fetch_deposit_indices(context).await;
+
+    if let Some(indices) = &indices {
+        let candidates = select_deposit_refresh_candidates(
+            context.state(),
+            indices,
+            tip,
+            context.config().withdrawal_pairing_batch_size(),
+        )
+        .await;
+        let deposit_infos =
+            get_deposit_infos(context.bridge_rpc(), &candidates.deposit_indices()).await;
+
+        // Deposit statuses need confirmation counts, which require the current Bitcoin tip.
+        if let Some(tip) = tip {
+            refresh_deposit_statuses(context, tip, &candidates.status_candidates, &deposit_infos)
+                .await;
+        }
+
+        // Pairing uses bridge answers and indexed requests, so it can proceed without a tip.
+        pair_indexed_withdrawals(
+            context,
+            indices,
+            &candidates.pairing_candidates,
+            &deposit_infos,
+        )
+        .await;
+    }
+
+    if let Some(tip) = tip {
+        // Refresh withdrawal statuses, including withdrawals paired during this poll.
+        refresh_withdrawal_statuses(context, tip).await;
+
+        // Refresh reimbursement statuses, including withdrawals that completed during this poll.
+        refresh_reimbursement_statuses(context, tip).await;
+    }
+
+    // Without the tip, we skipped deposit, withdrawal and reimbursement status updates.
+    // Without deposit indices, we skipped deposit status updates and withdrawal pairing.
+    if tip.is_none() || indices.is_none() {
+        warn!("bridge status refresh will retry on the next poll");
+    }
+}
+
+async fn refresh_operator_statuses(context: &BridgeMonitoringContext) {
     let mut operator_statuses = Vec::new();
 
     for operator in context.config().operators() {
@@ -72,157 +140,158 @@ async fn refresh_bridge_status(context: &BridgeMonitoringContext) -> Result<()> 
     }
 
     context.state().update_operators(operator_statuses).await;
+}
 
-    let chain_tip_height = context
-        .esplora()
-        .get_tip_height()
-        .await
-        .inspect_err(|e| error!(error = %e, "failed to get Bitcoin chain tip"));
-    let deposit_indices = bridge_rpc::get_deposit_indices(context.bridge_rpc())
-        .await
-        .inspect_err(|e| error!(error = %e, "failed to fetch deposit indices"));
-    let withdrawal_pairing_batch_size = context.config().withdrawal_pairing_batch_size();
+async fn fetch_chain_tip(context: &BridgeMonitoringContext) -> Option<L1Height> {
+    match context.esplora().get_tip_height().await {
+        Ok(chain_tip_height) => {
+            info!(%chain_tip_height, "bitcoin chain tip");
+            Some(chain_tip_height)
+        }
+        Err(error) => {
+            error!(%error, "failed to get Bitcoin chain tip");
+            None
+        }
+    }
+}
 
-    if let Ok(deposit_indices) = &deposit_indices {
-        // Without the Bitcoin tip, skip status-only fetches and fetch deposit info only for pairing.
-        let deposit_candidates = if chain_tip_height.is_ok() {
-            context
-                .state()
-                .select_deposit_info_candidates(deposit_indices)
-                .await
-        } else {
-            Vec::new()
-        };
-        let pairing_cursor = context.state().withdrawal_pairing_cursor().await;
-        let pairing_deposit_candidates = select_pairing_deposit_candidates(
-            deposit_indices,
-            pairing_cursor,
-            withdrawal_pairing_batch_size,
-        );
-        let all_deposit_candidates = deposit_candidates
-            .iter()
-            .chain(pairing_deposit_candidates.iter())
-            .copied()
-            .collect::<BTreeSet<_>>()
+async fn fetch_deposit_indices(context: &BridgeMonitoringContext) -> Option<Vec<DepositIdx>> {
+    match bridge_rpc::get_deposit_indices(context.bridge_rpc()).await {
+        Ok(indices) => Some(indices),
+        Err(error) => {
+            error!(%error, "failed to fetch deposit indices");
+            None
+        }
+    }
+}
+
+/// Selects deposit-status and pairing candidates from the current monitoring state.
+async fn select_deposit_refresh_candidates(
+    state: &BridgeMonitoringState,
+    deposit_indices: &[DepositIdx],
+    tip: Option<L1Height>,
+    pairing_batch_size: usize,
+) -> DepositRefreshCandidates {
+    // Without a tip, only pairing needs deposit info; status-only candidates wait for another poll.
+    let status_candidates: BTreeSet<_> = if tip.is_some() {
+        state
+            .select_deposit_info_candidates(deposit_indices)
+            .await
             .into_iter()
-            .collect::<Vec<_>>();
-        let deposit_infos = get_deposits(context.bridge_rpc(), &all_deposit_candidates).await;
-        let deposit_candidates = deposit_candidates.into_iter().collect::<BTreeSet<_>>();
-        if let Ok(chain_tip_height) = &chain_tip_height {
-            let deposit_info_updates = get_deposit_info_updates(
-                context.esplora(),
-                *chain_tip_height,
-                deposit_infos
-                    .iter()
-                    .copied()
-                    .filter(|(deposit_idx, _)| deposit_candidates.contains(deposit_idx))
-                    .collect(),
-            )
-            .await;
-            if let Err(e) = context
-                .state()
-                .apply_deposit_info_updates(
-                    context.status_db(),
-                    deposit_info_updates,
-                    context.config().max_tx_confirmations(),
-                )
-                .await
-            {
-                warn!(error = %e, "failed to persist deposit status updates");
-            }
-        }
-
-        // Pairing uses bridge and indexed withdrawal data, not Bitcoin confirmations.
-        pair_indexed_withdrawals(
-            context,
-            deposit_indices,
-            pairing_cursor,
-            pairing_deposit_candidates,
-            deposit_infos,
-        )
-        .await;
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let pairing_cursor = state.withdrawal_pairing_cursor().await;
+    let pairing_candidates: BTreeSet<_> =
+        select_pairing_deposit_candidates(deposit_indices, pairing_cursor, pairing_batch_size)
+            .into_iter()
+            .collect();
+    DepositRefreshCandidates {
+        status_candidates,
+        pairing_candidates: WithdrawalPairingCandidates {
+            cursor: pairing_cursor,
+            deposit_indices: pairing_candidates,
+        },
     }
+}
 
-    if let Ok(chain_tip_height) = &chain_tip_height {
-        info!(%chain_tip_height, "bitcoin chain tip");
-        let withdrawal_candidates = context.state().select_withdrawal_status_candidates().await;
-        let withdrawal_updates = get_withdrawal_updates(
-            context.bridge_rpc(),
-            context.withdrawal_index_db(),
-            context.esplora(),
-            *chain_tip_height,
-            &withdrawal_candidates,
-            withdrawal_pairing_batch_size,
+async fn refresh_deposit_statuses(
+    context: &BridgeMonitoringContext,
+    tip: L1Height,
+    candidates: &BTreeSet<DepositIdx>,
+    deposit_infos: &[(DepositIdx, DepositInfo)],
+) {
+    let updates = get_deposit_info_updates(
+        context.esplora(),
+        tip,
+        deposit_infos
+            .iter()
+            .copied()
+            .filter(|(deposit_idx, _)| candidates.contains(deposit_idx))
+            .collect(),
+    )
+    .await;
+    if let Err(error) = context
+        .state()
+        .apply_deposit_info_updates(
+            context.status_db(),
+            updates,
+            context.config().max_tx_confirmations(),
         )
-        .await;
-        if let Err(e) = context
-            .state()
-            .apply_withdrawal_updates(
-                context.status_db(),
-                withdrawal_updates,
-                context.config().max_tx_confirmations(),
-            )
-            .await
-        {
-            warn!(error = %e, "failed to persist withdrawal status updates");
-        }
-
-        let reimbursement_candidates = context
-            .state()
-            .select_reimbursement_status_candidates()
-            .await;
-        let reimbursement_updates = get_reimbursement_updates(
-            context.bridge_rpc(),
-            context.esplora(),
-            *chain_tip_height,
-            &reimbursement_candidates,
-        )
-        .await;
-        if let Err(e) = context
-            .state()
-            .apply_reimbursement_updates(
-                context.status_db(),
-                reimbursement_updates,
-                context.config().max_tx_confirmations(),
-            )
-            .await
-        {
-            warn!(error = %e, "failed to persist reimbursement status updates");
-        }
+        .await
+    {
+        warn!(%error, "failed to persist deposit status updates");
     }
+}
 
-    // Report unavailable shared inputs after all independent work has run.
-    chain_tip_height?;
-    deposit_indices?;
-    Ok(())
+async fn refresh_withdrawal_statuses(context: &BridgeMonitoringContext, tip: L1Height) {
+    let candidates = context.state().select_withdrawal_status_candidates().await;
+    let updates = get_withdrawal_updates(
+        context.bridge_rpc(),
+        context.withdrawal_index_db(),
+        context.esplora(),
+        tip,
+        &candidates,
+        context.config().withdrawal_pairing_batch_size(),
+    )
+    .await;
+    if let Err(error) = context
+        .state()
+        .apply_withdrawal_updates(
+            context.status_db(),
+            updates,
+            context.config().max_tx_confirmations(),
+        )
+        .await
+    {
+        warn!(%error, "failed to persist withdrawal status updates");
+    }
+}
+
+async fn refresh_reimbursement_statuses(context: &BridgeMonitoringContext, tip: L1Height) {
+    let candidates = context
+        .state()
+        .select_reimbursement_status_candidates()
+        .await;
+    let updates =
+        get_reimbursement_updates(context.bridge_rpc(), context.esplora(), tip, &candidates).await;
+    if let Err(error) = context
+        .state()
+        .apply_reimbursement_updates(
+            context.status_db(),
+            updates,
+            context.config().max_tx_confirmations(),
+        )
+        .await
+    {
+        warn!(%error, "failed to persist reimbursement status updates");
+    }
 }
 
 /// Pairs indexed withdrawal requests with candidate deposits and persists the pairings.
 async fn pair_indexed_withdrawals(
     context: &BridgeMonitoringContext,
-    deposit_indices: &[DepositIdx],
-    pairing_cursor: WithdrawalPairingCursor,
-    pairing_deposit_candidates: Vec<DepositIdx>,
-    deposit_infos: Vec<(DepositIdx, DepositInfo)>,
+    known_deposit_indices: &[DepositIdx],
+    candidates: &WithdrawalPairingCandidates,
+    deposit_infos: &[(DepositIdx, DepositInfo)],
 ) -> Vec<WithdrawalPairing> {
-    let pairing_deposit_candidates = pairing_deposit_candidates
-        .into_iter()
-        .collect::<BTreeSet<_>>();
     let pairing_deposit_infos = deposit_infos
-        .into_iter()
-        .filter(|(deposit_idx, _)| pairing_deposit_candidates.contains(deposit_idx))
+        .iter()
+        .copied()
+        .filter(|(deposit_idx, _)| candidates.deposit_indices.contains(deposit_idx))
         .collect::<Vec<_>>();
     let withdrawal_requests = fetch_withdrawal_requests(
         context.withdrawal_index_db(),
-        pairing_cursor.next_withdrawal_seq,
-        pairing_deposit_candidates.len(),
+        candidates.cursor.next_withdrawal_seq,
+        candidates.deposit_indices.len(),
         context.config().withdrawal_pairing_batch_size(),
     );
     let new_pairings = match context
         .state()
         .advance_withdrawal_pairings(
             context.status_db(),
-            deposit_indices,
+            known_deposit_indices,
             &pairing_deposit_infos,
             &withdrawal_requests,
         )
@@ -267,8 +336,8 @@ fn select_pairing_deposit_candidates(
     indices
 }
 
-/// Fetch detailed information for all deposits.
-async fn get_deposits(
+/// Fetches bridge deposit info for the supplied indices, omitting failed lookups.
+async fn get_deposit_infos(
     rpc_manager: &bridge_rpc::RpcClientManager,
     deposit_indices: &[DepositIdx],
 ) -> Vec<(DepositIdx, DepositInfo)> {
@@ -451,7 +520,7 @@ mod tests {
     use tokio::{runtime::Handle, sync::oneshot};
 
     use crate::{
-        test_utils::{make_deposit_info, BridgeStatusFixture},
+        test_utils::{make_deposit_info, make_reimbursement_info, BridgeStatusFixture},
         types::{ChallengeStep, WithdrawalStatus},
     };
 
@@ -519,9 +588,7 @@ mod tests {
         let fixture = make_monitoring_fixture(&server);
 
         // The configured operator's uptime call fails, but deposit monitoring still succeeds.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("refresh after operator failure");
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert_eq!(status.operators.len(), 1);
         assert!(matches!(
@@ -535,7 +602,7 @@ mod tests {
     // Verifies that RPC failures leave the dashboard's previously known statuses visible.
     #[tokio::test]
     async fn failed_status_lookups_keep_rows_and_cursors() {
-        let claim_txid = Txid::from_byte_array([4; 32]);
+        let previous_reimbursement = make_reimbursement_info(4, ReimbursementStatus::InProgress);
         // Keep the tip and deposit indices available so the poll attempts all three status queries.
         let server = make_monitoring_server(
             vec![
@@ -556,21 +623,13 @@ mod tests {
         let deposit = make_deposit_info(DepositStatus::Complete);
         fixture.apply_deposit_update(0, deposit, Some(1)).await;
         let previous_withdrawal = fixture.seed_completed_withdrawal(1).await;
-        let previous_reimbursement = ReimbursementInfo {
-            claim_txid,
-            challenge_step: ChallengeStep::Claimed,
-            payout_txid: None,
-            status: ReimbursementStatus::InProgress,
-        };
         fixture
             .apply_reimbursement_update(0, previous_reimbursement, None)
             .await;
         let cursors = fixture.snapshot().cursors;
 
         // Run one poll with failed status queries against the existing state.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("refresh after failed lookups");
+        refresh_bridge_status(fixture.context()).await;
 
         // The previous rows must remain visible with the same transaction IDs and statuses.
         let status = fixture.bridge_status().await;
@@ -604,7 +663,7 @@ mod tests {
     // statuses unchanged.
     #[tokio::test]
     async fn absent_status_answers_keep_rows_and_cursors() {
-        let claim_txid = Txid::from_byte_array([4; 32]);
+        let previous_reimbursement = make_reimbursement_info(4, ReimbursementStatus::InProgress);
         // Return valid null responses for withdrawal and reimbursement queries, not RPC errors.
         let server = make_monitoring_server(
             vec![
@@ -622,21 +681,13 @@ mod tests {
         // These existing records remain query candidates even when no deposit indices are returned.
         fixture.index_withdrawal_event(1);
         let previous_withdrawal = fixture.seed_completed_withdrawal(1).await;
-        let previous_reimbursement = ReimbursementInfo {
-            claim_txid,
-            challenge_step: ChallengeStep::Claimed,
-            payout_txid: None,
-            status: ReimbursementStatus::InProgress,
-        };
         fixture
             .apply_reimbursement_update(0, previous_reimbursement, None)
             .await;
         let cursors = fixture.snapshot().cursors;
 
         // Run one poll whose status queries succeed but return no status.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("refresh with absent answers");
+        refresh_bridge_status(fixture.context()).await;
 
         // Neither null response should remove a row or replace its known transaction IDs or status.
         let status = fixture.bridge_status().await;
@@ -661,8 +712,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_confirmations_keep_completion_without_advancing_cursors() {
+        let previous_reimbursement = make_reimbursement_info(4, ReimbursementStatus::InProgress);
         let fulfillment_txid = Txid::from_byte_array([3; 32]);
-        let claim_txid = Txid::from_byte_array([4; 32]);
+        let claim_txid = previous_reimbursement.claim_txid;
         let payout_txid = Txid::from_byte_array([5; 32]);
         let withdrawal = json!({"result": RpcWithdrawalStatus::Complete { fulfillment_txid }});
         let reimbursement =
@@ -688,12 +740,6 @@ mod tests {
         let deposit = make_deposit_info(DepositStatus::Complete);
         fixture.apply_deposit_update(0, deposit, Some(1)).await;
         fixture.seed_completed_withdrawal(1).await;
-        let previous_reimbursement = ReimbursementInfo {
-            claim_txid,
-            challenge_step: ChallengeStep::Claimed,
-            payout_txid: None,
-            status: ReimbursementStatus::InProgress,
-        };
         fixture
             .apply_reimbursement_update(0, previous_reimbursement, None)
             .await;
@@ -701,9 +747,7 @@ mod tests {
 
         // Successful completion answers with failed confirmations replace the old counts with
         // unknown. Terminal rows are hidden, but remain eligible for the next poll.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("completion refresh");
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert!(status.deposits.is_empty());
         assert!(status.withdrawals.is_empty());
@@ -768,7 +812,7 @@ mod tests {
         let pairing_cursor = fixture.state().withdrawal_pairing_cursor().await;
 
         // Discovery fails, but the already paired withdrawal can complete and expose its claim.
-        assert!(refresh_bridge_status(fixture.context()).await.is_err());
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert_eq!(status.deposits.len(), 1);
         assert_eq!(
@@ -802,9 +846,7 @@ mod tests {
             .any(|method| method == "stratabridge_depositInfo"));
 
         // The next successful poll resumes discovery without duplicating the existing pairing.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("recovered poll");
+        refresh_bridge_status(fixture.context()).await;
         assert_eq!(
             fixture.snapshot().withdrawal_pairings,
             vec![WithdrawalPairing::new(0, 0)]
@@ -846,7 +888,7 @@ mod tests {
         let before = fixture.snapshot();
 
         // The tip is unavailable: keep cached confirmations, but pair from bridge/indexed data.
-        assert!(refresh_bridge_status(fixture.context()).await.is_err());
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert_eq!(status.deposits.len(), 1);
         assert_eq!(
@@ -885,9 +927,7 @@ mod tests {
 
         // Once the tip recovers, the existing pairing is used to fetch fulfillment.
         fail_tip.store(false, Ordering::Relaxed);
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("recovered poll");
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert_eq!(status.withdrawals.len(), 1);
         assert_eq!(
@@ -929,7 +969,7 @@ mod tests {
         );
 
         // Without a tip, fetch only the pairing batch and preserve cached status.
-        assert!(refresh_bridge_status(fixture.context()).await.is_err());
+        refresh_bridge_status(fixture.context()).await;
         assert_eq!(
             server
                 .methods()
@@ -970,9 +1010,7 @@ mod tests {
         let before = fixture.snapshot();
 
         // A failed fulfillment refresh must neither erase it nor prevent checking its payout.
-        refresh_bridge_status(fixture.context())
-            .await
-            .expect("independent sections");
+        refresh_bridge_status(fixture.context()).await;
         let status = fixture.bridge_status().await;
         assert_eq!(status.withdrawals.len(), 1);
         assert_eq!(
@@ -1014,13 +1052,16 @@ mod tests {
         let deposit_infos = candidates
             .iter()
             .map(|deposit_idx| (*deposit_idx, make_deposit_info(DepositStatus::Complete)))
-            .collect();
+            .collect::<Vec<_>>();
+        let candidates = WithdrawalPairingCandidates {
+            cursor: pairing_cursor,
+            deposit_indices: candidates.into_iter().collect(),
+        };
         pair_indexed_withdrawals(
             fixture.context(),
             deposit_indices,
-            pairing_cursor,
-            candidates,
-            deposit_infos,
+            &candidates,
+            &deposit_infos,
         )
         .await
     }

@@ -23,8 +23,8 @@ use crate::{
         BridgeMonitoringState, DepositInfoUpdate, ReimbursementInfoUpdate, WithdrawalInfoUpdate,
     },
     types::{
-        BridgeStatus, DepositInfo, DepositStatus, ReimbursementInfo, WithdrawalInfo,
-        WithdrawalPairing, WithdrawalSeq, WithdrawalStatus,
+        BridgeStatus, ChallengeStep, DepositInfo, DepositStatus, ReimbursementInfo,
+        ReimbursementStatus, WithdrawalInfo, WithdrawalPairing, WithdrawalSeq, WithdrawalStatus,
     },
     withdrawal_indexer::TASK_NAME,
 };
@@ -233,6 +233,20 @@ pub(crate) fn make_withdrawal_info(seed: u8, status: WithdrawalStatus) -> Withdr
     WithdrawalInfo {
         withdrawal_request_txid: make_withdrawal_request(seed).tx_hash,
         fulfillment_txid: matches!(status, WithdrawalStatus::Complete)
+            .then_some(Txid::from_byte_array([seed.wrapping_add(1); 32])),
+        status,
+    }
+}
+
+pub(crate) fn make_reimbursement_info(seed: u8, status: ReimbursementStatus) -> ReimbursementInfo {
+    ReimbursementInfo {
+        claim_txid: Txid::from_byte_array([seed; 32]),
+        challenge_step: if status == ReimbursementStatus::InProgress {
+            ChallengeStep::Claimed
+        } else {
+            ChallengeStep::NotApplicable
+        },
+        payout_txid: (status == ReimbursementStatus::Complete)
             .then_some(Txid::from_byte_array([seed.wrapping_add(1); 32])),
         status,
     }

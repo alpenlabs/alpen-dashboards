@@ -511,18 +511,15 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use bitcoin::{hashes::Hash, Txid};
-
     use crate::{
         db::{
             error::DbError, status::mock::MockBridgeStatusDb, traits::BridgeStatusDb,
             types::BridgeStatusDbSnapshot,
         },
         test_utils::{
-            make_deposit_info, make_withdrawal_info, make_withdrawal_request_row,
-            BridgeStatusFixture, TEST_MAX_CONFIRMATIONS,
+            make_deposit_info, make_reimbursement_info, make_withdrawal_info,
+            make_withdrawal_request_row, BridgeStatusFixture, TEST_MAX_CONFIRMATIONS,
         },
-        types::ChallengeStep,
     };
 
     /// Mock status database that fails the next pairing-row or pairing-cursor write.
@@ -626,20 +623,6 @@ mod tests {
             snapshot.cursors.withdrawal_pairing,
             WithdrawalPairingCursor::new(1, 1)
         );
-    }
-
-    fn make_reimbursement_info(seed: u8, status: ReimbursementStatus) -> ReimbursementInfo {
-        ReimbursementInfo {
-            claim_txid: Txid::from_byte_array([seed; 32]),
-            challenge_step: if status == ReimbursementStatus::InProgress {
-                ChallengeStep::Claimed
-            } else {
-                ChallengeStep::NotApplicable
-            },
-            payout_txid: (status == ReimbursementStatus::Complete)
-                .then_some(Txid::from_byte_array([seed.wrapping_add(1); 32])),
-            status,
-        }
     }
 
     fn make_deposit_infos(
