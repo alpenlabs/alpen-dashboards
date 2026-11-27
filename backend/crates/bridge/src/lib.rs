@@ -2,7 +2,7 @@ mod bridge_rpc;
 mod cache;
 mod context;
 mod db;
-mod esplora;
+mod l1;
 mod state;
 mod status;
 #[cfg(test)]
@@ -22,6 +22,7 @@ pub use db::{
     },
     BridgeStatusDbSled, WithdrawalIndexerDbSled,
 };
+pub use l1::esplora::{EsploraClient, EsploraError};
 pub use status::{bridge_monitoring_task, get_bridge_status};
 pub use types::{
     BridgeStatus, ReimbursementStatusCursor, WithdrawalInfo, WithdrawalPairing,

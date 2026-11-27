@@ -13,9 +13,9 @@ pub type WithdrawalSeq = u64;
 /// Bridge operator status
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct OperatorStatus {
-    operator_id: String,
-    operator_pk: PublicKey,
-    status: RpcOperatorStatus,
+    pub(crate) operator_id: String,
+    pub(crate) operator_pk: PublicKey,
+    pub(crate) status: RpcOperatorStatus,
 }
 
 impl OperatorStatus {

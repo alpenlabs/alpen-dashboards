@@ -8,7 +8,7 @@ use strata_bridge_rpc::types::{
     RpcDepositInfo, RpcOperatorStatus, RpcReimbursementStatus, RpcWithdrawalStatus,
 };
 use strata_retry::{retry_with_backoff_async, RetryConfig};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use status_config::BridgeMonitoringConfig;
 use status_utils::create_rpc_client;
@@ -104,7 +104,7 @@ impl RpcClientManager {
 pub(crate) async fn get_operator_status(
     rpc_manager: &RpcClientManager,
     operator_pk: PublicKey,
-) -> RpcOperatorStatus {
+) -> Result<RpcOperatorStatus> {
     let operator_pk_str = operator_pk.to_string();
     let Some(client) = rpc_manager.client(&operator_pk_str) else {
         return rpc_manager
@@ -115,26 +115,14 @@ pub(crate) async fn get_operator_status(
                     .map_err(|e| e.into())
             })
             .await
-            .unwrap_or_else(|| {
-                warn!(
-                    operator_pk = %operator_pk_str,
-                    "failed to fetch bridge operator status from peer clients"
-                );
-                RpcOperatorStatus::Offline
-            });
+            .ok_or_else(|| anyhow!("no peer operator returned a status response"));
     };
 
-    match client.get_uptime().await {
-        Ok(_) => RpcOperatorStatus::Online,
-        Err(e) => {
-            warn!(
-                operator_pk = %operator_pk_str,
-                error = %e,
-                "failed to fetch bridge operator uptime"
-            );
-            RpcOperatorStatus::Offline
-        }
-    }
+    client
+        .get_uptime()
+        .await
+        .map(|_| RpcOperatorStatus::Online)
+        .map_err(Into::into)
 }
 
 /// Fetch all known deposit indices from bridge operators.
@@ -147,7 +135,7 @@ pub(crate) async fn get_deposit_indices(rpc_manager: &RpcClientManager) -> Resul
             client.get_deposit_indices().await.map_err(|e| e.into())
         })
         .await
-        .ok_or_else(|| anyhow!("failed to fetch deposit indices after retries"))
+        .ok_or_else(|| anyhow!("no bridge operator returned deposit indices"))
 }
 
 /// Fetch deposit details by bridge-side deposit index.
@@ -163,7 +151,7 @@ pub(crate) async fn get_deposit_info(
                 .map_err(|e| e.into())
         })
         .await
-        .ok_or_else(|| anyhow!("failed to fetch deposit info for deposit_idx {deposit_idx}"))
+        .ok_or_else(|| anyhow!("no bridge operator returned deposit info"))
 }
 
 /// Fetch withdrawal status by bridge-side deposit index.
@@ -179,7 +167,7 @@ pub(crate) async fn get_withdrawal_status(
                 .map_err(|e| e.into())
         })
         .await
-        .ok_or_else(|| anyhow!("failed to fetch withdrawal status for deposit_idx {deposit_idx}"))
+        .ok_or_else(|| anyhow!("no bridge operator returned a withdrawal status response"))
 }
 
 /// Fetch reimbursement status by bridge-side deposit index.
@@ -195,9 +183,7 @@ pub(crate) async fn get_reimbursement_status(
                 .map_err(|e| e.into())
         })
         .await
-        .ok_or_else(|| {
-            anyhow!("failed to fetch reimbursement status for deposit_idx {deposit_idx}")
-        })
+        .ok_or_else(|| anyhow!("no bridge operator returned a reimbursement status response"))
 }
 
 #[cfg(test)]
@@ -292,7 +278,7 @@ mod tests {
 
         assert_eq!(
             get_deposit_indices(&manager).await.unwrap_err().to_string(),
-            "failed to fetch deposit indices after retries"
+            "no bridge operator returned deposit indices"
         );
         assert_eq!(first.attempts(), 4);
         assert_eq!(second.attempts(), 4);
@@ -320,7 +306,7 @@ mod tests {
 
         assert!(matches!(
             get_operator_status(&manager, make_operator_key()).await,
-            RpcOperatorStatus::Online
+            Ok(RpcOperatorStatus::Online)
         ));
         assert_eq!(fixture.methods(), vec!["stratabridge_operatorStatus"]);
     }
@@ -331,12 +317,46 @@ mod tests {
         // Query retries are enabled, but the configured operator uses a single uptime call.
         let manager = make_configured_rpc_manager(&fixture, 3);
 
-        assert!(matches!(
-            get_operator_status(&manager, make_operator_key()).await,
-            RpcOperatorStatus::Offline
-        ));
+        assert!(get_operator_status(&manager, make_operator_key())
+            .await
+            .is_err());
         // The failed lookup made one uptime request and did not fall back to peer status.
         assert_eq!(fixture.methods(), vec!["stratabridge_uptime"]);
+    }
+
+    #[tokio::test]
+    async fn reimbursement_not_started_is_preserved() {
+        let fixture =
+            TestRpcServer::new(vec![json!({"result": RpcReimbursementStatus::NotStarted})]).await;
+        let manager = make_configured_rpc_manager(&fixture, 0);
+
+        // `NotStarted` is a returned status, not an absent answer.
+        assert!(matches!(
+            get_reimbursement_status(&manager, 0).await,
+            Ok(Some(RpcReimbursementStatus::NotStarted))
+        ));
+        assert_eq!(fixture.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn reimbursement_null_response_returns_none() {
+        let fixture = TestRpcServer::new(vec![json!({"result": null})]).await;
+        let manager = make_configured_rpc_manager(&fixture, 0);
+
+        assert!(matches!(
+            get_reimbursement_status(&manager, 0).await,
+            Ok(None)
+        ));
+        assert_eq!(fixture.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn reimbursement_rpc_failure_returns_error() {
+        let fixture = TestRpcServer::new(vec![make_rpc_error_reply()]).await;
+        let manager = make_configured_rpc_manager(&fixture, 0);
+
+        assert!(get_reimbursement_status(&manager, 0).await.is_err());
+        assert_eq!(fixture.attempts(), 1);
     }
 
     #[tokio::test]
@@ -346,7 +366,7 @@ mod tests {
 
         assert_eq!(
             get_deposit_indices(&manager).await.unwrap_err().to_string(),
-            "failed to fetch deposit indices after retries"
+            "no bridge operator returned deposit indices"
         );
         assert_eq!(fixture.attempts(), 2);
     }
